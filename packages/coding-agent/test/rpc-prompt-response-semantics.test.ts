@@ -172,6 +172,7 @@ async function createRuntimeHost(options: { withAuth: boolean; responseDelayMs: 
 
 async function startRpcMode(options: { withAuth: boolean; responseDelayMs: number; model?: Model<any> }): Promise<{
 	lineHandler: (line: string) => void;
+	session: AgentSession;
 	cleanup: () => Promise<void>;
 }> {
 	rpcIo.outputLines = [];
@@ -181,7 +182,7 @@ async function startRpcMode(options: { withAuth: boolean; responseDelayMs: numbe
 	void runRpcMode(runtimeHost);
 	await vi.waitFor(() => expect(rpcIo.lineHandler).toBeDefined());
 
-	return { lineHandler: rpcIo.lineHandler!, cleanup };
+	return { lineHandler: rpcIo.lineHandler!, session: runtimeHost.session, cleanup };
 }
 
 describe("RPC prompt response semantics", () => {
@@ -281,6 +282,53 @@ describe("RPC prompt response semantics", () => {
 			});
 
 			await sleep(150);
+		} finally {
+			await cleanup();
+		}
+	});
+
+	it("rejects a prompt submitted while compaction is in progress", async () => {
+		const { lineHandler, session, cleanup } = await startRpcMode({ withAuth: true, responseDelayMs: 100 });
+
+		try {
+			session.settingsManager.applyOverrides({ compaction: { keepRecentTokens: 1 } });
+			session.sessionManager.appendMessage({
+				role: "user",
+				content: [{ type: "text", text: "message to compact" }],
+				timestamp: Date.now() - 1000,
+			});
+			session.sessionManager.appendMessage({
+				...createAssistantMessage("assistant response to compact"),
+				usage: {
+					input: 100,
+					output: 0,
+					cacheRead: 0,
+					cacheWrite: 0,
+					totalTokens: 100,
+					cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+				},
+				timestamp: Date.now() - 500,
+			});
+			session.agent.state.messages = session.sessionManager.buildSessionContext().messages;
+
+			lineHandler(JSON.stringify({ id: "compact", type: "compact" }));
+			await vi.waitFor(() => {
+				expect(parseOutputLines(rpcIo.outputLines).some((record) => record.type === "compaction_start")).toBe(true);
+			});
+
+			lineHandler(JSON.stringify({ id: "during-compaction", type: "prompt", message: "Do not lose this" }));
+
+			await vi.waitFor(() => {
+				const responses = getPromptResponses(rpcIo.outputLines, "during-compaction");
+				expect(responses).toHaveLength(1);
+				expect(responses[0]).toMatchObject({
+					id: "during-compaction",
+					type: "response",
+					command: "prompt",
+					success: false,
+					error: expect.stringContaining("compaction is in progress"),
+				});
+			});
 		} finally {
 			await cleanup();
 		}

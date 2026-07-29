@@ -1128,6 +1128,15 @@ export class AgentSession {
 				}
 			}
 
+			// Manual compaction rebuilds agent state from SessionManager on completion.
+			// Reject prompts that would otherwise be accepted into the detached agent state and then lost.
+			// Auto-compaction runs during streaming and must keep accepting queued steer/follow-up messages.
+			if (this._compactionAbortController !== undefined && !this.isStreaming) {
+				throw new Error(
+					"Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.",
+				);
+			}
+
 			// Emit input event for extension interception (before skill/template expansion)
 			let currentText = text;
 			let currentImages = options?.images;

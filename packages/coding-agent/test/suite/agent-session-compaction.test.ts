@@ -267,6 +267,44 @@ describe("AgentSession compaction characterization", () => {
 		await expect(compactPromise).rejects.toThrow("Compaction cancelled");
 	});
 
+	it("rejects prompts while manual compaction is in progress", async () => {
+		let finishCompaction: (() => void) | undefined;
+		const harness = await createHarness({
+			settings: { compaction: { keepRecentTokens: 1 } },
+			extensionFactories: [
+				(pi) => {
+					pi.on(
+						"session_before_compact",
+						async (event) =>
+							await new Promise((resolve) => {
+								finishCompaction = () =>
+									resolve({
+										compaction: {
+											summary: "manual compacted",
+											firstKeptEntryId: event.preparation.firstKeptEntryId,
+											tokensBefore: event.preparation.tokensBefore,
+											details: {},
+										},
+									});
+							}),
+					);
+				},
+			],
+		});
+		harnesses.push(harness);
+		seedCompactableSession(harness);
+
+		const compactPromise = harness.session.compact();
+		await vi.waitFor(() => expect(harness.session.isCompacting).toBe(true));
+
+		await expect(harness.session.prompt("do not lose this")).rejects.toThrow(
+			"Cannot submit a prompt while compaction is in progress. Wait for compaction to finish and retry.",
+		);
+
+		finishCompaction?.();
+		await compactPromise;
+	});
+
 	it("resumes after threshold compaction when only agent-level queued messages exist", async () => {
 		vi.useFakeTimers();
 		const harness = await createHarness({
