@@ -22,6 +22,7 @@
 ### Added
 
 - Added the built-in `/api` command for configuring OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages providers with multiple models, image support, thinking levels, API key persistence, and immediate model switching.
+- Added the built-in `/tools` command for viewing, enabling, and disabling tools in the current session.
 - Added Qwen Token Plan Individual as a built-in provider with its documented subscription model catalog and the shared international `QWEN_TOKEN_PLAN_API_KEY`. See [API Keys](docs/providers.md#api-keys) ([#7659](https://github.com/earendil-works/pi/pull/7659) by [@arasovic](https://github.com/arasovic)).
 - Added `pi auth check` provider/model auth preflight with optional credential output ([#7152](https://github.com/earendil-works/pi/issues/7152)).
 - Added `terminate` support to blocked extension `tool_call` events so all-terminating batches can skip the automatic follow-up model call. See [Tool Events](docs/extensions.md#tool-events) ([#7715](https://github.com/earendil-works/pi/pull/7715) by [@muyiyr](https://github.com/muyiyr)).
