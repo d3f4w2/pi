@@ -1,4 +1,4 @@
-import type { TUI } from "@earendil-works/pi-tui";
+import type { Component, TUI } from "@earendil-works/pi-tui";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, test, vi } from "vitest";
 import type {
@@ -8,13 +8,39 @@ import type {
 	ToolInfo,
 } from "../src/core/extensions/types.ts";
 import type { KeybindingsManager } from "../src/core/keybindings.ts";
-import toolsExtension from "../src/extensions/tools/index.ts";
+import toolsExtension, { createToolsExtension } from "../src/extensions/tools/index.ts";
+import type { ToolPreferencesStore } from "../src/extensions/tools/storage.ts";
 import { showToolsManager } from "../src/extensions/tools/ui.ts";
 import type { Theme } from "../src/modes/interactive/theme/theme.ts";
 
 const tools = [{ name: "read" }, { name: "grep" }] as ToolInfo[];
 
 describe("tools extension", () => {
+	test("restores saved choices when the session starts", async () => {
+		let sessionStart: (() => Promise<void>) | undefined;
+		let activeTools = ["read", "bash", "code_search"];
+		const storage: ToolPreferencesStore = {
+			load: async () => ({ enabledTools: ["grep"], disabledTools: ["bash"] }),
+			recordChanges: async () => {},
+		};
+		const pi = {
+			registerCommand: () => {},
+			on: (event: string, handler: () => Promise<void>) => {
+				if (event === "session_start") sessionStart = handler;
+			},
+			getAllTools: () => [{ name: "read" }, { name: "bash" }, { name: "grep" }, { name: "code_search" }],
+			getActiveTools: () => activeTools,
+			setActiveTools: (names: string[]) => {
+				activeTools = names;
+			},
+		} as unknown as ExtensionAPI;
+
+		createToolsExtension(storage)(pi);
+		await sessionStart?.();
+
+		expect(activeTools).toEqual(["read", "code_search", "grep"]);
+	});
+
 	test("registers the /tools command", async () => {
 		let commandName: string | undefined;
 		let handler: RegisteredCommand["handler"] | undefined;
@@ -24,6 +50,7 @@ describe("tools extension", () => {
 				commandName = name;
 				handler = command.handler;
 			},
+			on: () => {},
 			getAllTools: () => tools,
 			getActiveTools: () => ["read"],
 		} as unknown as ExtensionAPI;
@@ -37,6 +64,99 @@ describe("tools extension", () => {
 		expect(handler).toBeDefined();
 		await handler?.("", ctx);
 		expect(custom).toHaveBeenCalledOnce();
+	});
+
+	test("explains setup and wait time after code_search is enabled", async () => {
+		let handler: RegisteredCommand["handler"] | undefined;
+		let activeTools = ["read", "code_search"];
+		const notify = vi.fn();
+		const semanticTools = [{ name: "read" }, { name: "code_search" }] as ToolInfo[];
+		const pi = {
+			registerCommand: (_name: string, command: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
+				handler = command.handler;
+			},
+			on: () => {},
+			getAllTools: () => semanticTools,
+			getActiveTools: () => activeTools,
+			setActiveTools: (names: string[]) => {
+				activeTools = names;
+			},
+		} as unknown as ExtensionAPI;
+		toolsExtension(pi);
+
+		type CustomFactory = (
+			tui: TUI,
+			theme: Theme,
+			keybindings: KeybindingsManager,
+			done: (result: undefined) => void,
+		) => Component | Promise<Component>;
+		const custom = async (factory: CustomFactory): Promise<void> => {
+			const component = await factory(
+				{ requestRender: () => {} } as unknown as TUI,
+				{ bold: (text: string) => text, fg: (_color: string, text: string) => text } as unknown as Theme,
+				{ matches: (data: string, action: string) => data === action } as unknown as KeybindingsManager,
+				() => {},
+			);
+			component.handleInput?.("tui.select.down");
+			component.handleInput?.("tui.editor.cursorRight");
+			component.handleInput?.("tui.select.confirm");
+		};
+		const ctx = { ui: { custom, notify } } as unknown as ExtensionCommandContext;
+
+		await handler?.("", ctx);
+
+		expect(activeTools).toEqual(["read", "code_search"]);
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("mgrep login"), "info");
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("后台建立索引"), "info");
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("不会阻塞当前任务"), "info");
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("默认最多同步 5000 个文件"), "info");
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining(".mgrepignore"), "info");
+	});
+
+	test("saves tool changes after the manager closes", async () => {
+		let handler: RegisteredCommand["handler"] | undefined;
+		let activeTools = ["read"];
+		const recordChanges = vi.fn(async () => {});
+		const storage: ToolPreferencesStore = {
+			load: async () => ({ enabledTools: [], disabledTools: [] }),
+			recordChanges,
+		};
+		const pi = {
+			registerCommand: (_name: string, command: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
+				handler = command.handler;
+			},
+			on: () => {},
+			getAllTools: () => tools,
+			getActiveTools: () => activeTools,
+			setActiveTools: (names: string[]) => {
+				activeTools = names;
+			},
+		} as unknown as ExtensionAPI;
+		createToolsExtension(storage)(pi);
+
+		const custom = async (
+			factory: (
+				tui: TUI,
+				theme: Theme,
+				keybindings: KeybindingsManager,
+				done: (result: undefined) => void,
+			) => Component | Promise<Component>,
+		): Promise<void> => {
+			const component = await factory(
+				{ requestRender: () => {} } as unknown as TUI,
+				{ bold: (text: string) => text, fg: (_color: string, text: string) => text } as unknown as Theme,
+				{ matches: (data: string, action: string) => data === action } as unknown as KeybindingsManager,
+				() => {},
+			);
+			component.handleInput?.("tui.select.down");
+			component.handleInput?.("tui.editor.cursorRight");
+			component.handleInput?.("tui.select.confirm");
+		};
+
+		await handler?.("", { ui: { custom, notify: vi.fn() } } as unknown as ExtensionCommandContext);
+
+		expect(activeTools).toEqual(["read", "grep"]);
+		expect(recordChanges).toHaveBeenCalledWith([{ toolName: "grep", active: true }]);
 	});
 
 	test("uses left and right to change the selected tool", () => {

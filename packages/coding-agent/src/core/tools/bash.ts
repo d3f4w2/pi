@@ -24,6 +24,19 @@ import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult
 const MAX_TIMEOUT_MS = 2_147_483_647;
 const MAX_TIMEOUT_SECONDS = MAX_TIMEOUT_MS / 1000;
 
+export type BashToolExecutor = "bash" | "powershell";
+
+export function buildBashToolCommand(
+	command: string,
+	executor: BashToolExecutor = "bash",
+	platform: NodeJS.Platform = process.platform,
+): string {
+	if (executor === "bash") return command;
+	if (platform !== "win32") throw new Error("The PowerShell executor is only available on Windows.");
+	const quotedCommand = `'${command.replaceAll("'", "'\"'\"'")}'`;
+	return `powershell.exe -NoProfile -NonInteractive -Command ${quotedCommand}`;
+}
+
 function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 	if (timeout === undefined) return undefined;
 	if (!Number.isFinite(timeout) || timeout <= 0) {
@@ -38,7 +51,12 @@ function resolveTimeoutMs(timeout: number | undefined): number | undefined {
 }
 
 const bashSchema = Type.Object({
-	command: Type.String({ description: "Bash command to execute" }),
+	command: Type.String({ description: "Command to execute with the selected executor" }),
+	executor: Type.Optional(
+		Type.Union([Type.Literal("bash"), Type.Literal("powershell")], {
+			description: "Use bash by default; use powershell only for Windows-only operations",
+		}),
+	),
 	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
 });
 
@@ -223,12 +241,13 @@ function formatDuration(ms: number): string {
 	return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function formatBashCall(args: { command?: string; timeout?: number } | undefined): string {
+function formatBashCall(args: { command?: string; executor?: BashToolExecutor; timeout?: number } | undefined): string {
 	const command = str(args?.command);
 	const timeout = args?.timeout as number | undefined;
 	const timeoutSuffix = timeout ? theme.fg("muted", ` (timeout ${timeout}s)`) : "";
 	const commandDisplay = command === null ? invalidArgText(theme) : command ? command : theme.fg("toolOutput", "...");
-	return theme.fg("toolTitle", theme.bold(`$ ${commandDisplay}`)) + timeoutSuffix;
+	const prompt = args?.executor === "powershell" ? "PS>" : "$";
+	return theme.fg("toolTitle", theme.bold(`${prompt} ${commandDisplay}`)) + timeoutSuffix;
 }
 
 function rebuildBashResultRenderComponent(
@@ -324,20 +343,32 @@ export function createBashToolDefinition(
 	return {
 		name: "bash",
 		label: "bash",
-		description: `Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.`,
-		promptSnippet: "Execute bash commands (ls, grep, find, etc.)",
-		promptGuidelines: exposeSessionEnvironment
-			? ["Inspect PI_* environment variables for current model and session details."]
-			: undefined,
+		description: `Execute terminal commands in the current working directory. Bash is the default executor; on Windows, select the PowerShell executor only for Windows-only operations. Use the dedicated grep tool for file-content searches when it is available. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file.`,
+		promptSnippet:
+			process.platform === "win32"
+				? "Run portable commands in Git Bash or Windows-only commands in PowerShell"
+				: "Execute build, test, Git, package, and system commands",
+		promptGuidelines: [
+			"When the grep tool is available, never use bash to run rg, grep, findstr, or Select-String for file-content searches.",
+			...(process.platform === "win32"
+				? [
+						'Use executor="powershell" only for Windows-only operations such as registry, services, COM, certificates, or PowerShell cmdlets. Keep portable Git, npm, Node, or Python commands in the default bash executor.',
+					]
+				: []),
+			...(exposeSessionEnvironment
+				? ["Inspect PI_* environment variables for current model and session details."]
+				: []),
+		],
 		parameters: bashSchema,
 		async execute(
 			_toolCallId,
-			{ command, timeout }: { command: string; timeout?: number },
+			{ command, executor, timeout }: { command: string; executor?: BashToolExecutor; timeout?: number },
 			signal?: AbortSignal,
 			onUpdate?,
 			ctx?,
 		) {
-			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${command}` : command;
+			const executableCommand = buildBashToolCommand(command, executor);
+			const resolvedCommand = commandPrefix ? `${commandPrefix}\n${executableCommand}` : executableCommand;
 			const spawnContext = resolveSpawnContext(resolvedCommand, cwd, spawnHook, exposeSessionEnvironment, ctx);
 			const output = new OutputAccumulator({ tempFilePrefix: "pi-bash" });
 			let acceptingOutput = true;

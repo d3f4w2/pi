@@ -10,6 +10,7 @@ const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
 	edit: "修改文件内容",
 	write: "新建或覆盖文件",
 	grep: "搜索文件里的文字",
+	code_search: "按意思快速找到相关代码",
 	find: "按名称查找文件",
 	ls: "查看文件夹内容",
 	web_search: "搜索互联网并返回来源",
@@ -89,7 +90,11 @@ class ToolsManager implements Component {
 
 	private setSelectedTool(active: boolean): void {
 		const tool = this.tools[this.selectedIndex];
-		if (!tool || this.activeTools.has(tool.name) === active) return;
+		if (!tool) return;
+		if (this.activeTools.has(tool.name) === active) {
+			this.onChange(tool.name, active);
+			return;
+		}
 		if (active) this.activeTools.add(tool.name);
 		else this.activeTools.delete(tool.name);
 		this.onChange(tool.name, active);

@@ -9,8 +9,9 @@
 ### Added
 
 - Added the built-in `/api` command for configuring OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages providers with multiple models, image support, thinking levels, API key persistence, and immediate model switching.
-- Added the built-in `/tools` command for viewing, enabling, and disabling tools in the current session.
+- Added the built-in `/tools` command for viewing, enabling, and disabling tools, with locked user preferences that restore built-in and extension tool choices across sessions.
 - Added built-in `web_search` and `web_fetch` tools with no-key DuckDuckGo search, optional Brave search through `BRAVE_API_KEY`, readable page extraction, and private-network protection.
+- Added a built-in `code_search` tool backed by mgrep, with intent-only routing, non-blocking background indexing, a two-second foreground budget, a configurable 5,000-file safety limit, scoped and session-level failure circuit breaking, adaptive result widening, direct built-in grep fallback with shell-search avoidance, focused-read guidance, project-boundary protection, and automatic watcher cleanup.
 - Added chainable `pi.registerMarkdownTransformer()` hooks for display-only transformation of user and assistant Markdown.
 - Added an experimental fullscreen UI mode, selectable through `--ui-mode fullscreen` or `/settings` ([#7304](https://github.com/earendil-works/pi/issues/7304)).
 - Added a sticky editor, status, widget, and footer dock to fullscreen mode while keeping the transcript independently scrollable.
@@ -128,6 +129,8 @@
 
 ### Changed
 
+- Changed the built-in `grep` tool to be active by default and stopped disabled exact-search capability from being silently replaced with shell `rg` or `grep` commands.
+- Changed Windows terminal routing to use Git Bash for portable commands, support an explicit PowerShell executor for Windows-only operations, and skip legacy WSL `bash.exe` relay paths.
 - Changed inherited generated model catalogs to expose only provider-verified reasoning effort levels from models.dev ([#6928](https://github.com/earendil-works/pi/pull/6928) by [@davidbrai](https://github.com/davidbrai)).
 
 ### Fixed

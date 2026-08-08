@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { delimiter } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
 
@@ -18,7 +18,46 @@ function isLegacyWslBashPath(path: string): boolean {
 }
 
 function getBashShellConfig(shell: string): ShellConfig {
-	return isLegacyWslBashPath(shell) ? { shell, args: ["-s"], commandTransport: "stdin" } : { shell, args: ["-c"] };
+	if (isLegacyWslBashPath(shell)) {
+		throw new Error(
+			"不能使用 Windows 的 WSL bash.exe 中继程序。请安装 Git for Windows，或在 settings.json 中设置 Git Bash 的 shellPath。",
+		);
+	}
+	return { shell, args: ["-c"] };
+}
+
+export function selectUsableWindowsBashPath(
+	candidates: readonly string[],
+	fileExists: (path: string) => boolean = existsSync,
+): string | null {
+	return candidates.find((candidate) => !isLegacyWslBashPath(candidate) && fileExists(candidate)) ?? null;
+}
+
+export function selectGitBashNearGit(
+	gitExecutables: readonly string[],
+	fileExists: (path: string) => boolean = existsSync,
+): string | null {
+	const candidates = gitExecutables.flatMap((gitExecutable) => {
+		const gitRoot = dirname(dirname(gitExecutable));
+		return [join(gitRoot, "bin", "bash.exe"), join(gitRoot, "usr", "bin", "bash.exe")];
+	});
+	return selectUsableWindowsBashPath(candidates, fileExists);
+}
+
+function findGitBashNearGitOnPath(): string | null {
+	try {
+		const result = spawnSync("where", ["git.exe"], {
+			encoding: "utf-8",
+			timeout: 5000,
+			windowsHide: true,
+		});
+		if (result.status === 0 && result.stdout) {
+			return selectGitBashNearGit(result.stdout.trim().split(/\r?\n/));
+		}
+	} catch {
+		// Ignore errors and continue to the next shell source.
+	}
+	return null;
 }
 
 function findBashOnPath(): string | null {
@@ -31,10 +70,7 @@ function findBashOnPath(): string | null {
 				windowsHide: true,
 			});
 			if (result.status === 0 && result.stdout) {
-				const firstMatch = result.stdout.trim().split(/\r?\n/)[0];
-				if (firstMatch && existsSync(firstMatch)) {
-					return firstMatch;
-				}
+				return selectUsableWindowsBashPath(result.stdout.trim().split(/\r?\n/));
 			}
 		} catch {
 			// Ignore errors
@@ -61,7 +97,7 @@ function findBashOnPath(): string | null {
  * Resolve shell configuration based on platform and an optional explicit shell path.
  * Resolution order:
  * 1. User-specified shellPath
- * 2. On Windows: Git Bash in known locations, then bash on PATH
+ * 2. On Windows: Git Bash in known locations, Git Bash beside git.exe, then bash on PATH
  * 3. On Unix: /bin/bash, then bash on PATH, then fallback to sh
  */
 export function getShellConfig(customShellPath?: string): ShellConfig {
@@ -85,13 +121,14 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 			paths.push(`${programFilesX86}\\Git\\bin\\bash.exe`);
 		}
 
-		for (const path of paths) {
-			if (existsSync(path)) {
-				return getBashShellConfig(path);
-			}
-		}
+		const gitBash = selectUsableWindowsBashPath(paths);
+		if (gitBash) return getBashShellConfig(gitBash);
 
-		// 3. Fallback: search bash.exe on PATH (Cygwin, MSYS2, WSL, etc.)
+		// 3. Find Git Bash beside a non-standard git.exe installation.
+		const gitBashNearGit = findGitBashNearGitOnPath();
+		if (gitBashNearGit) return getBashShellConfig(gitBashNearGit);
+
+		// 4. Fallback: search PATH, but never select the legacy WSL bash.exe relay.
 		const bashOnPath = findBashOnPath();
 		if (bashOnPath) {
 			return getBashShellConfig(bashOnPath);

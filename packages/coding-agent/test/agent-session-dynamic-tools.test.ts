@@ -165,6 +165,26 @@ describe("AgentSession dynamic tool registration", () => {
 		session.dispose();
 	});
 
+	it("activates the built-in grep tool by default", async () => {
+		const settingsManager = SettingsManager.create(tempDir, agentDir);
+		const resourceLoader = new DefaultResourceLoader({ cwd: tempDir, agentDir, settingsManager });
+		await resourceLoader.reload();
+
+		const { session } = await createAgentSession({
+			cwd: tempDir,
+			agentDir,
+			model: getModel("anthropic", "claude-sonnet-4-5")!,
+			settingsManager,
+			sessionManager: SessionManager.inMemory(),
+			resourceLoader,
+		});
+
+		expect(session.getActiveToolNames()).toContain("grep");
+		expect(session.systemPrompt).toContain("- grep: Search exact text or regex in files");
+
+		session.dispose();
+	});
+
 	it("returns source metadata for SDK custom tools", async () => {
 		const settingsManager = SettingsManager.create(tempDir, agentDir);
 		const sessionManager = SessionManager.inMemory();
