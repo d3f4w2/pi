@@ -12,6 +12,8 @@ const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
 	grep: "搜索文件里的文字",
 	find: "按名称查找文件",
 	ls: "查看文件夹内容",
+	web_search: "搜索互联网并返回来源",
+	web_fetch: "读取并整理网页内容",
 };
 
 class ToolsManager implements Component {
