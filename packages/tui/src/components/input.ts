@@ -18,6 +18,7 @@ interface InputState {
  */
 export class Input implements Component, Focusable {
 	private value: string = "";
+	private mask = false;
 	private cursor: number = 0; // Cursor position in the value
 	public onSubmit?: (value: string) => void;
 	public onEscape?: () => void;
@@ -40,9 +41,17 @@ export class Input implements Component, Focusable {
 		return this.value;
 	}
 
+	setMask(mask: boolean): void {
+		this.mask = mask;
+	}
+
 	setValue(value: string): void {
 		this.value = value;
 		this.cursor = Math.min(this.cursor, value.length);
+	}
+
+	setCursorToEnd(): void {
+		this.cursor = this.value.length;
 	}
 
 	handleInput(data: string): void {
@@ -386,16 +395,17 @@ export class Input implements Component, Focusable {
 
 		let visibleText = "";
 		let cursorDisplay = this.cursor;
-		const totalWidth = visibleWidth(this.value);
+		const renderedValue = this.mask ? "*".repeat(this.value.length) : this.value;
+		const totalWidth = visibleWidth(renderedValue);
 
 		if (totalWidth < availableWidth) {
 			// Everything fits (leave room for cursor at end)
-			visibleText = this.value;
+			visibleText = renderedValue;
 		} else {
 			// Need horizontal scrolling
 			// Reserve one column for cursor if it's at the end
 			const scrollWidth = this.cursor === this.value.length ? availableWidth - 1 : availableWidth;
-			const cursorCol = visibleWidth(this.value.slice(0, this.cursor));
+			const cursorCol = visibleWidth(renderedValue.slice(0, this.cursor));
 
 			if (scrollWidth > 0) {
 				const halfWidth = Math.floor(scrollWidth / 2);
@@ -412,8 +422,8 @@ export class Input implements Component, Focusable {
 					startCol = Math.max(0, cursorCol - halfWidth);
 				}
 
-				visibleText = sliceByColumn(this.value, startCol, scrollWidth, true);
-				const beforeCursor = sliceByColumn(this.value, startCol, Math.max(0, cursorCol - startCol), true);
+				visibleText = sliceByColumn(renderedValue, startCol, scrollWidth, true);
+				const beforeCursor = sliceByColumn(renderedValue, startCol, Math.max(0, cursorCol - startCol), true);
 				cursorDisplay = beforeCursor.length;
 			} else {
 				visibleText = "";

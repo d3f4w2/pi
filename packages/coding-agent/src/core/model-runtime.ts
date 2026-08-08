@@ -511,6 +511,16 @@ export class ModelRuntime implements Models {
 		return raceWithAbortSignal(started, signal).then(() => operation);
 	}
 
+	async setApiKey(providerId: string, apiKey: string): Promise<void> {
+		await this.credentials.setApiKey(providerId, apiKey);
+		await this.refresh({ allowNetwork: false });
+	}
+
+	async deleteApiKey(providerId: string): Promise<void> {
+		await this.credentials.delete(providerId);
+		await this.refresh({ allowNetwork: false });
+	}
+
 	private async synchronizeCredentialState(
 		providerId: string,
 		operation: CredentialSynchronizationOperation,

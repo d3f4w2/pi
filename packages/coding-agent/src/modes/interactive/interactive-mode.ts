@@ -2504,7 +2504,7 @@ export class InteractiveMode {
 					this.hideExtensionInput();
 					resolve(undefined);
 				},
-				{ tui: this.ui, timeout: opts?.timeout },
+				{ tui: this.ui, timeout: opts?.timeout, prefill: opts?.prefill, mask: opts?.mask },
 			);
 
 			this.disposeActiveSelector();

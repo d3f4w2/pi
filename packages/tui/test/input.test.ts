@@ -34,6 +34,28 @@ describe("Input component", () => {
 		assert.strictEqual(input.getValue(), "\\x");
 	});
 
+	it("places prefilled input cursor at the end when requested", () => {
+		const input = new Input();
+		input.setValue("prefilled");
+		input.setCursorToEnd();
+		input.handleInput("!");
+
+		assert.strictEqual(input.getValue(), "prefilled!");
+	});
+
+	it("masks rendered input without changing the submitted value", () => {
+		const input = new Input();
+		input.setValue("secret-key");
+		input.setMask(true);
+		input.focused = true;
+
+		const [line] = input.render(80);
+		assert.ok(line);
+		assert.strictEqual((line.match(/\*/gu) ?? []).length, 10);
+		assert.ok(!line.includes("secret-key"));
+		assert.strictEqual(input.getValue(), "secret-key");
+	});
+
 	describe("render", () => {
 		it("does not overflow with wide CJK and fullwidth text", () => {
 			const width = 93;
