@@ -112,6 +112,14 @@ export class ModelRegistry {
 		return this.runtime.getAuth(provider);
 	}
 
+	async setApiKey(provider: string, apiKey: string): Promise<void> {
+		await this.runtime.setApiKey(provider, apiKey);
+	}
+
+	async deleteApiKey(provider: string): Promise<void> {
+		await this.runtime.deleteApiKey(provider);
+	}
+
 	async getApiKeyForProvider(provider: string): Promise<string | undefined> {
 		try {
 			return (await this.runtime.getAuth(provider))?.auth.apiKey;

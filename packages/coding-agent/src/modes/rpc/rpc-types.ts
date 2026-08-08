@@ -244,6 +244,8 @@ export type RpcExtensionUIRequest =
 			method: "input";
 			title: string;
 			placeholder?: string;
+			prefill?: string;
+			mask?: boolean;
 			timeout?: number;
 	  }
 	| { type: "extension_ui_request"; id: string; method: "editor"; title: string; prefill?: string }

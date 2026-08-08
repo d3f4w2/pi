@@ -12,6 +12,7 @@
 
 ### Added
 
+- Added masked single-line input rendering and cursor placement for prefilled extension dialogs.
 - Added the shared `TuiMode` type and `mode` discriminants to the main-screen and alternate-screen TUI renderers.
 - Exported the bundled `Marked` parser and token types.
 - Added width-aware source transforms to the `Markdown` component.

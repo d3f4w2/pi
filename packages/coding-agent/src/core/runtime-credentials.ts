@@ -13,6 +13,11 @@ export class RuntimeCredentials implements CredentialStore {
 		this.overrides.set(providerId, apiKey);
 	}
 
+	async setApiKey(providerId: string, apiKey: string): Promise<void> {
+		await this.store.modify(providerId, async () => ({ type: "api_key", key: apiKey }));
+		this.setRuntimeApiKey(providerId, apiKey);
+	}
+
 	removeRuntimeApiKey(providerId: string): void {
 		this.overrides.delete(providerId);
 	}
