@@ -8,7 +8,7 @@ import { formatSkillsForPrompt, type Skill } from "./skills.ts";
 export interface BuildSystemPromptOptions {
 	/** Custom system prompt (replaces default). */
 	customPrompt?: string;
-	/** Tools to include in prompt. Default: [read, bash, edit, write] */
+	/** Tools to include in prompt. Default: [read, bash, edit, write, grep] */
 	selectedTools?: string[];
 	/** Optional one-line tool snippets keyed by tool name. */
 	toolSnippets?: Record<string, string>;
@@ -78,7 +78,7 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	// Build tools list based on selected tools.
 	// A tool appears in Available tools only when the caller provides a one-line snippet.
-	const tools = selectedTools || ["read", "bash", "edit", "write"];
+	const tools = selectedTools || ["read", "bash", "edit", "write", "grep"];
 	const visibleTools = tools.filter((name) => !!toolSnippets?.[name]);
 	const toolsList =
 		visibleTools.length > 0 ? visibleTools.map((name) => `- ${name}: ${toolSnippets![name]}`).join("\n") : "(none)";
@@ -96,13 +96,18 @@ export function buildSystemPrompt(options: BuildSystemPromptOptions): string {
 
 	const hasBash = tools.includes("bash");
 	const hasGrep = tools.includes("grep");
-	const hasFind = tools.includes("find");
-	const hasLs = tools.includes("ls");
 	const hasRead = tools.includes("read");
 
 	// File exploration guidelines
-	if (hasBash && !hasGrep && !hasFind && !hasLs) {
-		addGuideline("Use bash for file operations like ls, rg, find");
+	if (hasBash && !hasGrep) {
+		addGuideline(
+			"Exact file-content search is unavailable until the grep tool is enabled. Do not emulate it through bash.",
+		);
+	}
+	if (hasGrep) {
+		addGuideline(
+			"Every exact file-content search must use the grep tool directly. Call grep once per path when searching multiple directories. Never run rg, grep, findstr, or Select-String through bash.",
+		);
 	}
 
 	for (const guideline of promptGuidelines ?? []) {
@@ -134,8 +139,8 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 - Examples: ${examplesPath} (extensions, custom tools, SDK)
 - When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
 - When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)
-- When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`;
+- For exploratory pi questions, use available search tools to locate the relevant docs, examples, and code, then read focused sections; expand only when the evidence is incomplete
+- Before implementing pi changes or performing a comprehensive review, read the relevant docs and examples completely when full context is required, and follow their .md cross-references`;
 
 	if (appendSection) {
 		prompt += appendSection;
