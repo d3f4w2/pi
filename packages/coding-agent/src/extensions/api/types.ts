@@ -50,6 +50,18 @@ export function isProviderApi(value: string | undefined): value is ProviderApi {
 	return PROVIDER_API_OPTIONS.includes(value as ProviderApi);
 }
 
+export function suggestOpenAIBaseUrl(api: ProviderApi, baseUrl: string): string | undefined {
+	if (api !== "openai-responses" && api !== "openai-completions") return undefined;
+	try {
+		const parsed = new URL(baseUrl);
+		if (parsed.pathname !== "/" || parsed.search || parsed.hash) return undefined;
+		parsed.pathname = "/v1";
+		return parsed.toString();
+	} catch {
+		return undefined;
+	}
+}
+
 export function createThinkingLevelMap(maxLevel: Exclude<ThinkingLevel, "off">): ThinkingLevelMap {
 	const map: ThinkingLevelMap = {};
 	const maxIndex = MAX_THINKING_LEVELS.indexOf(maxLevel);

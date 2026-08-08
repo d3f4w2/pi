@@ -12,6 +12,7 @@ import {
 	MAX_THINKING_LEVELS,
 	PROVIDER_API_OPTIONS,
 	type ProviderApi,
+	suggestOpenAIBaseUrl,
 } from "./types.ts";
 import { type ApiDashboardResult, showApiDashboard } from "./ui.ts";
 
@@ -103,7 +104,17 @@ async function editProviderDetails(ctx: ExtensionCommandContext, draft: ApiProvi
 		try {
 			const parsed = new URL(baseUrl);
 			if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("unsupported protocol");
-			draft.baseUrl = baseUrl.replace(/\/+$/u, "");
+			const normalizedBaseUrl = baseUrl.replace(/\/+$/u, "");
+			const suggestedBaseUrl = suggestOpenAIBaseUrl(draft.api, normalizedBaseUrl);
+			if (suggestedBaseUrl) {
+				const useSuggestedBaseUrl = await ctx.ui.confirm(
+					"补全 Base URL",
+					`检测到 OpenAI 兼容接口，是否使用建议地址？\n${suggestedBaseUrl}`,
+				);
+				draft.baseUrl = useSuggestedBaseUrl ? suggestedBaseUrl : normalizedBaseUrl;
+			} else {
+				draft.baseUrl = normalizedBaseUrl;
+			}
 			break;
 		} catch {
 			ctx.ui.notify("Base URL 必须是 http 或 https 地址。", "warning");

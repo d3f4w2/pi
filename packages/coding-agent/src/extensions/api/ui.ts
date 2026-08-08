@@ -1,10 +1,15 @@
 import type { Component, TUI } from "@earendil-works/pi-tui";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { KeybindingsManager } from "../../core/keybindings.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ApiProviderDraft } from "./types.ts";
 
 export type ApiDashboardResult = { type: "new" } | { type: "edit"; providerId: string } | { type: "close" };
+
+function padToWidth(value: string, width: number): string {
+	const truncated = truncateToWidth(value, width, "");
+	return `${truncated}${" ".repeat(Math.max(0, width - visibleWidth(truncated)))}`;
+}
 
 class ApiDashboard implements Component {
 	private readonly providers: readonly ApiProviderDraft[];
@@ -38,8 +43,8 @@ class ApiDashboard implements Component {
 		const rightWidth = Math.max(16, innerWidth - leftWidth - 3);
 		const lines = [
 			this.theme.fg("accent", `┌${"─".repeat(innerWidth)}┐`),
-			this.theme.fg("accent", `│${this.theme.bold(" API 供应商管理").padEnd(innerWidth)}│`),
-			this.theme.fg("dim", `│${"←/→ 切换区域 · ↑/↓ 选择 · Enter 确认 · Esc 关闭".padEnd(innerWidth)}│`),
+			this.theme.fg("accent", `│${padToWidth(this.theme.bold(" API 供应商管理"), innerWidth)}│`),
+			this.theme.fg("dim", `│${padToWidth("←/→ 切换区域 · ↑/↓ 选择 · Enter 确认 · Esc 关闭", innerWidth)}│`),
 			this.theme.fg("border", `├${"─".repeat(leftWidth)}┬${"─".repeat(rightWidth)}┤`),
 			this.columnLine(" 操作", " 已配置供应商", leftWidth, rightWidth),
 			this.columnLine(this.actionLabel(), this.providerLabel(), leftWidth, rightWidth),
@@ -104,9 +109,7 @@ class ApiDashboard implements Component {
 	}
 
 	private columnLine(left: string, right: string, leftWidth: number, rightWidth: number): string {
-		const leftText = truncateToWidth(left, leftWidth, "");
-		const rightText = truncateToWidth(right, rightWidth, "");
-		return `│${leftText.padEnd(leftWidth)}│${rightText.padEnd(rightWidth)}│`;
+		return `│${padToWidth(left, leftWidth)}│${padToWidth(right, rightWidth)}│`;
 	}
 
 	private requestRender(): void {
