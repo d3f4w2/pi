@@ -3,22 +3,7 @@ import { truncateToWidth } from "@earendil-works/pi-tui";
 import type { ToolInfo } from "../../core/extensions/types.ts";
 import type { KeybindingsManager } from "../../core/keybindings.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
-
-const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
-	read: "读取文件内容",
-	bash: "运行终端命令",
-	edit: "修改文件内容",
-	write: "新建或覆盖文件",
-	grep: "搜索文件里的文字",
-	ast_grep: "按代码结构精确搜索",
-	code_search: "按意思快速找到相关代码",
-	lsp: "准确查询代码关系和错误",
-	verify: "运行相关检查和测试",
-	find: "按名称查找文件",
-	ls: "查看文件夹内容",
-	web_search: "搜索互联网并返回来源",
-	web_fetch: "读取并整理网页内容",
-};
+import { getToolDescription } from "./discovery.ts";
 
 class ToolsManager implements Component {
 	private readonly tools: readonly ToolInfo[];
@@ -54,13 +39,13 @@ class ToolsManager implements Component {
 		if (width <= 0) return [];
 		const lines = [
 			this.theme.bold("工具管理"),
-			this.theme.fg("dim", "↑/↓ 选择 · ← 关闭 · → 开启 · Enter/Esc 完成"),
+			this.theme.fg("dim", "开=允许使用 · ↑/↓ 选择 · ← 关闭 · → 开启 · Enter/Esc 完成"),
 			"",
 		];
 		for (const [index, tool] of this.tools.entries()) {
 			const selected = index === this.selectedIndex;
 			const status = this.activeTools.has(tool.name) ? "开" : "关";
-			const description = TOOL_DESCRIPTIONS[tool.name] ?? "扩展提供的工具";
+			const description = getToolDescription(tool.name);
 			const line = `${selected ? "›" : " "} [${status}] ${tool.name} - ${description}`;
 			lines.push(selected ? this.theme.fg("accent", line) : line);
 		}

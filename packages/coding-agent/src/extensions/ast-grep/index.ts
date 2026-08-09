@@ -38,6 +38,9 @@ function registerAstGrepExtension(pi: ExtensionAPI, service: AstGrepSearchServic
 		name: "ast_grep",
 		label: "代码结构搜索",
 		description: "按代码结构精确搜索，能分清真正的代码、注释和字符串。",
+		discovery: {
+			keywords: ["代码结构", "语法结构", "结构搜索", "调用写法", "ast grep", "structural code search"],
+		},
 		promptSnippet: "按语法结构精确查找重复的代码写法",
 		promptGuidelines: [
 			"当前上下文足够时直接回答，不要为了验证而调用搜索工具。",

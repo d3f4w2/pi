@@ -911,6 +911,7 @@ export class AgentSession {
 			description: definition.description,
 			parameters: definition.parameters,
 			promptGuidelines: definition.promptGuidelines,
+			discovery: definition.discovery,
 			sourceInfo,
 		}));
 	}

@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from "vitest";
 import type { ExtensionAPI, ToolDefinition } from "../src/core/extensions/types.ts";
 import { htmlToMarkdown, htmlToText } from "../src/extensions/web/content.ts";
 import { capModelOutput } from "../src/extensions/web/fetch.ts";
-import webExtension from "../src/extensions/web/index.ts";
+import webExtension, { createWebExtension } from "../src/extensions/web/index.ts";
 import {
 	clampTimeoutSeconds,
 	fetchNetworkResource,
@@ -26,11 +26,42 @@ function response(status: number, body: string, headers: Record<string, string> 
 describe("web extension", () => {
 	test("registers web_search and web_fetch with concise Chinese descriptions", () => {
 		const tools: ToolDefinition[] = [];
-		webExtension({ registerTool: (tool: ToolDefinition) => tools.push(tool) } as unknown as ExtensionAPI);
+		webExtension({
+			registerTool: (tool: ToolDefinition) => tools.push(tool),
+			on: () => {},
+		} as unknown as ExtensionAPI);
 
 		expect(tools.map((tool) => tool.name)).toEqual(["web_search", "web_fetch"]);
 		expect(tools[0]?.description).toContain("搜索互联网");
 		expect(tools[1]?.description).toContain("读取网页");
+	});
+
+	test("stops the current agent run after two empty searches", async () => {
+		const tools: ToolDefinition[] = [];
+		let agentStart: (() => void) | undefined;
+		const search = vi.fn(async (options: { query: string }) => ({
+			text: `没有结果：${options.query}`,
+			details: { provider: "duckduckgo" as const, query: options.query, resultCount: 0, durationMs: 1 },
+		}));
+		createWebExtension({ searchWeb: search })({
+			registerTool: (tool: ToolDefinition) => tools.push(tool),
+			on: (event: string, handler: () => void) => {
+				if (event === "agent_start") agentStart = handler;
+			},
+		} as unknown as ExtensionAPI);
+		const webSearch = tools.find((tool) => tool.name === "web_search");
+
+		const first = webSearch?.execute("first", { query: "first query" }, undefined, undefined, {} as never);
+		const second = webSearch?.execute("second", { query: "second query" }, undefined, undefined, {} as never);
+		const third = webSearch?.execute("third", { query: "third query" }, undefined, undefined, {} as never);
+		const [, , blocked] = await Promise.all([first, second, third]);
+
+		expect(search).toHaveBeenCalledTimes(2);
+		expect(blocked?.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("停止继续搜索") });
+
+		agentStart?.();
+		await webSearch?.execute("new-run", { query: "new run" }, undefined, undefined, {} as never);
+		expect(search).toHaveBeenCalledTimes(3);
 	});
 });
 
@@ -60,6 +91,39 @@ describe("safe network layer", () => {
 			/本地|内网/,
 		);
 		expect(request).toHaveBeenCalledOnce();
+	});
+
+	test("ignores abort errors while discarding a redirect body", async () => {
+		let errorHandler: ((error: Error) => void) | undefined;
+		const redirectBody = {
+			async *[Symbol.asyncIterator]() {},
+			on: (_event: string, handler: (error: Error) => void) => {
+				errorHandler = handler;
+			},
+			destroy: () => {
+				const error = new Error("Request aborted");
+				if (!errorHandler) throw error;
+				errorHandler(error);
+			},
+		} as unknown as RawNetworkResponse["body"];
+		const request = vi
+			.fn()
+			.mockResolvedValueOnce({
+				status: 302,
+				statusText: "Found",
+				headers: { location: "https://example.com/final" },
+				body: redirectBody,
+			})
+			.mockResolvedValueOnce(response(200, "ok", { "content-type": "text/plain" }));
+		const dependencies: NetworkDependencies = {
+			resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+			request,
+		};
+
+		const result = await fetchNetworkResource({ url: "https://example.com", maxBytes: 1024 }, dependencies);
+
+		expect(new TextDecoder().decode(result.body)).toBe("ok");
+		expect(request).toHaveBeenCalledTimes(2);
 	});
 
 	test("supports proxy fake-IP DNS for domain names but not direct IP URLs", async () => {

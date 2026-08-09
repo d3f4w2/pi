@@ -26,6 +26,9 @@ function registerVerifyExtension(pi: ExtensionAPI, service: VerifyToolService): 
 		name: "verify",
 		label: "代码验证",
 		description: "自动运行类型检查、相关测试和 lint，并只返回关键结果。",
+		discovery: {
+			keywords: ["检查修改", "验证代码", "类型检查", "运行测试", "代码规范", "verify code", "typecheck"],
+		},
 		promptSnippet: "修改代码后，用最小范围的检查和测试证明结果正确",
 		promptGuidelines: [
 			"只回答问题、读取代码、修改文档或注释时不要调用 verify。",

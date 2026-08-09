@@ -21,6 +21,7 @@ export interface LookupAddress {
 }
 
 export interface RawNetworkBody extends AsyncIterable<unknown> {
+	on?(event: "error", listener: (error: Error) => void): unknown;
 	destroy(error?: Error): void;
 }
 
@@ -293,6 +294,15 @@ function abortError(signal: AbortSignal): Error {
 	return signal.reason instanceof Error ? signal.reason : new Error("联网请求已取消。");
 }
 
+function safelyDestroyBody(body: RawNetworkBody, error?: Error): void {
+	body.on?.("error", () => {});
+	try {
+		body.destroy(error);
+	} catch {
+		// The response is already being discarded; cleanup errors must not crash the agent.
+	}
+}
+
 async function readBody(body: RawNetworkBody, maxBytes: number, signal: AbortSignal): Promise<Uint8Array> {
 	const chunks: Uint8Array[] = [];
 	let total = 0;
@@ -311,7 +321,7 @@ async function readBody(body: RawNetworkBody, maxBytes: number, signal: AbortSig
 			chunks.push(bytes);
 		}
 	} catch (error) {
-		body.destroy(error instanceof Error ? error : undefined);
+		safelyDestroyBody(body, error instanceof Error ? error : undefined);
 		throw error;
 	}
 	const result = new Uint8Array(total);
@@ -356,7 +366,7 @@ export async function fetchNetworkResource(
 			});
 			const location = headerValue(response.headers, "location");
 			if (REDIRECT_STATUSES.has(response.status) && location) {
-				response.body.destroy();
+				safelyDestroyBody(response.body);
 				if (redirectCount >= maxRedirects) throw new Error(`网页跳转次数超过 ${maxRedirects} 次。`);
 				const nextUrl = parseSafeHttpUrl(new URL(location, currentUrl).toString());
 				if (nextUrl.origin !== currentUrl.origin) headers = stripSensitiveHeaders(headers);
@@ -376,12 +386,12 @@ export async function fetchNetworkResource(
 
 			const contentLength = Number.parseInt(headerValue(response.headers, "content-length"), 10);
 			if (Number.isFinite(contentLength) && contentLength > options.maxBytes) {
-				response.body.destroy();
+				safelyDestroyBody(response.body);
 				throw new Error(`网页内容过大，超过 ${Math.ceil(options.maxBytes / 1024)} KB 限制。`);
 			}
 			const contentType = headerValue(response.headers, "content-type");
 			if (!isAllowedContentType(contentType, options.allowedContentTypes)) {
-				response.body.destroy();
+				safelyDestroyBody(response.body);
 				throw new Error(`不支持这种网页内容：${contentType || "未知类型"}`);
 			}
 			const responseBody = await readBody(response.body, options.maxBytes, abort.signal);

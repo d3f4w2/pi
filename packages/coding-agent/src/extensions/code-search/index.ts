@@ -27,6 +27,9 @@ export default function codeSearchExtension(pi: ExtensionAPI): void {
 		name: "code_search",
 		label: "语义代码搜索",
 		description: "按意思搜索当前项目中的代码，返回最相关的文件、行号和代码片段。",
+		discovery: {
+			keywords: ["按意思找代码", "代码意图", "语义搜索", "功能在哪里", "semantic code search"],
+		},
 		promptSnippet: "按自然语言描述快速找到相关代码",
 		promptGuidelines: [
 			"当前上下文已经足够回答时直接回答，不要为了验证而调用任何搜索工具。",

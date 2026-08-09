@@ -450,6 +450,13 @@ export interface ToolRenderContext<TState = any, TArgs = any> {
 /**
  * Tool definition for registerTool().
  */
+export interface ToolDiscoveryMetadata {
+	/** Short Chinese or English phrases describing when this tool is useful. */
+	keywords: string[];
+	/** Optional tools commonly needed immediately after this tool. They still respect user preferences and the budget. */
+	companionTools?: string[];
+}
+
 export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = unknown, TState = any> {
 	/** Tool name (used in LLM tool calls) */
 	name: string;
@@ -461,6 +468,8 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	promptSnippet?: string;
 	/** Optional guideline bullets appended to the default system prompt Guidelines section when this tool is active. */
 	promptGuidelines?: string[];
+	/** Opt into on-demand discovery. Tools without this metadata remain active whenever the user allows them. */
+	discovery?: ToolDiscoveryMetadata;
 	/** Parameter schema (TypeBox) */
 	parameters: TParams;
 	/** Optional provider-side constrained sampling request for this tool. Set false to explicitly disable it, equivalent to leaving it undefined. */
@@ -1575,8 +1584,11 @@ export type GetSessionNameHandler = () => string | undefined;
 
 export type GetActiveToolsHandler = () => string[];
 
-/** Tool info with name, description, parameter schema, prompt guidelines, and source metadata. */
-export type ToolInfo = Pick<ToolDefinition, "name" | "description" | "parameters" | "promptGuidelines"> & {
+/** Tool info with model-facing metadata and source metadata. */
+export type ToolInfo = Pick<
+	ToolDefinition,
+	"name" | "description" | "parameters" | "promptGuidelines" | "discovery"
+> & {
 	sourceInfo: SourceInfo;
 };
 

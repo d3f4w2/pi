@@ -74,7 +74,7 @@ describe("AgentSession dynamic tool registration", () => {
 
 		const bashTool = session.agent.state.tools.find((tool) => tool.name === "bash")!;
 		expect(session.systemPrompt).toContain(
-			"You can inspect PI_* environment variables for current model and session details.",
+			"PI_* environment variables contain current model and session details; inspect them only when the user asks for that information.",
 		);
 		await bashTool.execute("bash-env", { command: "printf ok" });
 		expect(sessionEnv).toMatchObject({
@@ -111,6 +111,7 @@ describe("AgentSession dynamic tool registration", () => {
 							name: "dynamic_tool",
 							label: "Dynamic Tool",
 							description: "Tool registered from session_start",
+							discovery: { keywords: ["dynamic behavior"] },
 							promptSnippet: "Run dynamic test behavior",
 							promptGuidelines: ["Use dynamic_tool when the user asks for dynamic behavior tests."],
 							parameters: Type.Object({}),
@@ -146,6 +147,7 @@ describe("AgentSession dynamic tool registration", () => {
 		expect(dynamicTool?.promptGuidelines).toEqual([
 			"Use dynamic_tool when the user asks for dynamic behavior tests.",
 		]);
+		expect(dynamicTool?.discovery).toEqual({ keywords: ["dynamic behavior"] });
 		expect(dynamicTool?.sourceInfo).toMatchObject({
 			path: "<inline:1>",
 			source: "inline",

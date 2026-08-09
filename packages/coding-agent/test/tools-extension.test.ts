@@ -5,6 +5,7 @@ import type {
 	ExtensionAPI,
 	ExtensionCommandContext,
 	RegisteredCommand,
+	ToolDefinition,
 	ToolInfo,
 } from "../src/core/extensions/types.ts";
 import type { KeybindingsManager } from "../src/core/keybindings.ts";
@@ -16,19 +17,27 @@ import type { Theme } from "../src/modes/interactive/theme/theme.ts";
 const tools = [{ name: "read" }, { name: "grep" }] as ToolInfo[];
 
 describe("tools extension", () => {
-	test("restores saved choices when the session starts", async () => {
+	test("restores saved choices and hides discoverable tools when the session starts", async () => {
 		let sessionStart: (() => Promise<void>) | undefined;
-		let activeTools = ["read", "bash", "code_search"];
+		let activeTools = ["read", "bash", "code_search", "tool_search"];
 		const storage: ToolPreferencesStore = {
 			load: async () => ({ enabledTools: ["grep"], disabledTools: ["bash"] }),
 			recordChanges: async () => {},
 		};
 		const pi = {
+			registerTool: () => {},
 			registerCommand: () => {},
 			on: (event: string, handler: () => Promise<void>) => {
 				if (event === "session_start") sessionStart = handler;
 			},
-			getAllTools: () => [{ name: "read" }, { name: "bash" }, { name: "grep" }, { name: "code_search" }],
+			getAllTools: () =>
+				[
+					{ name: "read" },
+					{ name: "bash" },
+					{ name: "grep" },
+					{ name: "code_search", discovery: { keywords: ["语义搜索"] } },
+					{ name: "tool_search" },
+				] as ToolInfo[],
 			getActiveTools: () => activeTools,
 			setActiveTools: (names: string[]) => {
 				activeTools = names;
@@ -38,7 +47,136 @@ describe("tools extension", () => {
 		createToolsExtension(storage)(pi);
 		await sessionStart?.();
 
-		expect(activeTools).toEqual(["read", "code_search", "grep"]);
+		expect(activeTools).toEqual(["read", "grep", "tool_search"]);
+	});
+
+	test("loads at most two matching tools and replaces the previous discovery", async () => {
+		let sessionStart: (() => Promise<void>) | undefined;
+		let registeredTool: ToolDefinition | undefined;
+		let activeTools = ["read", "ast_grep", "web_search", "web_fetch", "tool_search"];
+		const allTools = [
+			{ name: "read" },
+			{ name: "ast_grep", discovery: { keywords: ["代码结构"] } },
+			{ name: "web_search", discovery: { keywords: ["网页", "最新资料"] } },
+			{ name: "web_fetch", discovery: { keywords: ["网页", "读取网址"] } },
+			{ name: "tool_search" },
+		] as ToolInfo[];
+		const storage: ToolPreferencesStore = {
+			load: async () => ({ enabledTools: [], disabledTools: [] }),
+			recordChanges: vi.fn(async () => {}),
+		};
+		const pi = {
+			registerTool: (definition: ToolDefinition) => {
+				registeredTool = definition;
+			},
+			registerCommand: () => {},
+			on: (event: string, handler: () => Promise<void>) => {
+				if (event === "session_start") sessionStart = handler;
+			},
+			getAllTools: () => allTools,
+			getActiveTools: () => activeTools,
+			setActiveTools: (names: string[]) => {
+				activeTools = names;
+			},
+		} as unknown as ExtensionAPI;
+
+		createToolsExtension(storage)(pi);
+		await sessionStart?.();
+		expect(activeTools).toEqual(["read", "tool_search"]);
+
+		const webResult = await registeredTool?.execute(
+			"search-web",
+			{ query: "网页资料" },
+			undefined,
+			undefined,
+			{} as ExtensionCommandContext,
+		);
+		expect(activeTools).toEqual(["read", "web_search", "web_fetch", "tool_search"]);
+		expect(webResult?.content[0]).toMatchObject({ type: "text", text: expect.stringContaining("web_search") });
+
+		await registeredTool?.execute(
+			"search-structure",
+			{ query: "代码结构" },
+			undefined,
+			undefined,
+			{} as ExtensionCommandContext,
+		);
+		expect(activeTools).toEqual(["read", "ast_grep", "tool_search"]);
+		expect(storage.recordChanges).not.toHaveBeenCalled();
+	});
+
+	test("restores all allowed tools when tool_search is disabled", async () => {
+		let sessionStart: (() => Promise<void>) | undefined;
+		let activeTools = ["read", "ast_grep", "verify", "tool_search"];
+		const storage: ToolPreferencesStore = {
+			load: async () => ({ enabledTools: [], disabledTools: ["tool_search"] }),
+			recordChanges: async () => {},
+		};
+		const pi = {
+			registerTool: () => {},
+			registerCommand: () => {},
+			on: (event: string, handler: () => Promise<void>) => {
+				if (event === "session_start") sessionStart = handler;
+			},
+			getAllTools: () =>
+				[
+					{ name: "read" },
+					{ name: "ast_grep", discovery: { keywords: ["代码结构"] } },
+					{ name: "verify", discovery: { keywords: ["检查修改"] } },
+					{ name: "tool_search" },
+				] as ToolInfo[],
+			getActiveTools: () => activeTools,
+			setActiveTools: (names: string[]) => {
+				activeTools = names;
+			},
+		} as unknown as ExtensionAPI;
+
+		createToolsExtension(storage)(pi);
+		await sessionStart?.();
+
+		expect(activeTools).toEqual(["read", "ast_grep", "verify"]);
+	});
+
+	test("adds newly registered tools to the allowed pool before applying discovery", async () => {
+		const handlers = new Map<string, () => Promise<void> | void>();
+		let registeredTool: ToolDefinition | undefined;
+		let activeTools = ["read", "tool_search"];
+		const allTools = [{ name: "read" }, { name: "tool_search" }] as ToolInfo[];
+		const storage: ToolPreferencesStore = {
+			load: async () => ({ enabledTools: [], disabledTools: [] }),
+			recordChanges: async () => {},
+		};
+		const pi = {
+			registerTool: (definition: ToolDefinition) => {
+				registeredTool = definition;
+			},
+			registerCommand: () => {},
+			on: (event: string, handler: () => Promise<void> | void) => {
+				handlers.set(event, handler);
+			},
+			getAllTools: () => allTools,
+			getActiveTools: () => activeTools,
+			setActiveTools: (names: string[]) => {
+				activeTools = names;
+			},
+		} as unknown as ExtensionAPI;
+
+		createToolsExtension(storage)(pi);
+		await handlers.get("session_start")?.();
+		allTools.push({ name: "dynamic_docs", discovery: { keywords: ["生成文档"] } } as ToolInfo);
+		activeTools.push("dynamic_docs");
+
+		await handlers.get("before_agent_start")?.();
+		expect(activeTools).toEqual(["read", "tool_search"]);
+
+		await registeredTool?.execute(
+			"find-dynamic-tool",
+			{ query: "生成文档" },
+			undefined,
+			undefined,
+			{} as ExtensionCommandContext,
+		);
+		expect(activeTools).toEqual(["read", "tool_search", "dynamic_docs"]);
 	});
 
 	test("registers the /tools command", async () => {
@@ -46,6 +184,7 @@ describe("tools extension", () => {
 		let handler: RegisteredCommand["handler"] | undefined;
 		const custom = vi.fn(async () => undefined);
 		const pi = {
+			registerTool: () => {},
 			registerCommand: (name: string, command: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
 				commandName = name;
 				handler = command.handler;
@@ -72,6 +211,7 @@ describe("tools extension", () => {
 		const notify = vi.fn();
 		const semanticTools = [{ name: "read" }, { name: "code_search" }] as ToolInfo[];
 		const pi = {
+			registerTool: () => {},
 			registerCommand: (_name: string, command: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
 				handler = command.handler;
 			},
@@ -119,6 +259,7 @@ describe("tools extension", () => {
 		const notify = vi.fn();
 		const lspTools = [{ name: "read" }, { name: "lsp" }] as ToolInfo[];
 		const pi = {
+			registerTool: () => {},
 			registerCommand: (_name: string, command: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
 				handler = command.handler;
 			},
@@ -165,6 +306,7 @@ describe("tools extension", () => {
 		const notify = vi.fn();
 		const verifyTools = [{ name: "read" }, { name: "verify" }] as ToolInfo[];
 		const pi = {
+			registerTool: () => {},
 			registerCommand: (_name: string, command: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
 				handler = command.handler;
 			},
@@ -213,6 +355,7 @@ describe("tools extension", () => {
 			recordChanges,
 		};
 		const pi = {
+			registerTool: () => {},
 			registerCommand: (_name: string, command: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
 				handler = command.handler;
 			},

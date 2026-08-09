@@ -361,7 +361,9 @@ export function createBashToolDefinition(
 					]
 				: []),
 			...(exposeSessionEnvironment
-				? ["Inspect PI_* environment variables for current model and session details."]
+				? [
+						"PI_* environment variables contain current model and session details; inspect them only when the user asks for that information.",
+					]
 				: []),
 		],
 		parameters: bashSchema,
