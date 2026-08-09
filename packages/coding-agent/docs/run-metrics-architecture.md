@@ -10,14 +10,14 @@
 
 ```text
 before_agent_start → 记录任务类型，不保存原始提示
-agent_start        → 开始计时
+agent_start        → 开始计时并生成运行 ID
 tool_result        → 记录工具、错误和验证证据
-turn_end           → 记录回合数
+turn_end           → 记录回合、Token、费用和可见重试
 agent_settled      → 写入一条 JSONL
 /stats             → 本地聚合并显示
 ```
 
-记录保存在 `~/.pi/agent/metrics/tool-runs.jsonl`。每条记录只包含时间、耗时、任务类别、工具计数、错误计数和结果，不保存提示、工具参数、输出、路径、代码或密钥。
+记录保存在 `~/.pi/agent/metrics/tool-runs.jsonl`。每条 `RunRecord` 只包含运行 ID、时间、耗时、任务类别、Token、费用、重试、工具计数、错误计数和验证证据摘要，不保存提示、工具参数、输出、路径、代码或密钥。旧版记录读取时转换为新结构；无法解析的行直接跳过。
 
 ## 成功定义
 
@@ -28,10 +28,25 @@ agent_settled      → 写入一条 JSONL
 
 `/stats` 展示的是相关性，不声称某个工具因果性地带来成功。只有对照实验才能证明因果关系。
 
+## 本地评测
+
+`/evals` 使用独立的 `EvalCase`、确定性评分器和 `EvalReport`：
+
+```text
+/evals run       → 运行 10 个离线基础设施冒烟案例
+/evals latest    → 查看最近报告
+/evals baseline  → 保存最近报告为本地基线
+/evals compare   → 比较成功率、Token、P95、工具错误和重试
+/evals failures  → 查看最近失败案例
+```
+
+基础设施冒烟不调用模型、不联网，也不代表代理能力提升。它只验证数据、评分、存储和比较链路。真实开发任务和隐藏保留集以后接入同一个报告接口。
+
 ## 性能与隐私
 
 - 不注册模型工具，不增加工具 schema。
 - 每个事件只做常数时间的内存计数。
 - 每次任务只追加一行小型 JSON。
 - 日志超过 2 MB 时保留最近 1000 条。
+- 评测只在用户显式运行 `/evals` 时执行。
 - 读取损坏行时跳过，评测故障不能影响代理任务。

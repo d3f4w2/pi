@@ -1,4 +1,4 @@
-import type { RunMetricRecord, RunOutcome } from "./types.ts";
+import type { RunOutcome, RunRecord } from "./types.ts";
 
 const SUCCESS_OUTCOMES = new Set<RunOutcome>(["completed", "verified"]);
 
@@ -14,12 +14,14 @@ function percent(value: number, total: number): string {
 	return total === 0 ? "-" : `${Math.round((value / total) * 100)}%`;
 }
 
-export function formatRunMetrics(records: readonly RunMetricRecord[]): string {
+export function formatRunMetrics(records: readonly RunRecord[]): string {
 	if (records.length === 0) return "还没有执行记录。完成几个任务后再运行 /stats。";
 	const successful = records.filter((record) => SUCCESS_OUTCOMES.has(record.outcome)).length;
 	const verified = records.filter((record) => record.outcome === "verified").length;
 	const unverified = records.filter((record) => record.outcome === "unverified").length;
 	const failed = records.filter((record) => record.outcome === "failed" || record.outcome === "aborted").length;
+	const totalTokens = records.reduce((sum, record) => sum + record.usage.totalTokens, 0);
+	const totalCost = records.reduce((sum, record) => sum + record.usage.cost, 0);
 	const aggregate = new Map<string, ToolAggregate>();
 	for (const record of records) {
 		for (const [name, usage] of Object.entries(record.tools)) {
@@ -34,6 +36,7 @@ export function formatRunMetrics(records: readonly RunMetricRecord[]): string {
 	const lines = [
 		`执行记录：${records.length} 次`,
 		`成功 ${successful} · 已验证代码任务 ${verified} · 未验证 ${unverified} · 失败/中止 ${failed}`,
+		`Token ${totalTokens.toLocaleString()} · 费用 $${totalCost.toFixed(4)}`,
 		"",
 		"工具                 使用任务  调用  错误  使用时成功  未使用时成功  相关差值",
 	];

@@ -70,6 +70,7 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 
 - [Environment variables](environment-variables.md) - Pi process configuration and session metadata available to bash tools.
 - [Session format](session-format.md) - JSONL session file format, entry types, and SessionManager API.
+- [Local evaluations](evals.md) - run deterministic offline smoke checks and compare a saved baseline.
 
 ## Platform setup
 

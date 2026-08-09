@@ -28,6 +28,7 @@ open -> snapshot -> click/type -> console/screenshot -> close
 6. 控制台、异常、文本和截图都有大小上限。
 7. 网页内容始终标记为不可信外部内容，不能成为代理指令。
 8. Pi 会话关闭时关闭浏览器并清理临时目录。
+9. 不提供 `/browser` 手动元素面板；元素引用仅供代理内部连续调用，用户只表达高层目标。
 
 ## Consequences
 

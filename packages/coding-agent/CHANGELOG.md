@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added a local deterministic evaluation foundation with privacy-safe `RunRecord` token, cost, retry, and verification summaries; typed `EvalCase` and `EvalReport` data; ten offline infrastructure smoke cases; persistent baselines; and `/evals` run, latest, compare, and failure views without model calls.
 - Added a persistent `language` setting with automatic system-locale detection, Simplified Chinese and English interfaces, immediate runtime switching, typed message dictionaries, English fallback, and bilingual Express Track settings, model, thinking, editor, and footer surfaces.
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
 - Added stale-safe anchored reads and atomic edits: ordinary text reads now return compact line hashes and a file revision, while edit validates anchored ranges and stale files before replacing local files atomically.
@@ -29,7 +30,7 @@
 - Added persistent per-turn Git workspace snapshots and `/undo-turn`, with file previews, explicit confirmation, user-change conflict detection, multi-file rollback, dirty-worktree preservation, concurrent-session locking, and no Git history mutation.
 - Added one structured `git` tool and `/git` interface for compact status, per-file Diff, exact staging, strict commits, bounded history, and always-confirmed pushes without shell routing.
 - Added a session-scoped `process` tool and `/process` interface for direct background process launch, bounded cursor logs, restart, stop, URL detection, project boundaries, and automatic cleanup.
-- Added an isolated `browser` tool and `/browser` interface using the local Chrome DevTools Protocol for semantic snapshots, reference-only interaction, bounded console capture, screenshots, local development URLs, temporary profiles, and automatic cleanup.
+- Added an isolated agent-only `browser` tool using the local Chrome DevTools Protocol for semantic snapshots, automatic reference-based interaction, bounded console capture, screenshots, local development URLs, temporary profiles, and automatic cleanup.
 
 ### Changed
 

@@ -1,12 +1,8 @@
-import { visibleWidth } from "@earendil-works/pi-tui";
-import { beforeAll, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext, ToolDefinition } from "../src/core/extensions/types.ts";
-import { KeybindingsManager } from "../src/core/keybindings.ts";
 import { createBrowserExtension } from "../src/extensions/browser/index.ts";
 import { BrowserController, formatBrowserSnapshot, parseBrowserUrl } from "../src/extensions/browser/service.ts";
 import type { BrowserPageSession, BrowserSnapshot } from "../src/extensions/browser/types.ts";
-import { showBrowserSnapshot } from "../src/extensions/browser/ui.ts";
-import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 
 const snapshot: BrowserSnapshot = {
 	url: "http://localhost:3000/",
@@ -15,8 +11,6 @@ const snapshot: BrowserSnapshot = {
 	elements: [{ ref: "e1", role: "button", name: "Submit form with a very long accessible name", tag: "button" }],
 	truncated: false,
 };
-
-beforeAll(() => initTheme("dark"));
 
 function fakeSession(): BrowserPageSession {
 	return {
@@ -63,20 +57,18 @@ describe("browser service", () => {
 describe("browser extension", () => {
 	test("registers one tool and returns image content for screenshots", async () => {
 		let definition: ToolDefinition | undefined;
-		let commandName: string | undefined;
+		const registerCommand = vi.fn();
 		const controller = new BrowserController(async () => fakeSession());
 		createBrowserExtension(controller)({
 			registerTool: (tool: ToolDefinition) => {
 				definition = tool;
 			},
-			registerCommand: (name: string) => {
-				commandName = name;
-			},
+			registerCommand,
 			on: vi.fn(),
 		} as unknown as ExtensionAPI);
 
 		expect(definition?.name).toBe("browser");
-		expect(commandName).toBe("browser");
+		expect(registerCommand).not.toHaveBeenCalled();
 		if (!definition) throw new Error("browser tool was not registered");
 		await definition.execute(
 			"open",
@@ -93,12 +85,5 @@ describe("browser extension", () => {
 			{} as ExtensionCommandContext,
 		);
 		expect(result.content).toContainEqual({ type: "image", data: "cG5n", mimeType: "image/png" });
-	});
-
-	test("renders a width-safe semantic snapshot", () => {
-		const component = showBrowserSnapshot(snapshot, theme, new KeybindingsManager(), vi.fn());
-		const lines = component.render(42);
-		expect(lines.join("\n")).toContain("浏览器页面");
-		expect(lines.every((line) => visibleWidth(line) <= 42)).toBe(true);
 	});
 });

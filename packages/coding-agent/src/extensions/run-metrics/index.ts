@@ -14,7 +14,8 @@ export function createRunMetricsExtension(store: RunMetricsStoreLike): (pi: Exte
 		pi.on("agent_start", () => tracker.start());
 		pi.on("tool_result", (event) => tracker.recordTool(event));
 		pi.on("turn_end", (event) => {
-			tracker.recordTurn();
+			if (event.message.role === "assistant") tracker.recordTurn(event.message.usage, event.message.stopReason);
+			else tracker.recordTurn();
 			if (
 				event.message.role === "assistant" &&
 				(event.message.stopReason === "error" || event.message.stopReason === "aborted")

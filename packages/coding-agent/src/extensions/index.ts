@@ -6,6 +6,7 @@ import codeSearchExtension from "./code-search/index.ts";
 import debugExtension from "./debug/index.ts";
 import doctorExtension from "./doctor/index.ts";
 import evalExtension from "./eval/index.ts";
+import evalsExtension from "./evals/index.ts";
 import executionControllerExtension from "./execution-controller/index.ts";
 import gitExtension from "./git/index.ts";
 import llamaExtension from "./llama/index.ts";
@@ -29,6 +30,7 @@ export const builtInExtensions: InlineExtension[] = [
 	{ name: "单代理执行闭环", factory: executionControllerExtension, hidden: true },
 	{ name: "执行效果统计", factory: runMetricsExtension, hidden: true },
 	{ name: "持久代码运行", factory: evalExtension, hidden: true },
+	{ name: "本地评测", factory: evalsExtension, hidden: true },
 	{ name: "DAP 调试器", factory: debugExtension, hidden: true },
 	{ name: "后台进程管理", factory: processExtension, hidden: true },
 	{ name: "隔离浏览器", factory: browserExtension, hidden: true },
