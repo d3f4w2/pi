@@ -121,6 +121,8 @@ The mode can be set globally via `toolExecution` in the agent config, or per-too
 
 The `beforeToolCall` hook runs after `tool_execution_start` and validated argument parsing. It can block execution and attach `terminate: true` to the blocked result. The `afterToolCall` hook runs after tool execution finishes and before `tool_execution_end` and final tool result message events are emitted.
 
+Set `repeatedToolFailureLimit` to stop unchanged calls after repeated identical errors. The guard is scoped to one run, clears on success or new user input, and emits a normal error tool result without executing the blocked tool. It allows one recovery turn, then terminates the run if the model repeats the blocked call. Agent core leaves it disabled by default; see [Repeated Tool Failure Guard](docs/tool-failure-guard.md).
+
 Tools, blocked `beforeToolCall` results, and `afterToolCall` overrides can return `terminate: true` to hint that the automatic follow-up LLM call should be skipped. The loop only stops early when every finalized tool result in that batch sets `terminate: true`. Mixed batches continue normally.
 
 The `Agent` class accepts `shouldStopAfterTurn` in `AgentOptions`. Low-level loop callers can set the same hook in `AgentLoopConfig`:
@@ -210,6 +212,9 @@ const agent = new Agent({
   // Tool execution mode: "parallel" (default) or "sequential"
   toolExecution: "parallel",
 
+  // Block another unchanged call after two identical failures (default: 0 / disabled)
+  repeatedToolFailureLimit: 2,
+
   // Preflight each tool call after args are validated. Can block execution.
   beforeToolCall: async ({ toolCall, args, context }) => {
     if (toolCall.name === "bash") {
@@ -294,6 +299,7 @@ agent.state.model = getModel("openai", "gpt-4o");
 agent.state.thinkingLevel = "medium";
 agent.state.tools = [myTool];
 agent.toolExecution = "sequential";
+agent.repeatedToolFailureLimit = 2;
 agent.beforeToolCall = async ({ toolCall }) => undefined;
 agent.afterToolCall = async ({ toolCall, result }) => undefined;
 agent.shouldStopAfterTurn = async ({ context }) => shouldCompactBeforeNextTurn(context.messages);

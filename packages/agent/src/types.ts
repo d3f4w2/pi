@@ -268,6 +268,15 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	toolExecution?: ToolExecutionMode;
 
 	/**
+	 * Number of identical failures allowed for the same tool name, canonical arguments,
+	 * and normalized error before another unchanged call is blocked. Zero disables it.
+	 * State is scoped to one active agent-loop run and resets on new user input.
+	 *
+	 * Default: 0
+	 */
+	repeatedToolFailureLimit?: number;
+
+	/**
 	 * Called before a tool is executed, after arguments have been validated.
 	 *
 	 * Return `{ block: true }` to prevent execution. The loop emits an error tool result instead.

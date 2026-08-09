@@ -120,6 +120,8 @@ export interface AgentOptions {
 	transport?: Transport;
 	maxRetryDelayMs?: number;
 	toolExecution?: ToolExecutionMode;
+	/** Number of identical tool failures allowed before another unchanged call is blocked. Zero disables it. */
+	repeatedToolFailureLimit?: number;
 }
 
 class PendingMessageQueue {
@@ -212,6 +214,8 @@ export class Agent {
 	public maxRetryDelayMs?: number;
 	/** Tool execution strategy for assistant messages that contain multiple tool calls. */
 	public toolExecution: ToolExecutionMode;
+	/** Number of identical tool failures allowed in one run before blocking an unchanged retry. */
+	public repeatedToolFailureLimit: number;
 
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
@@ -235,6 +239,9 @@ export class Agent {
 		this.transport = runtimeOptions.transport ?? "auto";
 		this.maxRetryDelayMs = runtimeOptions.maxRetryDelayMs;
 		this.toolExecution = runtimeOptions.toolExecution ?? "parallel";
+		this.repeatedToolFailureLimit = Number.isFinite(runtimeOptions.repeatedToolFailureLimit)
+			? Math.max(0, Math.floor(runtimeOptions.repeatedToolFailureLimit ?? 0))
+			: 0;
 	}
 
 	/**
@@ -455,6 +462,7 @@ export class Agent {
 			thinkingBudgets: this.thinkingBudgets,
 			maxRetryDelayMs: this.maxRetryDelayMs,
 			toolExecution: this.toolExecution,
+			repeatedToolFailureLimit: this.repeatedToolFailureLimit,
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,
 			shouldStopAfterTurn: shouldStopAfterTurn

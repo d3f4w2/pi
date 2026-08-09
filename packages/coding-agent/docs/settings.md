@@ -153,6 +153,26 @@ Context pruning reduces old, large tool results only in the temporary provider r
 
 See [Context Hygiene](context-hygiene.md) for protection and recovery behavior.
 
+### Tool Failure Guard
+
+The failure guard prevents the model from executing an unchanged tool call indefinitely after receiving the same error. It resets when arguments or errors change, a call succeeds, or new user input starts another turn.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `toolFailureGuard.enabled` | boolean | `true` | Enable repeated identical failure protection |
+| `toolFailureGuard.repeatLimit` | number | `2` | Real identical failures allowed before blocking another unchanged call (1-10) |
+
+```json
+{
+  "toolFailureGuard": {
+    "enabled": true,
+    "repeatLimit": 2
+  }
+}
+```
+
+See [Tool Failure Guard](tool-failure-guard.md) for the exact reset rules.
+
 ### Branch Summary
 
 | Setting | Type | Default | Description |

@@ -291,6 +291,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	};
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
+	const toolFailureGuardSettings = settingsManager.getToolFailureGuardSettings();
 
 	agent = new Agent({
 		initialState: {
@@ -367,6 +368,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		transport: settingsManager.getTransport(),
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
+		repeatedToolFailureLimit: toolFailureGuardSettings.enabled ? toolFailureGuardSettings.repeatLimit : 0,
 	});
 
 	// Restore messages if session has existing data

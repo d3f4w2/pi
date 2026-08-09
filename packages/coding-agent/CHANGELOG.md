@@ -8,6 +8,7 @@
 - Added stale-safe anchored reads and atomic edits: ordinary text reads now return compact line hashes and a file revision, while edit validates anchored ranges and stale files before replacing local files atomically.
 - Added automatic local structural outlines for long TypeScript, JavaScript, TSX, HTML, CSS, Python, and Go reads, with exact range expansion, bounded content-revision caching, and immediate verbatim fallback.
 - Added deterministic provider-context hygiene that removes superseded or over-budget tool output while preserving recent results, errors, images, instructions, head/tail evidence, and the complete persisted session history.
+- Added a default repeated tool failure guard that stops an unchanged call after two identical errors, while resetting on success, changed input or errors, and new user turns.
 - Added the built-in `/api` command for configuring OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages providers with multiple models, image support, thinking levels, API key persistence, and immediate model switching.
 - Added the built-in `/tools` command for viewing, enabling, and disabling tools, with locked user preferences that restore built-in and extension tool choices across sessions.
 - Added bounded on-demand tool discovery through `tool_search`, separating persisted user permission from runtime exposure and loading at most two low-frequency tools without external indexing or model calls.

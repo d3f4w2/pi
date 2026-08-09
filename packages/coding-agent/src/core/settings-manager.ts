@@ -25,6 +25,11 @@ export interface BranchSummarySettings {
 	skipPrompt?: boolean; // default: false - when true, skips "Summarize branch?" prompt and defaults to no summary
 }
 
+export interface ToolFailureGuardSettings {
+	enabled?: boolean; // default: true
+	repeatLimit?: number; // default: 2
+}
+
 export interface ProviderRetrySettings {
 	timeoutMs?: number; // SDK/provider request timeout in milliseconds
 	maxRetries?: number; // SDK/provider retry attempts
@@ -103,6 +108,7 @@ export interface Settings {
 	theme?: string;
 	compaction?: CompactionSettings;
 	contextPruning?: ContextPruningSettings;
+	toolFailureGuard?: ToolFailureGuardSettings;
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
@@ -801,6 +807,15 @@ export class SettingsManager {
 
 	getContextPruningSettings(): ResolvedContextPruningSettings {
 		return resolveContextPruningSettings(this.settings.contextPruning);
+	}
+
+	getToolFailureGuardSettings(): { enabled: boolean; repeatLimit: number } {
+		const settings = this.settings.toolFailureGuard;
+		const enabled = typeof settings?.enabled === "boolean" ? settings.enabled : true;
+		const repeatLimit = Number.isFinite(settings?.repeatLimit)
+			? Math.min(10, Math.max(1, Math.floor(settings?.repeatLimit ?? 2)))
+			: 2;
+		return { enabled, repeatLimit };
 	}
 
 	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added an opt-in, loop-scoped repeated tool failure guard that blocks unchanged calls after configurable identical errors while preserving normal tool events and recovery through changed input.
+
 ### Fixed
 
 - Fixed `streamProxy()` dropping finalized tool-call metadata such as OpenAI Responses namespaces ([#7709](https://github.com/earendil-works/pi/issues/7709)).

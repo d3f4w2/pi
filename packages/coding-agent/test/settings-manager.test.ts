@@ -404,6 +404,40 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("toolFailureGuard", () => {
+		it("defaults to two repeated failures", () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getToolFailureGuardSettings()).toEqual({ enabled: true, repeatLimit: 2 });
+		});
+
+		it("merges overrides and normalizes unsafe values", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ toolFailureGuard: { enabled: false, repeatLimit: 8 } }),
+			);
+			writeFileSync(
+				join(projectDir, ".pi", "settings.json"),
+				JSON.stringify({ toolFailureGuard: { enabled: true, repeatLimit: 100 } }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getToolFailureGuardSettings()).toEqual({ enabled: true, repeatLimit: 10 });
+		});
+
+		it("uses safe defaults for invalid JSON values", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({ toolFailureGuard: { enabled: "yes", repeatLimit: "many" } }),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getToolFailureGuardSettings()).toEqual({ enabled: true, repeatLimit: 2 });
+		});
+	});
+
 	describe("externalEditor", () => {
 		const originalVisual = process.env.VISUAL;
 		const originalEditor = process.env.EDITOR;

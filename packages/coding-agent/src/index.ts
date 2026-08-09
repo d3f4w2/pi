@@ -267,6 +267,7 @@ export {
 	type RetrySettings,
 	SettingsManager,
 	type SettingsManagerCreateOptions,
+	type ToolFailureGuardSettings,
 	type TuiMode,
 } from "./core/settings-manager.ts";
 // Skills
