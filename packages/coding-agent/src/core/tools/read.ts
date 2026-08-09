@@ -12,6 +12,7 @@ import { processImage } from "../../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { createFileRevision, formatAnchoredText } from "./file-anchors.ts";
 import { resolveReadPathAsync, resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -24,14 +25,19 @@ const readSchema = Type.Object({
 });
 
 export const readToolSystemPromptContribution = {
-	snippet: "Read file contents",
-	guidelines: ["Use read to examine files instead of cat or sed."],
+	snippet: "Read file contents with stable line anchors for reliable edits",
+	guidelines: [
+		"Use read to examine files instead of cat or sed.",
+		"When read returns line#hash anchors, use those anchors in edit instead of copying large oldText blocks.",
+	],
 } as const;
 
 export type ReadToolInput = Static<typeof readSchema>;
 
 export interface ReadToolDetails {
 	truncation?: TruncationResult;
+	fileHash?: string;
+	anchored?: boolean;
 }
 
 interface CompactReadClassification {
@@ -214,7 +220,7 @@ export function createReadToolDefinition(
 	return {
 		name: "read",
 		label: "read",
-		description: `Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.`,
+		description: `Read the contents of a file. Ordinary text files include a file revision and line#hash anchors that can be passed to edit; instruction resources remain plain text. Supports images (jpg, png, gif, webp, bmp). For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files.`,
 		promptSnippet: readToolSystemPromptContribution.snippet,
 		promptGuidelines: [...readToolSystemPromptContribution.guidelines],
 		parameters: readSchema,
@@ -270,6 +276,8 @@ export function createReadToolDefinition(
 								// Read text content.
 								const buffer = await ops.readFile(absolutePath);
 								const textContent = buffer.toString("utf-8");
+								const fileHash = createFileRevision(textContent);
+								const anchored = getCompactReadClassification({ path }, cwd) === undefined;
 								const allLines = textContent.split("\n");
 								const totalFileLines = allLines.length;
 								// Apply offset if specified. Convert from 1-indexed input to 0-indexed array access.
@@ -291,6 +299,8 @@ export function createReadToolDefinition(
 								}
 								// Apply truncation, respecting both line and byte limits.
 								const truncation = truncateHead(selectedContent);
+								const formatContent = (text: string): string =>
+									anchored ? formatAnchoredText(text, startLineDisplay, fileHash, path) : text;
 								let outputText: string;
 								if (truncation.firstLineExceedsLimit) {
 									// First line alone exceeds the byte limit. Point the model at a bash fallback.
@@ -301,7 +311,7 @@ export function createReadToolDefinition(
 									// Truncation occurred. Build an actionable continuation notice.
 									const endLineDisplay = startLineDisplay + truncation.outputLines - 1;
 									const nextOffset = endLineDisplay + 1;
-									outputText = truncation.content;
+									outputText = formatContent(truncation.content);
 									if (truncation.truncatedBy === "lines") {
 										outputText += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines}. Use offset=${nextOffset} to continue.]`;
 									} else {
@@ -312,11 +322,12 @@ export function createReadToolDefinition(
 									// User-specified limit stopped early, but the file still has more content.
 									const remaining = allLines.length - (startLine + userLimitedLines);
 									const nextOffset = startLine + userLimitedLines + 1;
-									outputText = `${truncation.content}\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`;
+									outputText = `${formatContent(truncation.content)}\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`;
 								} else {
 									// No truncation and no remaining user-limited content.
-									outputText = truncation.content;
+									outputText = formatContent(truncation.content);
 								}
+								if (anchored) details = { ...details, fileHash, anchored: true };
 								content = [{ type: "text", text: outputText }];
 							}
 

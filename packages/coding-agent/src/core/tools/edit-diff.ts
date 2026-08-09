@@ -5,6 +5,7 @@
 import * as Diff from "diff";
 import { constants } from "fs";
 import { access, readFile } from "fs/promises";
+import { type AnchoredEdit, applyAnchoredEdits, createFileRevision } from "./file-anchors.ts";
 import { resolveToCwd } from "./path-utils.ts";
 
 export function detectLineEnding(content: string): "\r\n" | "\n" {
@@ -543,6 +544,37 @@ export async function computeEditsDiff(
 		return generateDiffString(baseContent, newContent);
 	} catch (err) {
 		return { error: err instanceof Error ? err.message : String(err) };
+	}
+}
+
+/** Compute an anchored edit preview without applying it. */
+export async function computeAnchoredEditsDiff(
+	path: string,
+	edits: AnchoredEdit[],
+	baseHash: string | undefined,
+	cwd: string,
+): Promise<EditDiffResult | EditDiffError> {
+	const absolutePath = resolveToCwd(path, cwd);
+	try {
+		try {
+			await access(absolutePath, constants.R_OK);
+		} catch (error: unknown) {
+			const errorMessage = error instanceof Error && "code" in error ? `Error code: ${error.code}` : String(error);
+			return { error: `Could not edit file: ${path}. ${errorMessage}.` };
+		}
+
+		const rawContent = await readFile(absolutePath, "utf-8");
+		const currentHash = createFileRevision(rawContent);
+		if (baseHash !== undefined && baseHash !== currentHash) {
+			return {
+				error: `${path} changed since it was read (expected ${baseHash}, current ${currentHash}). Reread the affected lines and retry.`,
+			};
+		}
+		const { text: content } = stripBom(rawContent);
+		const { baseContent, newContent } = applyAnchoredEdits(normalizeToLF(content), edits, path);
+		return generateDiffString(baseContent, newContent);
+	} catch (error: unknown) {
+		return { error: error instanceof Error ? error.message : String(error) };
 	}
 }
 

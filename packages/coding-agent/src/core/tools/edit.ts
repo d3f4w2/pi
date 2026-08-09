@@ -1,13 +1,24 @@
+import { randomUUID } from "node:crypto";
+import { basename, dirname, join } from "node:path";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Box, Container, Spacer, Text } from "@earendil-works/pi-tui";
 import { constants } from "fs";
-import { access as fsAccess, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
+import {
+	access as fsAccess,
+	chmod as fsChmod,
+	readFile as fsReadFile,
+	rename as fsRename,
+	stat as fsStat,
+	unlink as fsUnlink,
+	writeFile as fsWriteFile,
+} from "fs/promises";
 import { type Static, Type } from "typebox";
 import { renderDiff } from "../../modes/interactive/components/diff.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
 import {
 	applyEditsToNormalizedContent,
+	computeAnchoredEditsDiff,
 	computeEditsDiff,
 	detectLineEnding,
 	type Edit,
@@ -19,6 +30,7 @@ import {
 	restoreLineEndings,
 	stripBom,
 } from "./edit-diff.ts";
+import { type AnchoredEdit, applyAnchoredEdits, createFileRevision } from "./file-anchors.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { renderToolPath, str } from "./render-utils.ts";
@@ -41,23 +53,39 @@ const replaceEditSchema = Type.Object(
 	{},
 );
 
+const anchoredEditSchema = Type.Object(
+	{
+		startAnchor: Type.String({ description: "First line#hash anchor returned by read." }),
+		endAnchor: Type.Optional(
+			Type.String({ description: "Last line#hash anchor returned by read. Omit for a single-line edit." }),
+		),
+		newText: Type.String({ description: "Replacement text for the anchored line range." }),
+	},
+	{},
+);
+
+const editEntrySchema = Type.Union([anchoredEditSchema, replaceEditSchema]);
+
 const editSchema = Type.Object(
 	{
 		path: Type.String({ description: "Path to the file to edit (relative or absolute)" }),
-		edits: Type.Array(replaceEditSchema, {
+		baseHash: Type.Optional(
+			Type.String({ description: "File revision returned by read. Required for strict stale-file protection." }),
+		),
+		edits: Type.Array(editEntrySchema, {
 			description:
-				"One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.",
+				"One or more anchored or exact-text replacements. Prefer startAnchor/endAnchor from read. Use one mode per call and do not overlap ranges.",
 		}),
 	},
 	{},
 );
 
 export const editToolSystemPromptContribution = {
-	snippet: "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
+	snippet: "Make precise, stale-safe file edits with read anchors or exact text",
 	guidelines: [
-		"Use edit for precise changes (edits[].oldText must match exactly)",
+		"Prefer edit with baseHash and startAnchor/endAnchor values returned by read; use oldText only when anchors are unavailable.",
 		"When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls",
-		"Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.",
+		"All edits are matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.",
 		"Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.",
 	],
 } as const;
@@ -86,13 +114,37 @@ export interface EditOperations {
 	readFile: (absolutePath: string) => Promise<Buffer>;
 	/** Write content to a file */
 	writeFile: (absolutePath: string, content: string) => Promise<void>;
+	/** Atomically replace a file when supported by the backend */
+	replaceFile?: (absolutePath: string, content: string) => Promise<void>;
 	/** Check if file is readable and writable (throw if not) */
 	access: (absolutePath: string) => Promise<void>;
+}
+
+async function atomicReplaceLocalFile(absolutePath: string, content: string): Promise<void> {
+	const fileStat = await fsStat(absolutePath);
+	const tempPath = join(
+		dirname(absolutePath),
+		`.${basename(absolutePath)}.pi-edit-${process.pid}-${randomUUID()}.tmp`,
+	);
+	let committed = false;
+	try {
+		await fsWriteFile(tempPath, content, { encoding: "utf8", flag: "wx", mode: fileStat.mode });
+		await fsChmod(tempPath, fileStat.mode);
+		await fsRename(tempPath, absolutePath);
+		committed = true;
+	} finally {
+		if (!committed) {
+			try {
+				await fsUnlink(tempPath);
+			} catch {}
+		}
+	}
 }
 
 const defaultEditOperations: EditOperations = {
 	readFile: (path) => fsReadFile(path),
 	writeFile: (path, content) => fsWriteFile(path, content, "utf-8"),
+	replaceFile: atomicReplaceLocalFile,
 	access: (path) => fsAccess(path, constants.R_OK | constants.W_OK),
 };
 
@@ -127,17 +179,60 @@ function prepareEditArguments(input: unknown): EditToolInput {
 	return { ...rest, edits } as EditToolInput;
 }
 
-function validateEditInput(input: EditToolInput): { path: string; edits: Edit[] } {
+type ValidatedEditInput =
+	| { path: string; baseHash: string | undefined; mode: "anchored"; edits: AnchoredEdit[] }
+	| { path: string; baseHash: undefined; mode: "exact"; edits: Edit[] };
+
+function validateEditInput(input: EditToolInput): ValidatedEditInput {
 	if (!Array.isArray(input.edits) || input.edits.length === 0) {
 		throw new Error("Edit tool input is invalid. edits must contain at least one replacement.");
 	}
-	return { path: input.path, edits: input.edits };
+
+	const anchoredEdits: AnchoredEdit[] = [];
+	const exactEdits: Edit[] = [];
+	for (let index = 0; index < input.edits.length; index++) {
+		const edit = input.edits[index] as Record<string, unknown>;
+		const hasAnchorFields = typeof edit.startAnchor === "string" || typeof edit.endAnchor === "string";
+		const hasExactFields = typeof edit.oldText === "string" || "oldText" in edit;
+		if (hasAnchorFields === hasExactFields || typeof edit.newText !== "string") {
+			throw new Error(`edits[${index}] must use exactly one mode: startAnchor/endAnchor or oldText, plus newText.`);
+		}
+		if (hasAnchorFields) {
+			if (typeof edit.startAnchor !== "string") {
+				throw new Error(`edits[${index}].startAnchor must be a string.`);
+			}
+			if (edit.endAnchor !== undefined && typeof edit.endAnchor !== "string") {
+				throw new Error(`edits[${index}].endAnchor must be a string when provided.`);
+			}
+			anchoredEdits.push({
+				startAnchor: edit.startAnchor,
+				...(typeof edit.endAnchor === "string" ? { endAnchor: edit.endAnchor } : {}),
+				newText: edit.newText,
+			});
+		} else {
+			if (typeof edit.oldText !== "string") {
+				throw new Error(`edits[${index}].oldText must be a string.`);
+			}
+			exactEdits.push({ oldText: edit.oldText, newText: edit.newText });
+		}
+	}
+	if (anchoredEdits.length > 0 && exactEdits.length > 0) {
+		throw new Error("Do not mix anchored and exact-text replacements in one edit call.");
+	}
+	if (anchoredEdits.length > 0) {
+		return { path: input.path, baseHash: input.baseHash, mode: "anchored", edits: anchoredEdits };
+	}
+	if (input.baseHash !== undefined) {
+		throw new Error("baseHash is only valid with anchored edits.");
+	}
+	return { path: input.path, baseHash: undefined, mode: "exact", edits: exactEdits };
 }
 
 type RenderableEditArgs = {
 	path?: string;
 	file_path?: string;
-	edits?: Edit[];
+	baseHash?: string;
+	edits?: Array<Edit | AnchoredEdit>;
 	oldText?: string;
 	newText?: string;
 };
@@ -177,7 +272,11 @@ function getEditCallRenderComponent(state: EditRenderState, lastComponent: unkno
 	return component;
 }
 
-function getRenderablePreviewInput(args: RenderableEditArgs | undefined): { path: string; edits: Edit[] } | null {
+type RenderablePreviewInput =
+	| { path: string; mode: "exact"; edits: Edit[] }
+	| { path: string; mode: "anchored"; baseHash: string | undefined; edits: AnchoredEdit[] };
+
+function getRenderablePreviewInput(args: RenderableEditArgs | undefined): RenderablePreviewInput | null {
 	if (!args) {
 		return null;
 	}
@@ -190,13 +289,30 @@ function getRenderablePreviewInput(args: RenderableEditArgs | undefined): { path
 	if (
 		Array.isArray(args.edits) &&
 		args.edits.length > 0 &&
-		args.edits.every((edit) => typeof edit?.oldText === "string" && typeof edit?.newText === "string")
+		args.edits.every(
+			(edit): edit is Edit =>
+				"oldText" in edit && typeof edit.oldText === "string" && typeof edit.newText === "string",
+		)
 	) {
-		return { path, edits: args.edits };
+		return { path, mode: "exact", edits: args.edits };
+	}
+
+	if (
+		Array.isArray(args.edits) &&
+		args.edits.length > 0 &&
+		args.edits.every(
+			(edit): edit is AnchoredEdit =>
+				"startAnchor" in edit &&
+				typeof edit.startAnchor === "string" &&
+				(edit.endAnchor === undefined || typeof edit.endAnchor === "string") &&
+				typeof edit.newText === "string",
+		)
+	) {
+		return { path, mode: "anchored", baseHash: args.baseHash, edits: args.edits };
 	}
 
 	if (typeof args.oldText === "string" && typeof args.newText === "string") {
-		return { path, edits: [{ oldText: args.oldText, newText: args.newText }] };
+		return { path, mode: "exact", edits: [{ oldText: args.oldText, newText: args.newText }] };
 	}
 
 	return null;
@@ -303,14 +419,15 @@ export function createEditToolDefinition(
 		name: "edit",
 		label: "edit",
 		description:
-			"Edit a single file using exact text replacement. Every edits[].oldText must match a unique, non-overlapping region of the original file. If two changes affect the same block or nearby lines, merge them into one edit instead of emitting overlapping edits. Do not include large unchanged regions just to connect distant changes.",
+			"Edit one file with stale-safe line anchors returned by read, or exact text when anchors are unavailable. Pass read's baseHash with anchored edits. Every range is validated before an atomic local-file replacement; overlapping edits are rejected without writing.",
 		promptSnippet: editToolSystemPromptContribution.snippet,
 		promptGuidelines: [...editToolSystemPromptContribution.guidelines],
 		parameters: editSchema,
 		renderShell: "self",
 		prepareArguments: prepareEditArguments,
 		async execute(_toolCallId, input: EditToolInput, signal?: AbortSignal, _onUpdate?, _ctx?) {
-			const { path, edits } = validateEditInput(input);
+			const validated = validateEditInput(input);
+			const { path } = validated;
 			const absolutePath = resolveToCwd(path, cwd);
 
 			return withFileMutationQueue(absolutePath, async () => {
@@ -344,12 +461,24 @@ export function createEditToolDefinition(
 				const { bom, text: content } = stripBom(rawContent);
 				const originalEnding = detectLineEnding(content);
 				const normalizedContent = normalizeToLF(content);
-				const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
+				let baseContent: string;
+				let newContent: string;
+				if (validated.mode === "anchored") {
+					const currentHash = createFileRevision(rawContent);
+					if (validated.baseHash !== undefined && validated.baseHash !== currentHash) {
+						throw new Error(
+							`${path} changed since it was read (expected ${validated.baseHash}, current ${currentHash}). Reread the affected lines and retry.`,
+						);
+					}
+					({ baseContent, newContent } = applyAnchoredEdits(normalizedContent, validated.edits, path));
+				} else {
+					({ baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, validated.edits, path));
+				}
 				throwIfAborted();
 
 				const finalContent = bom + restoreLineEndings(newContent, originalEnding);
-				await ops.writeFile(absolutePath, finalContent);
-				throwIfAborted();
+				if (ops.replaceFile) await ops.replaceFile(absolutePath, finalContent);
+				else await ops.writeFile(absolutePath, finalContent);
 
 				const diffResult = generateDiffString(baseContent, newContent);
 				const patch = generateUnifiedPatch(path, baseContent, newContent);
@@ -357,7 +486,7 @@ export function createEditToolDefinition(
 					content: [
 						{
 							type: "text",
-							text: `Successfully replaced ${edits.length} block(s) in ${path}.`,
+							text: `Successfully replaced ${validated.edits.length} block(s) in ${path}.`,
 						},
 					],
 					details: { diff: diffResult.diff, patch, firstChangedLine: diffResult.firstChangedLine },
@@ -367,9 +496,7 @@ export function createEditToolDefinition(
 		renderCall(args, theme, context) {
 			const component = getEditCallRenderComponent(context.state, context.lastComponent);
 			const previewInput = getRenderablePreviewInput(args as RenderableEditArgs | undefined);
-			const argsKey = previewInput
-				? JSON.stringify({ path: previewInput.path, edits: previewInput.edits })
-				: undefined;
+			const argsKey = previewInput ? JSON.stringify(previewInput) : undefined;
 
 			if (component.previewArgsKey !== argsKey) {
 				component.preview = undefined;
@@ -381,7 +508,11 @@ export function createEditToolDefinition(
 			if (context.argsComplete && previewInput && !component.preview && !component.previewPending) {
 				component.previewPending = true;
 				const requestKey = argsKey;
-				void computeEditsDiff(previewInput.path, previewInput.edits, context.cwd).then((preview) => {
+				const previewPromise =
+					previewInput.mode === "anchored"
+						? computeAnchoredEditsDiff(previewInput.path, previewInput.edits, previewInput.baseHash, context.cwd)
+						: computeEditsDiff(previewInput.path, previewInput.edits, context.cwd);
+				void previewPromise.then((preview) => {
 					if (component.previewArgsKey === requestKey) {
 						setEditPreview(component, preview, requestKey);
 						context.invalidate();
@@ -394,9 +525,7 @@ export function createEditToolDefinition(
 		renderResult(result, _options, theme, context) {
 			const callComponent = context.state.callComponent;
 			const previewInput = getRenderablePreviewInput(context.args as RenderableEditArgs | undefined);
-			const argsKey = previewInput
-				? JSON.stringify({ path: previewInput.path, edits: previewInput.edits })
-				: undefined;
+			const argsKey = previewInput ? JSON.stringify(previewInput) : undefined;
 			const typedResult = result as EditToolResultLike;
 			const resultDiff = !context.isError ? typedResult.details?.diff : undefined;
 			let changed = false;

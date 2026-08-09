@@ -5,10 +5,26 @@
 ### Added
 
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
+- Added stale-safe anchored reads and atomic edits: ordinary text reads now return compact line hashes and a file revision, while edit validates anchored ranges and stale files before replacing local files atomically.
+- Added the built-in `/api` command for configuring OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages providers with multiple models, image support, thinking levels, API key persistence, and immediate model switching.
+- Added the built-in `/tools` command for viewing, enabling, and disabling tools, with locked user preferences that restore built-in and extension tool choices across sessions.
+- Added bounded on-demand tool discovery through `tool_search`, separating persisted user permission from runtime exposure and loading at most two low-frequency tools without external indexing or model calls.
+- Added built-in `web_search` and `web_fetch` tools with no-key DuckDuckGo search, optional Brave search through `BRAVE_API_KEY`, readable page extraction, and private-network protection.
+- Added a built-in `code_search` tool backed by mgrep, with intent-only routing, non-blocking background indexing, a two-second foreground budget, a configurable 5,000-file safety limit, scoped and session-level failure circuit breaking, adaptive result widening, direct built-in grep fallback with shell-search avoidance, focused-read guidance, project-boundary protection, and automatic watcher cleanup.
+- Added a built-in `lsp` tool with bundled TypeScript/JavaScript intelligence, extensible Python and Go language-server adapters, definitions, references, implementations, hover information, symbols, single-file and bounded project diagnostics, safe project-boundary rename edits, compact results, lazy process reuse, failure circuit breaking, and bounded automatic diagnostics after code edits.
+- Added a built-in read-only `ast_grep` tool for bounded structural code search across JavaScript, TypeScript, TSX, HTML, and CSS, with automatic language detection, adaptive grouped output, project-boundary protection, and compact results.
+- Added a built-in `verify` tool for bounded TypeScript/JavaScript, Python, and Go type checks, related tests, and lint, with direct process execution, safe auto-scoping, non-executing standalone Python syntax checks, explicit modification-check routing, source-execution guards, compact failures, and local logs.
 
 ### Changed
 
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
+- Changed the built-in `grep` tool to be active by default and stopped disabled exact-search capability from being silently replaced with shell `rg` or `grep` commands.
+- Changed Windows terminal routing to use Git Bash for portable commands, support an explicit PowerShell executor for Windows-only operations, and skip legacy WSL `bash.exe` relay paths.
+
+### Fixed
+
+- Fixed `tool_search` filling unused budget with weakly related tools, added explicit companion-tool loading, made empty-search budgets safe under parallel calls, isolated response-stream cleanup errors that could crash Pi, and prevented unrelated tasks from probing `PI_*` environment variables.
+- Fixed automatic LSP diagnostics missing first-turn errors while a cold language server was still starting or publishing diagnostics.
 
 ## [0.84.1] - 2026-08-07
 
@@ -21,14 +37,6 @@
 
 ### Added
 
-- Added the built-in `/api` command for configuring OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages providers with multiple models, image support, thinking levels, API key persistence, and immediate model switching.
-- Added the built-in `/tools` command for viewing, enabling, and disabling tools, with locked user preferences that restore built-in and extension tool choices across sessions.
-- Added bounded on-demand tool discovery through `tool_search`, separating persisted user permission from runtime exposure and loading at most two low-frequency tools without external indexing or model calls.
-- Added built-in `web_search` and `web_fetch` tools with no-key DuckDuckGo search, optional Brave search through `BRAVE_API_KEY`, readable page extraction, and private-network protection.
-- Added a built-in `code_search` tool backed by mgrep, with intent-only routing, non-blocking background indexing, a two-second foreground budget, a configurable 5,000-file safety limit, scoped and session-level failure circuit breaking, adaptive result widening, direct built-in grep fallback with shell-search avoidance, focused-read guidance, project-boundary protection, and automatic watcher cleanup.
-- Added a built-in `lsp` tool with bundled TypeScript/JavaScript intelligence, extensible Python and Go language-server adapters, definitions, references, implementations, hover information, symbols, single-file and bounded project diagnostics, safe project-boundary rename edits, compact results, lazy process reuse, failure circuit breaking, and bounded automatic diagnostics after code edits.
-- Added a built-in read-only `ast_grep` tool for bounded structural code search across JavaScript, TypeScript, TSX, HTML, and CSS, with automatic language detection, adaptive grouped output, project-boundary protection, and compact results.
-- Added a built-in `verify` tool for bounded TypeScript/JavaScript, Python, and Go type checks, related tests, and lint, with direct process execution, safe auto-scoping, non-executing standalone Python syntax checks, explicit modification-check routing, source-execution guards, compact failures, and local logs.
 - Added Qwen Token Plan Individual as a built-in provider with its documented subscription model catalog and the shared international `QWEN_TOKEN_PLAN_API_KEY`. See [API Keys](docs/providers.md#api-keys) ([#7659](https://github.com/earendil-works/pi/pull/7659) by [@arasovic](https://github.com/arasovic)).
 - Added `pi auth check` provider/model auth preflight with optional credential output ([#7152](https://github.com/earendil-works/pi/issues/7152)).
 - Added `terminate` support to blocked extension `tool_call` events so all-terminating batches can skip the automatic follow-up model call. See [Tool Events](docs/extensions.md#tool-events) ([#7715](https://github.com/earendil-works/pi/pull/7715) by [@muyiyr](https://github.com/muyiyr)).
@@ -170,8 +178,6 @@
 
 ### Fixed
 
-- Fixed `tool_search` filling unused budget with weakly related tools, added explicit companion-tool loading, made empty-search budgets safe under parallel calls, isolated response-stream cleanup errors that could crash Pi, and prevented unrelated tasks from probing `PI_*` environment variables.
-- Fixed automatic LSP diagnostics missing first-turn errors while a cold language server was still starting or publishing diagnostics.
 - Fixed the footer showing `(sub)` for generic OAuth/OpenID sign-ins without a known subscription; extension OAuth providers can opt in with `isSubscription`.
 - Fixed inherited OAuth token refreshes so stalled requests release the credential-store lock ([#7508](https://github.com/earendil-works/pi/issues/7508)).
 - Fixed inherited tool argument validation to preserve values that already match an `anyOf`/`oneOf` union arm before coercion, avoiding nullable unions converting `null` to another primitive value ([#7328](https://github.com/earendil-works/pi/issues/7328)).
@@ -338,8 +344,6 @@
 
 ### Changed
 
-- Changed the built-in `grep` tool to be active by default and stopped disabled exact-search capability from being silently replaced with shell `rg` or `grep` commands.
-- Changed Windows terminal routing to use Git Bash for portable commands, support an explicit PowerShell executor for Windows-only operations, and skip legacy WSL `bash.exe` relay paths.
 - Changed inherited generated model catalogs to expose only provider-verified reasoning effort levels from models.dev ([#6928](https://github.com/earendil-works/pi/pull/6928) by [@davidbrai](https://github.com/davidbrai)).
 
 ### Fixed
