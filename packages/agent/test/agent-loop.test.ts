@@ -115,6 +115,87 @@ describe("default stream function compatibility", () => {
 	});
 });
 
+describe("low-level loop failure containment", () => {
+	function createConfig(): AgentLoopConfig {
+		return { model: createModel(), convertToLlm: identityConverter };
+	}
+
+	async function resultBeforeTimeout(stream: ReturnType<typeof agentLoop>): Promise<AgentMessage[]> {
+		let timeout: ReturnType<typeof setTimeout> | undefined;
+		try {
+			return await Promise.race([
+				stream.result(),
+				new Promise<never>((_resolve, reject) => {
+					timeout = setTimeout(() => reject(new Error("Agent stream did not settle")), 1_000);
+				}),
+			]);
+		} finally {
+			if (timeout) clearTimeout(timeout);
+		}
+	}
+
+	it("turns a provider bootstrap throw into a terminal error lifecycle", async () => {
+		const stream = agentLoop(
+			[createUserMessage("Hello")],
+			{ systemPrompt: "", messages: [], tools: [] },
+			createConfig(),
+			undefined,
+			() => {
+				throw new Error("provider bootstrap failed");
+			},
+		);
+
+		const messages = await resultBeforeTimeout(stream);
+		const events: AgentEvent[] = [];
+		for await (const event of stream) events.push(event);
+
+		expect(messages.map((message) => message.role)).toEqual(["user", "assistant"]);
+		const failure = messages.at(-1);
+		expect(failure?.role === "assistant" ? failure.stopReason : undefined).toBe("error");
+		expect(failure?.role === "assistant" ? failure.errorMessage : undefined).toBe("provider bootstrap failed");
+		expect(events.slice(-4).map((event) => event.type)).toEqual([
+			"message_start",
+			"message_end",
+			"turn_end",
+			"agent_end",
+		]);
+	});
+
+	it("contains continuation transform failures without replaying existing messages", async () => {
+		const context = { systemPrompt: "", messages: [createUserMessage("Existing")], tools: [] };
+		const config = createConfig();
+		config.transformContext = async () => {
+			throw new Error("context transform failed");
+		};
+		const stream = agentLoopContinue(context, config, undefined, () => {
+			throw new Error("stream function must not run");
+		});
+
+		const messages = await resultBeforeTimeout(stream);
+
+		expect(messages).toHaveLength(1);
+		expect(messages[0]?.role === "assistant" ? messages[0].errorMessage : undefined).toBe("context transform failed");
+	});
+
+	it("classifies a rejected aborted run as aborted", async () => {
+		const controller = new AbortController();
+		controller.abort(new Error("cancelled by user"));
+		const stream = agentLoop(
+			[createUserMessage("Hello")],
+			{ systemPrompt: "", messages: [], tools: [] },
+			createConfig(),
+			controller.signal,
+			() => {
+				throw new Error("request aborted");
+			},
+		);
+
+		const messages = await resultBeforeTimeout(stream);
+		const failure = messages.at(-1);
+		expect(failure?.role === "assistant" ? failure.stopReason : undefined).toBe("aborted");
+	});
+});
+
 describe("agentLoop with AgentMessage", () => {
 	it("should emit events with AgentMessage types", async () => {
 		const context: AgentContext = {

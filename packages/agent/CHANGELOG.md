@@ -8,6 +8,7 @@
 
 ### Fixed
 
+- Fixed low-level `agentLoop()` streams leaving rejected producer tasks unhandled; failures now emit a terminal assistant error lifecycle and close the stream.
 - Fixed `streamProxy()` dropping finalized tool-call metadata such as OpenAI Responses namespaces ([#7709](https://github.com/earendil-works/pi/issues/7709)).
 
 ## [0.84.1] - 2026-08-07

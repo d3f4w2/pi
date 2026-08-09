@@ -512,6 +512,10 @@ for await (const event of agentLoopContinue(context, config, undefined, streamFn
 }
 ```
 
+Low-level streams contain producer failures from provider startup, context transforms, and queue callbacks. Instead of leaving a detached rejected promise, they emit an assistant message with `stopReason: "error"` or `"aborted"`, followed by `turn_end` and `agent_end`. Completed messages emitted before the failure remain in `stream.result()`.
+
+Direct `runAgentLoop()` and `runAgentLoopContinue()` calls remain promise-based and reject normally, so applications that need explicit exception control can use those APIs.
+
 These low-level streams are observational. They preserve event order, but they do not wait for your async event handling to settle before later producer phases continue. If you need message processing to act as a barrier before tool preflight, use the `Agent` class instead of raw `agentLoop()` or `agentLoopContinue()`.
 
 ## License

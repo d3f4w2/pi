@@ -10,6 +10,7 @@ import {
 	type ToolResultMessage,
 	validateToolArguments,
 } from "@earendil-works/pi-ai";
+import { createAgentFailureMessage } from "./run-failure.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
 import { RepeatedToolFailureGuard } from "./tool-failure-guard.ts";
 import type {
@@ -36,22 +37,11 @@ export function agentLoop(
 	signal: AbortSignal | undefined,
 	streamFn: StreamFn,
 ): EventStream<AgentEvent, AgentMessage[]> {
-	const stream = createAgentStream();
-
-	void runAgentLoop(
-		prompts,
-		context,
+	return createContainedAgentStream(
+		(emit) => runAgentLoop(prompts, context, config, emit, signal, streamFn),
 		config,
-		async (event) => {
-			stream.push(event);
-		},
 		signal,
-		streamFn,
-	).then((messages) => {
-		stream.end(messages);
-	});
-
-	return stream;
+	);
 }
 
 /**
@@ -76,20 +66,52 @@ export function agentLoopContinue(
 		throw new Error("Cannot continue from message role: assistant");
 	}
 
-	const stream = createAgentStream();
-
-	void runAgentLoopContinue(
-		context,
+	return createContainedAgentStream(
+		(emit) => runAgentLoopContinue(context, config, emit, signal, streamFn),
 		config,
-		async (event) => {
-			stream.push(event);
-		},
 		signal,
-		streamFn,
-	).then((messages) => {
-		stream.end(messages);
-	});
+	);
+}
 
+function createContainedAgentStream(
+	run: (emit: AgentEventSink) => Promise<AgentMessage[]>,
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+): EventStream<AgentEvent, AgentMessage[]> {
+	const stream = createAgentStream();
+	const completedMessages: AgentMessage[] = [];
+	const emit = (event: AgentEvent): void => {
+		if (event.type === "message_end") completedMessages.push(event.message);
+		stream.push(event);
+	};
+
+	const recover = (error: unknown): void => {
+		const failureMessage = createAgentFailureMessage(config.model, error, signal?.aborted === true);
+		const messages = [...completedMessages, failureMessage];
+		try {
+			stream.push({ type: "message_start", message: failureMessage });
+			stream.push({ type: "message_end", message: failureMessage });
+			stream.push({ type: "turn_end", message: failureMessage, toolResults: [] });
+			stream.push({ type: "agent_end", messages });
+		} catch {
+			// This is the final async ownership boundary. Closing the stream is safer than
+			// allowing a recovery-path failure to become another detached rejection.
+		} finally {
+			stream.end(messages);
+		}
+	};
+
+	let producer: Promise<AgentMessage[]>;
+	try {
+		producer = run(emit);
+	} catch (error) {
+		recover(error);
+		return stream;
+	}
+	void producer.then(
+		(messages) => stream.end(messages),
+		(error: unknown) => recover(error),
+	);
 	return stream;
 }
 
