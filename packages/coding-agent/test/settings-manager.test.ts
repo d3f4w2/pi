@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { homedir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_CONTEXT_PRUNING_SETTINGS } from "../src/core/context-hygiene.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS } from "../src/core/http-dispatcher.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 
@@ -351,6 +352,55 @@ describe("SettingsManager", () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(() => manager.getHttpIdleTimeoutMs()).toThrow("Invalid httpIdleTimeoutMs setting");
+		});
+	});
+
+	describe("contextPruning", () => {
+		it("uses conservative defaults", () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getContextPruningSettings()).toEqual(DEFAULT_CONTEXT_PRUNING_SETTINGS);
+		});
+
+		it("merges project overrides and normalizes unsafe values", () => {
+			writeFileSync(
+				join(agentDir, "settings.json"),
+				JSON.stringify({
+					contextPruning: {
+						enabled: false,
+						protectRecentTokens: 12_000,
+						minimumSavingsTokens: 2_000,
+					},
+				}),
+			);
+			writeFileSync(
+				join(projectDir, ".pi", "settings.json"),
+				JSON.stringify({
+					contextPruning: {
+						enabled: true,
+						minimumResultTokens: -10,
+						previewCharacters: 50_000,
+					},
+				}),
+			);
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getContextPruningSettings()).toEqual({
+				enabled: true,
+				protectRecentTokens: 12_000,
+				minimumSavingsTokens: 2_000,
+				minimumResultTokens: 1,
+				previewCharacters: 1_000,
+			});
+		});
+
+		it("falls back safely when JSON contains an invalid enabled value", () => {
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ contextPruning: { enabled: "yes" } }));
+
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.getContextPruningSettings().enabled).toBe(true);
 		});
 	});
 

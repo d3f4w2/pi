@@ -127,6 +127,32 @@ Set `PI_SKIP_VERSION_CHECK=1` to disable the Pi version update check. Use `--off
 }
 ```
 
+### Context Pruning
+
+Context pruning reduces old, large tool results only in the temporary provider request. It does not rewrite the saved session or terminal transcript. Errors, images, skill instructions, `AGENTS.md`, `SKILL.md`, and the newest protected output budget remain verbatim.
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `contextPruning.enabled` | boolean | `true` | Enable deterministic provider-context pruning |
+| `contextPruning.protectRecentTokens` | number | `40000` | Newest tool-output tokens to keep verbatim |
+| `contextPruning.minimumSavingsTokens` | number | `8000` | Minimum projected saving before changing context |
+| `contextPruning.minimumResultTokens` | number | `512` | Smallest tool result eligible for pruning |
+| `contextPruning.previewCharacters` | number | `320` | Head and tail characters retained for unique old output |
+
+```json
+{
+  "contextPruning": {
+    "enabled": true,
+    "protectRecentTokens": 40000,
+    "minimumSavingsTokens": 8000,
+    "minimumResultTokens": 512,
+    "previewCharacters": 320
+  }
+}
+```
+
+See [Context Hygiene](context-hygiene.md) for protection and recovery behavior.
+
 ### Branch Summary
 
 | Setting | Type | Default | Description |
