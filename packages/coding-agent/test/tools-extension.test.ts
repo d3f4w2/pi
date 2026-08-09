@@ -113,6 +113,97 @@ describe("tools extension", () => {
 		expect(notify).toHaveBeenCalledWith(expect.stringContaining(".mgrepignore"), "info");
 	});
 
+	test("explains bundled TypeScript and optional Python and Go setup after lsp is enabled", async () => {
+		let handler: RegisteredCommand["handler"] | undefined;
+		let activeTools = ["read", "lsp"];
+		const notify = vi.fn();
+		const lspTools = [{ name: "read" }, { name: "lsp" }] as ToolInfo[];
+		const pi = {
+			registerCommand: (_name: string, command: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
+				handler = command.handler;
+			},
+			on: () => {},
+			getAllTools: () => lspTools,
+			getActiveTools: () => activeTools,
+			setActiveTools: (names: string[]) => {
+				activeTools = names;
+			},
+		} as unknown as ExtensionAPI;
+		toolsExtension(pi);
+
+		const custom = async (
+			factory: (
+				tui: TUI,
+				theme: Theme,
+				keybindings: KeybindingsManager,
+				done: (result: undefined) => void,
+			) => Component | Promise<Component>,
+		): Promise<void> => {
+			const component = await factory(
+				{ requestRender: () => {} } as unknown as TUI,
+				{ bold: (text: string) => text, fg: (_color: string, text: string) => text } as unknown as Theme,
+				{ matches: (data: string, action: string) => data === action } as unknown as KeybindingsManager,
+				() => {},
+			);
+			component.handleInput?.("tui.select.down");
+			component.handleInput?.("tui.editor.cursorRight");
+			component.handleInput?.("tui.select.confirm");
+		};
+
+		await handler?.("", { ui: { custom, notify } } as unknown as ExtensionCommandContext);
+
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("TypeScript/JavaScript 可以直接使用"), "info");
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("pip install basedpyright"), "info");
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("gopls@latest"), "info");
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("不会占用模型上下文"), "info");
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("不会阻塞任务"), "info");
+	});
+
+	test("explains verify language support and optional Python tools after it is enabled", async () => {
+		let handler: RegisteredCommand["handler"] | undefined;
+		let activeTools = ["read"];
+		const notify = vi.fn();
+		const verifyTools = [{ name: "read" }, { name: "verify" }] as ToolInfo[];
+		const pi = {
+			registerCommand: (_name: string, command: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
+				handler = command.handler;
+			},
+			on: () => {},
+			getAllTools: () => verifyTools,
+			getActiveTools: () => activeTools,
+			setActiveTools: (names: string[]) => {
+				activeTools = names;
+			},
+		} as unknown as ExtensionAPI;
+		toolsExtension(pi);
+
+		const custom = async (
+			factory: (
+				tui: TUI,
+				theme: Theme,
+				keybindings: KeybindingsManager,
+				done: (result: undefined) => void,
+			) => Component | Promise<Component>,
+		): Promise<void> => {
+			const component = await factory(
+				{ requestRender: () => {} } as unknown as TUI,
+				{ bold: (text: string) => text, fg: (_color: string, text: string) => text } as unknown as Theme,
+				{ matches: (data: string, action: string) => data === action } as unknown as KeybindingsManager,
+				() => {},
+			);
+			component.handleInput?.("tui.select.down");
+			component.handleInput?.("tui.editor.cursorRight");
+			component.handleInput?.("tui.select.confirm");
+		};
+
+		await handler?.("", { ui: { custom, notify } } as unknown as ExtensionCommandContext);
+
+		expect(activeTools).toEqual(["read", "verify"]);
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("TypeScript/JavaScript"), "info");
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("pip install basedpyright"), "info");
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("不会擅自运行整个仓库测试"), "info");
+	});
+
 	test("saves tool changes after the manager closes", async () => {
 		let handler: RegisteredCommand["handler"] | undefined;
 		let activeTools = ["read"];
@@ -212,5 +303,39 @@ describe("tools extension", () => {
 		expect(lines.join("\n")).toContain("读取文件内容");
 		expect(lines.join("\n")).toContain("搜索文件里的文字");
 		for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(32);
+	});
+
+	test("shows a short Chinese description for ast_grep", () => {
+		const manager = showToolsManager(
+			{ requestRender: () => {} } as unknown as TUI,
+			{
+				bold: (text: string) => text,
+				fg: (_color: string, text: string) => text,
+			} as unknown as Theme,
+			{ matches: () => false } as unknown as KeybindingsManager,
+			[{ name: "ast_grep" }] as ToolInfo[],
+			[],
+			() => {},
+			() => {},
+		);
+
+		expect(manager.render(80).join("\n")).toContain("按代码结构精确搜索");
+	});
+
+	test("shows a short Chinese description for verify", () => {
+		const manager = showToolsManager(
+			{ requestRender: () => {} } as unknown as TUI,
+			{
+				bold: (text: string) => text,
+				fg: (_color: string, text: string) => text,
+			} as unknown as Theme,
+			{ matches: () => false } as unknown as KeybindingsManager,
+			[{ name: "verify" }] as ToolInfo[],
+			[],
+			() => {},
+			() => {},
+		);
+
+		expect(manager.render(80).join("\n")).toContain("运行相关检查和测试");
 	});
 });

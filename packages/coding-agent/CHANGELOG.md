@@ -12,6 +12,9 @@
 - Added the built-in `/tools` command for viewing, enabling, and disabling tools, with locked user preferences that restore built-in and extension tool choices across sessions.
 - Added built-in `web_search` and `web_fetch` tools with no-key DuckDuckGo search, optional Brave search through `BRAVE_API_KEY`, readable page extraction, and private-network protection.
 - Added a built-in `code_search` tool backed by mgrep, with intent-only routing, non-blocking background indexing, a two-second foreground budget, a configurable 5,000-file safety limit, scoped and session-level failure circuit breaking, adaptive result widening, direct built-in grep fallback with shell-search avoidance, focused-read guidance, project-boundary protection, and automatic watcher cleanup.
+- Added a built-in `lsp` tool with bundled TypeScript/JavaScript intelligence, extensible Python and Go language-server adapters, definitions, references, implementations, hover information, symbols, single-file and bounded project diagnostics, safe project-boundary rename edits, compact results, lazy process reuse, failure circuit breaking, and bounded automatic diagnostics after code edits.
+- Added a built-in read-only `ast_grep` tool for bounded structural code search across JavaScript, TypeScript, TSX, HTML, and CSS, with automatic language detection, adaptive grouped output, project-boundary protection, and compact results.
+- Added a built-in `verify` tool for bounded TypeScript/JavaScript, Python, and Go type checks, related tests, and lint, with direct process execution, safe auto-scoping, non-executing standalone Python syntax checks, explicit modification-check routing, source-execution guards, compact failures, and local logs.
 - Added chainable `pi.registerMarkdownTransformer()` hooks for display-only transformation of user and assistant Markdown.
 - Added an experimental fullscreen UI mode, selectable through `--ui-mode fullscreen` or `/settings` ([#7304](https://github.com/earendil-works/pi/issues/7304)).
 - Added a sticky editor, status, widget, and footer dock to fullscreen mode while keeping the transcript independently scrollable.
@@ -21,6 +24,7 @@
 
 ### Fixed
 
+- Fixed automatic LSP diagnostics missing first-turn errors while a cold language server was still starting or publishing diagnostics.
 - Fixed bare exact `--model` IDs shared by multiple providers choosing the first catalog entry instead of the sole authenticated provider or a clear ambiguity error ([#7327](https://github.com/earendil-works/pi/issues/7327)).
 - Fixed standalone x64 binaries requiring Haswell-era AVX2/BMI2 instructions by compiling release executables against Bun's baseline runtime ([#7149](https://github.com/earendil-works/pi/issues/7149)).
 - Fixed `Ctrl+X` copy confirmations in fullscreen mode adding a transcript status line instead of showing the transient `Copied!` marker.

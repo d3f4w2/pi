@@ -9,6 +9,7 @@
 			"version": "0.83.0",
 			"license": "MIT",
 			"dependencies": {
+				"@ast-grep/napi": "0.45.1",
 				"@earendil-works/pi-agent-core": "^0.83.0",
 				"@earendil-works/pi-ai": "^0.83.0",
 				"@earendil-works/pi-client": "^0.83.0",
@@ -30,7 +31,11 @@
 				"semver": "7.8.0",
 				"turndown": "7.2.2",
 				"typebox": "1.3.7",
+				"typescript": "5.9.3",
+				"typescript-language-server": "5.3.0",
 				"undici": "8.10.0",
+				"vscode-jsonrpc": "9.0.1",
+				"vscode-languageserver-protocol": "3.18.2",
 				"yaml": "2.9.0"
 			},
 			"optionalDependencies": {
@@ -109,6 +114,170 @@
 			"resolved": "https://registry.npmjs.org/@asamuzakjp/nwsapi/-/nwsapi-2.3.9.tgz",
 			"integrity": "sha512-n8GuYSrI9bF7FFZ/SjhwevlHc8xaVlb/7HmHelnc/PZXBD2ZR49NnN9sMMuDdEGPeeRQ5d0hqlSlEpgCX3Wl0Q==",
 			"license": "MIT"
+		},
+		"node_modules/@ast-grep/napi": {
+			"version": "0.45.1",
+			"resolved": "https://registry.npmjs.org/@ast-grep/napi/-/napi-0.45.1.tgz",
+			"integrity": "sha512-4cmGQEHoP9GLHEhGvd1vgSzO3Y6KF7FczDk4+q/VfXV9/9sNxNVgNHC8t3BglhIADDcoHrCMc9aw4lHG+M240A==",
+			"license": "MIT",
+			"optionalDependencies": {
+				"@ast-grep/napi-darwin-arm64": "0.45.1",
+				"@ast-grep/napi-darwin-x64": "0.45.1",
+				"@ast-grep/napi-linux-arm64-gnu": "0.45.1",
+				"@ast-grep/napi-linux-arm64-musl": "0.45.1",
+				"@ast-grep/napi-linux-x64-gnu": "0.45.1",
+				"@ast-grep/napi-linux-x64-musl": "0.45.1",
+				"@ast-grep/napi-win32-arm64-msvc": "0.45.1",
+				"@ast-grep/napi-win32-ia32-msvc": "0.45.1",
+				"@ast-grep/napi-win32-x64-msvc": "0.45.1"
+			},
+			"engines": {
+				"node": ">= 10"
+			}
+		},
+		"node_modules/@ast-grep/napi-darwin-arm64": {
+			"version": "0.45.1",
+			"resolved": "https://registry.npmjs.org/@ast-grep/napi-darwin-arm64/-/napi-darwin-arm64-0.45.1.tgz",
+			"integrity": "sha512-CthYcA0H3z5A2EHKH4rhSuFzpYUtxqUMnohmejxtMS6wiAgriKhOCopxN8XKclspYMtQyX2GC/PbvcU3dIbQHw==",
+			"license": "MIT",
+			"engines": {
+				"node": ">= 10"
+			},
+			"os": [
+				"darwin"
+			],
+			"cpu": [
+				"arm64"
+			],
+			"optional": true
+		},
+		"node_modules/@ast-grep/napi-darwin-x64": {
+			"version": "0.45.1",
+			"resolved": "https://registry.npmjs.org/@ast-grep/napi-darwin-x64/-/napi-darwin-x64-0.45.1.tgz",
+			"integrity": "sha512-PhlXMDEEH5fMjXjYcrbeNgGqrojj4zN8C7eMQC6M4pVkuW74uPhrblD4KUbNunp5I2LkWCdKOs36jhBaZe1iPw==",
+			"license": "MIT",
+			"engines": {
+				"node": ">= 10"
+			},
+			"os": [
+				"darwin"
+			],
+			"cpu": [
+				"x64"
+			],
+			"optional": true
+		},
+		"node_modules/@ast-grep/napi-linux-arm64-gnu": {
+			"version": "0.45.1",
+			"resolved": "https://registry.npmjs.org/@ast-grep/napi-linux-arm64-gnu/-/napi-linux-arm64-gnu-0.45.1.tgz",
+			"integrity": "sha512-XScjs95/SrsV6kLl9MnF2qbqwKU79bcBA3JHi6xUu+hf0uZ0lc6MsZ595cEy5yw9PYRhgqwrT3wta9p4qU4jpg==",
+			"license": "MIT",
+			"engines": {
+				"node": ">= 10"
+			},
+			"os": [
+				"linux"
+			],
+			"cpu": [
+				"arm64"
+			],
+			"optional": true
+		},
+		"node_modules/@ast-grep/napi-linux-arm64-musl": {
+			"version": "0.45.1",
+			"resolved": "https://registry.npmjs.org/@ast-grep/napi-linux-arm64-musl/-/napi-linux-arm64-musl-0.45.1.tgz",
+			"integrity": "sha512-qjH5CN5KIUdJW2dHfp8W57QsP6H0mA6E/rboKEzAxw6Ant1q2ZKqE3bLHUZMDoZXOBGdCODSZm0bTDcctiP49g==",
+			"license": "MIT",
+			"engines": {
+				"node": ">= 10"
+			},
+			"os": [
+				"linux"
+			],
+			"cpu": [
+				"arm64"
+			],
+			"optional": true
+		},
+		"node_modules/@ast-grep/napi-linux-x64-gnu": {
+			"version": "0.45.1",
+			"resolved": "https://registry.npmjs.org/@ast-grep/napi-linux-x64-gnu/-/napi-linux-x64-gnu-0.45.1.tgz",
+			"integrity": "sha512-nPP0y5EnehCgmYqvVDKSvH4vHbEFdAi8L+Kq2Sz94vK32yv4eOWf9vWhgoPscWpw76GWuwhpDvME8SZARnS3DQ==",
+			"license": "MIT",
+			"engines": {
+				"node": ">= 10"
+			},
+			"os": [
+				"linux"
+			],
+			"cpu": [
+				"x64"
+			],
+			"optional": true
+		},
+		"node_modules/@ast-grep/napi-linux-x64-musl": {
+			"version": "0.45.1",
+			"resolved": "https://registry.npmjs.org/@ast-grep/napi-linux-x64-musl/-/napi-linux-x64-musl-0.45.1.tgz",
+			"integrity": "sha512-sg50LKH7TskWd/boWVFp9gwKc3Jd8sg0f8P6T2VQemX/EOj+OFaMJ2+y7Ok17WI/dODkrZgAPUwq7RAvMzLtqg==",
+			"license": "MIT",
+			"engines": {
+				"node": ">= 10"
+			},
+			"os": [
+				"linux"
+			],
+			"cpu": [
+				"x64"
+			],
+			"optional": true
+		},
+		"node_modules/@ast-grep/napi-win32-arm64-msvc": {
+			"version": "0.45.1",
+			"resolved": "https://registry.npmjs.org/@ast-grep/napi-win32-arm64-msvc/-/napi-win32-arm64-msvc-0.45.1.tgz",
+			"integrity": "sha512-wnTmD34OD9bUpdBVTb58P0y+YPb/2C2g07zj96LSk5R4pdcEMrCFsrWZlaNwtEV4q7L9BfLgrxq3MBGI8c6doA==",
+			"license": "MIT",
+			"engines": {
+				"node": ">= 10"
+			},
+			"os": [
+				"win32"
+			],
+			"cpu": [
+				"arm64"
+			],
+			"optional": true
+		},
+		"node_modules/@ast-grep/napi-win32-ia32-msvc": {
+			"version": "0.45.1",
+			"resolved": "https://registry.npmjs.org/@ast-grep/napi-win32-ia32-msvc/-/napi-win32-ia32-msvc-0.45.1.tgz",
+			"integrity": "sha512-gRyJwRPY1mWRtnJ6AMncV2pNU+B2indjLCb9z/+aZrUN5u/gOxYryEzvRatyC9rVUMeQGJD+k0htpsqIwgXVbA==",
+			"license": "MIT",
+			"engines": {
+				"node": ">= 10"
+			},
+			"os": [
+				"win32"
+			],
+			"cpu": [
+				"ia32"
+			],
+			"optional": true
+		},
+		"node_modules/@ast-grep/napi-win32-x64-msvc": {
+			"version": "0.45.1",
+			"resolved": "https://registry.npmjs.org/@ast-grep/napi-win32-x64-msvc/-/napi-win32-x64-msvc-0.45.1.tgz",
+			"integrity": "sha512-mzfMmCO7tSNks+NGkGkSnDBKxBjHoOLAMJt2IbAkMYATxHC0RqfBoN7Qtd02VGhHWEfwWLPv/wU6MrvweZ3jdQ==",
+			"license": "MIT",
+			"engines": {
+				"node": ">= 10"
+			},
+			"os": [
+				"win32"
+			],
+			"cpu": [
+				"x64"
+			],
+			"optional": true
 		},
 		"node_modules/@aws-crypto/crc32": {
 			"version": "5.2.0",
@@ -2199,6 +2368,31 @@
 			"integrity": "sha512-meKuifc33Pccx0O6PdIzYMq3Og8zvP4TIi/a+Bw3AEMZMxOD0+RHGQvpglEe6Zdy3wZ8nqn/j95h8LUZLk/6Hg==",
 			"license": "MIT"
 		},
+		"node_modules/typescript": {
+			"version": "5.9.3",
+			"resolved": "https://registry.npmjs.org/typescript/-/typescript-5.9.3.tgz",
+			"integrity": "sha512-jl1vZzPDinLr9eUt3J/t7V6FgNEw9QjvBPdysz9KfQDD41fQrC2Y4vKQdiaUpFT4bXlb1RHhLpp8wtm6M5TgSw==",
+			"license": "Apache-2.0",
+			"bin": {
+				"tsc": "bin/tsc",
+				"tsserver": "bin/tsserver"
+			},
+			"engines": {
+				"node": ">=14.17"
+			}
+		},
+		"node_modules/typescript-language-server": {
+			"version": "5.3.0",
+			"resolved": "https://registry.npmjs.org/typescript-language-server/-/typescript-language-server-5.3.0.tgz",
+			"integrity": "sha512-5puofxZHgFdAYtfNpmwCAvgtaYgg8wrUnH30m7Ze3QuguId5RNRadKASpOpyDxTyUdAF51FjhTdjntLw/EuWcQ==",
+			"license": "Apache-2.0",
+			"bin": {
+				"typescript-language-server": "lib/cli.mjs"
+			},
+			"engines": {
+				"node": ">=20"
+			}
+		},
 		"node_modules/undici": {
 			"version": "8.10.0",
 			"resolved": "https://registry.npmjs.org/undici/-/undici-8.10.0.tgz",
@@ -2212,6 +2406,31 @@
 			"version": "6.21.0",
 			"resolved": "https://registry.npmjs.org/undici-types/-/undici-types-6.21.0.tgz",
 			"integrity": "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ==",
+			"license": "MIT"
+		},
+		"node_modules/vscode-jsonrpc": {
+			"version": "9.0.1",
+			"resolved": "https://registry.npmjs.org/vscode-jsonrpc/-/vscode-jsonrpc-9.0.1.tgz",
+			"integrity": "sha512-rfuA6T75H6m5EkbhtEPzre9pT0HPcDI2MMy4+nPFIBks5J8JBAUHD4tRYSgaBOijIEC7SRkC1kKyXTLqbmh9jw==",
+			"license": "MIT",
+			"engines": {
+				"node": ">=14.0.0"
+			}
+		},
+		"node_modules/vscode-languageserver-protocol": {
+			"version": "3.18.2",
+			"resolved": "https://registry.npmjs.org/vscode-languageserver-protocol/-/vscode-languageserver-protocol-3.18.2.tgz",
+			"integrity": "sha512-XRyDbT0Pp3sSNti3JmxVEUMySWCSi1hhM+/KUlCy1hV1zmrqpM1OwO12EAki8blhmLuIMpaJrYbo0OzGVfK2Qg==",
+			"license": "MIT",
+			"dependencies": {
+				"vscode-jsonrpc": "9.0.1",
+				"vscode-languageserver-types": "3.18.0"
+			}
+		},
+		"node_modules/vscode-languageserver-types": {
+			"version": "3.18.0",
+			"resolved": "https://registry.npmjs.org/vscode-languageserver-types/-/vscode-languageserver-types-3.18.0.tgz",
+			"integrity": "sha512-8TsGPNMIMiiBdkORgRSvLjuiEIiAFtO+KssmYWxQ+uSVvlf7RjK8YKCOjPzZ+YA04jXEV7+7LvkSmHkhpNS99g==",
 			"license": "MIT"
 		},
 		"node_modules/w3c-xmlserializer": {
