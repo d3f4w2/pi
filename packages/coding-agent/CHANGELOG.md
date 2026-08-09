@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added user-approved regression-test capture from recovered real failures, with generation-time tool isolation, two explicit review gates, persistent prompt suppression, bounded secret-scanned drafts, new-file-only atomic writes, rollback, source metadata, and Chinese/English approval UI.
 - Added a local deterministic evaluation foundation with privacy-safe `RunRecord` token, cost, retry, and verification summaries; typed `EvalCase` and `EvalReport` data; ten offline infrastructure smoke cases; persistent baselines; and `/evals` run, latest, compare, and failure views without model calls.
 - Added a persistent `language` setting with automatic system-locale detection, Simplified Chinese and English interfaces, immediate runtime switching, typed message dictionaries, English fallback, and bilingual Express Track settings, model, thinking, editor, and footer surfaces.
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.

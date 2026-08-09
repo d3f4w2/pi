@@ -158,6 +158,11 @@ describe("evaluation command", () => {
 			) => {
 				command = options.handler;
 			},
+			registerTool: () => {},
+			on: () => {},
+			getActiveTools: () => [],
+			setActiveTools: () => {},
+			sendUserMessage: () => {},
 		} as unknown as ExtensionAPI);
 		const notifications: string[] = [];
 		if (!command) throw new Error("evals command was not registered");

@@ -99,3 +99,61 @@ export interface EvalReportStoreLike {
 	saveBaseline(report: EvalReport): Promise<void>;
 	readBaseline(): Promise<EvalReport | undefined>;
 }
+
+export type RecoveredFailureKind = "tool_error" | "verification_failure" | "agent_error";
+
+export interface RecoveredFailureSignal {
+	fingerprint: string;
+	kind: RecoveredFailureKind;
+	toolName?: string;
+	summary: string;
+	detectedAt: string;
+	recoveredAt: string;
+}
+
+export interface RegressionTestFileDraft {
+	path: string;
+	content: string;
+}
+
+export interface RegressionTestDraft {
+	title: string;
+	category: EvalCategory;
+	reproduction: string[];
+	expectedFailure: string;
+	expectedSuccess: string;
+	files: RegressionTestFileDraft[];
+}
+
+export interface ApprovedRegressionCase {
+	version: 1;
+	id: string;
+	title: string;
+	category: EvalCategory;
+	approvedAt: string;
+	source: RecoveredFailureSignal;
+	reproduction: string[];
+	expectedFailure: string;
+	expectedSuccess: string;
+	files: Array<{
+		path: string;
+		bytes: number;
+		digest: string;
+	}>;
+}
+
+export interface RegressionCaseStoreLike {
+	isSuppressed(fingerprint: string): Promise<boolean>;
+	suppress(fingerprint: string): Promise<void>;
+	saveApproved(testCase: ApprovedRegressionCase): Promise<void>;
+	listApproved(): Promise<ApprovedRegressionCase[]>;
+}
+
+export interface RegressionCaseWriterLike {
+	write(
+		workspace: string,
+		draft: RegressionTestDraft,
+		source: RecoveredFailureSignal,
+		now?: Date,
+	): Promise<ApprovedRegressionCase>;
+}
