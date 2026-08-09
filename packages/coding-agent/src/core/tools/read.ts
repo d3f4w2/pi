@@ -12,7 +12,15 @@ import { processImage } from "../../utils/image-process.ts";
 import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
-import { createFileRevision, formatAnchoredText } from "./file-anchors.ts";
+import {
+	type CodeOutlineDetails,
+	type CodeOutlineResult,
+	type CodeOutlineService,
+	defaultCodeOutlineService,
+	SMART_READ_MAX_LINE_CHARACTERS,
+	SMART_READ_MIN_LINES,
+} from "./code-outline.ts";
+import { createFileRevision, createLineAnchor, formatAnchoredText } from "./file-anchors.ts";
 import { resolveReadPathAsync, resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -22,6 +30,12 @@ const readSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
 	offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
 	limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
+	mode: Type.Optional(
+		Type.Union([Type.Literal("auto"), Type.Literal("full"), Type.Literal("outline")], {
+			description:
+				"auto outlines long code files; full returns verbatim content; outline forces a structural map when supported",
+		}),
+	),
 });
 
 export const readToolSystemPromptContribution = {
@@ -29,6 +43,7 @@ export const readToolSystemPromptContribution = {
 	guidelines: [
 		"Use read to examine files instead of cat or sed.",
 		"When read returns line#hash anchors, use those anchors in edit instead of copying large oldText blocks.",
+		"Long code reads may return a structural outline. Expand only the needed omitted range with offset/limit; use mode=full only when the entire implementation is necessary.",
 	],
 } as const;
 
@@ -38,6 +53,7 @@ export interface ReadToolDetails {
 	truncation?: TruncationResult;
 	fileHash?: string;
 	anchored?: boolean;
+	outline?: CodeOutlineDetails;
 }
 
 interface CompactReadClassification {
@@ -71,9 +87,17 @@ export interface ReadToolOptions {
 	autoResizeImages?: boolean;
 	/** Custom operations for file reading. Default: local filesystem */
 	operations?: ReadOperations;
+	/** Custom structural outline service. Default: local AST/lexical summarizer */
+	outlineService?: CodeOutlineService;
 }
 
-type ReadRenderArgs = { path?: string; file_path?: string; offset?: number; limit?: number };
+type ReadRenderArgs = {
+	path?: string;
+	file_path?: string;
+	offset?: number;
+	limit?: number;
+	mode?: "auto" | "full" | "outline";
+};
 
 function formatReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): string {
 	if (args?.offset === undefined && args?.limit === undefined) return "";
@@ -84,7 +108,30 @@ function formatReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): st
 
 function formatReadCall(args: ReadRenderArgs | undefined, theme: Theme, cwd: string): string {
 	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
-	return `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}${formatReadLineRange(args, theme)}`;
+	const mode = args?.mode && args.mode !== "auto" ? theme.fg("muted", ` [${args.mode}]`) : "";
+	return `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}${formatReadLineRange(args, theme)}${mode}`;
+}
+
+function formatOutline(path: string, fileHash: string, outline: CodeOutlineResult): string {
+	const lines = [
+		`¶${path}#${fileHash}`,
+		`[Outline: ${outline.details.totalLines} lines, ${outline.details.shownLines} source lines shown. Use mode="full" or offset/limit to expand.]`,
+	];
+	for (const item of outline.items) {
+		if (item.type === "source") {
+			const displayedContent =
+				item.content.length <= SMART_READ_MAX_LINE_CHARACTERS
+					? item.content
+					: `${item.content.slice(0, SMART_READ_MAX_LINE_CHARACTERS)}… [truncated; use offset=${item.lineNumber} limit=1]`;
+			lines.push(`${createLineAnchor(item.lineNumber, item.content)}|${displayedContent}`);
+		} else {
+			const limit = item.endLine - item.startLine + 1;
+			lines.push(
+				`[... lines ${item.startLine}-${item.endLine} omitted; use offset=${item.startLine} limit=${limit} ...]`,
+			);
+		}
+	}
+	return lines.join("\n");
 }
 
 function trimTrailingEmptyLines(lines: string[]): string[] {
@@ -217,16 +264,17 @@ export function createReadToolDefinition(
 ): ToolDefinition<typeof readSchema, ReadToolDetails | undefined> {
 	const autoResizeImages = options?.autoResizeImages ?? true;
 	const ops = options?.operations ?? defaultReadOperations;
+	const outlineService = options?.outlineService ?? defaultCodeOutlineService;
 	return {
 		name: "read",
 		label: "read",
-		description: `Read the contents of a file. Ordinary text files include a file revision and line#hash anchors that can be passed to edit; instruction resources remain plain text. Supports images (jpg, png, gif, webp, bmp). For text files, output is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). Use offset/limit for large files.`,
+		description: `Read files with stable edit anchors. Long supported code files automatically return a whole-file structural outline; use offset/limit for exact focused lines or mode="full" for verbatim content. Instruction resources remain plain text. Supports images (jpg, png, gif, webp, bmp). Verbatim text is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB.`,
 		promptSnippet: readToolSystemPromptContribution.snippet,
 		promptGuidelines: [...readToolSystemPromptContribution.guidelines],
 		parameters: readSchema,
 		async execute(
 			_toolCallId,
-			{ path, offset, limit }: { path: string; offset?: number; limit?: number },
+			{ path, offset, limit, mode = "auto" }: ReadToolInput,
 			signal?: AbortSignal,
 			_onUpdate?,
 			ctx?,
@@ -280,6 +328,31 @@ export function createReadToolDefinition(
 								const anchored = getCompactReadClassification({ path }, cwd) === undefined;
 								const allLines = textContent.split("\n");
 								const totalFileLines = allLines.length;
+								const explicitRange = offset !== undefined || limit !== undefined;
+								const shouldOutline =
+									anchored &&
+									!explicitRange &&
+									mode !== "full" &&
+									(mode === "outline" || totalFileLines >= SMART_READ_MIN_LINES);
+								let outline: CodeOutlineResult | undefined;
+								if (shouldOutline) {
+									try {
+										outline = await outlineService.createOutline({
+											path,
+											content: textContent,
+											force: mode === "outline",
+										});
+									} catch {}
+									if (aborted) return;
+								}
+								if (outline) {
+									content = [{ type: "text", text: formatOutline(path, fileHash, outline) }];
+									details = { fileHash, anchored: true, outline: outline.details };
+									if (aborted) return;
+									signal?.removeEventListener("abort", onAbort);
+									resolve({ content, details });
+									return;
+								}
 								// Apply offset if specified. Convert from 1-indexed input to 0-indexed array access.
 								const startLine = offset ? Math.max(0, offset - 1) : 0;
 								const startLineDisplay = startLine + 1;

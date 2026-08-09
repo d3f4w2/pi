@@ -6,6 +6,7 @@
 
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
 - Added stale-safe anchored reads and atomic edits: ordinary text reads now return compact line hashes and a file revision, while edit validates anchored ranges and stale files before replacing local files atomically.
+- Added automatic local structural outlines for long TypeScript, JavaScript, TSX, HTML, CSS, Python, and Go reads, with exact range expansion, bounded content-revision caching, and immediate verbatim fallback.
 - Added the built-in `/api` command for configuring OpenAI Responses, OpenAI Chat Completions, and Anthropic Messages providers with multiple models, image support, thinking levels, API key persistence, and immediate model switching.
 - Added the built-in `/tools` command for viewing, enabling, and disabling tools, with locked user preferences that restore built-in and extension tool choices across sessions.
 - Added bounded on-demand tool discovery through `tool_search`, separating persisted user permission from runtime exposure and loading at most two low-frequency tools without external indexing or model calls.
