@@ -3,7 +3,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { ENV_AGENT_DIR } from "../src/config.ts";
-import { KeybindingsManager } from "../src/core/keybindings.ts";
+import { KEYBINDINGS, KeybindingsManager } from "../src/core/keybindings.ts";
 import { runMigrations } from "../src/migrations.ts";
 
 describe("keybindings migration", () => {
@@ -21,6 +21,11 @@ describe("keybindings migration", () => {
 		fs.writeFileSync(path.join(agentDir, "keybindings.json"), `${JSON.stringify(config, null, 2)}\n`, "utf-8");
 		return agentDir;
 	}
+
+	it("uses Shift+Tab only for approval mode", () => {
+		expect(KEYBINDINGS["app.approval.cycle"].defaultKeys).toBe("shift+tab");
+		expect("app.thinking.cycle" in KEYBINDINGS).toBe(false);
+	});
 
 	it("rewrites old key names to namespaced ids", () => {
 		const agentDir = createAgentDir({

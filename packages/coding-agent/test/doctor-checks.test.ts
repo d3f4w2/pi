@@ -198,6 +198,18 @@ describe("doctor checks and report", () => {
 		});
 	});
 
+	it("explains the effective tool approval mode", () => {
+		const report = runDoctorChecks(
+			snapshot({ toolApprovalMode: "write" }),
+			probes(["C:\\Program Files\\Git\\bin\\bash.exe"]),
+		);
+
+		expect(report.findings.find((finding) => finding.id === "tool-approval")).toMatchObject({
+			severity: "ok",
+			detail: expect.stringContaining("运行命令前会确认"),
+		});
+	});
+
 	it("never includes credential or environment values and bounds output", () => {
 		const secret = "sk-super-secret-value";
 		const state = snapshot({

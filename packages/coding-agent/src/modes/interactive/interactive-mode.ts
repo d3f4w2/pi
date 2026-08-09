@@ -7,8 +7,8 @@ import * as crypto from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { AgentMessage } from "@earendil-works/pi-agent-core";
-import type { AuthEvent, AuthPrompt } from "@earendil-works/pi-ai";
+import type { AgentMessage, ThinkingLevel } from "@earendil-works/pi-agent-core";
+import { type AuthEvent, type AuthPrompt, getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import type { AssistantMessage, ImageContent, Message, Model } from "@earendil-works/pi-ai/compat";
 import type {
 	AutocompleteItem,
@@ -114,6 +114,7 @@ import { AssistantMessageComponent } from "./components/assistant-message.ts";
 import { BashExecutionComponent } from "./components/bash-execution.ts";
 import { BorderedLoader } from "./components/bordered-loader.ts";
 import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
+import { BrandHeaderComponent, PI_GO_NAME, shouldShowStartupDetails } from "./components/brand.ts";
 import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
 import { CustomEditor } from "./components/custom-editor.ts";
 import { CustomEntryComponent } from "./components/custom-entry.ts";
@@ -146,6 +147,7 @@ import {
 	type StatusIndicator,
 	WorkingStatusIndicator,
 } from "./components/status-indicator.ts";
+import { ThinkingSelectorComponent } from "./components/thinking-selector.ts";
 import { ToolExecutionComponent } from "./components/tool-execution.ts";
 import { TreeSelectorComponent } from "./components/tree-selector.ts";
 import { TrustSelectorComponent } from "./components/trust-selector.ts";
@@ -907,8 +909,6 @@ export class InteractiveMode {
 
 		// Add header with keybindings from config (unless silenced)
 		if (this.options.verbose || !this.settingsManager.getQuietStartup()) {
-			const logo = theme.bold(theme.fg("accent", APP_NAME)) + theme.fg("dim", ` v${this.version}`);
-
 			// Build startup instructions using keybinding hint helpers
 			const hint = (keybinding: AppKeybinding, description: string) => keyHint(keybinding, description);
 
@@ -919,7 +919,7 @@ export class InteractiveMode {
 				hint("app.exit", "to exit (empty)"),
 				hint("app.suspend", "to suspend"),
 				keyHint("tui.editor.deleteToLineEnd", "to delete to end"),
-				hint("app.thinking.cycle", "to cycle thinking level"),
+				hint("app.approval.cycle", "to cycle safety mode"),
 				rawKeyHint(`${keyText("app.model.cycleForward")}/${keyText("app.model.cycleBackward")}`, "to cycle models"),
 				hint("app.model.select", "to select model"),
 				hint("app.tools.expand", "to expand tools"),
@@ -933,28 +933,17 @@ export class InteractiveMode {
 				hint("app.clipboard.pasteImage", "to paste image (with text fallback)"),
 				rawKeyHint("drop files", "to attach"),
 			].join("\n");
-			const compactInstructions = [
-				hint("app.interrupt", "interrupt"),
-				rawKeyHint(`${keyText("app.clear")}/${keyText("app.exit")}`, "clear/exit"),
-				rawKeyHint("/", "commands"),
-				rawKeyHint("!", "bash"),
-				hint("app.tools.expand", "more"),
-			].join(theme.fg("muted", " · "));
-			const compactOnboarding = theme.fg(
-				"dim",
-				`Press ${keyText("app.tools.expand")} to show full startup help and loaded resources.`,
+			const compactInstructions = [rawKeyHint("/", "命令"), hint("app.tools.expand", "详情")].join(
+				theme.fg("dim", "  ·  "),
 			);
-			const onboarding = theme.fg(
-				"dim",
-				`Pi can explain its own features and look up its docs. Ask it how to use or extend Pi.`,
-			);
-			this.builtInHeader = new ExpandableText(
-				() => `${logo}\n${compactInstructions}\n${compactOnboarding}\n\n${onboarding}`,
-				() => `${logo}\n${expandedInstructions}\n\n${onboarding}`,
-				this.getStartupExpansionState(),
-				1,
-				0,
-			);
+			const onboarding = theme.fg("dim", `直接描述要做的事；${PI_GO_NAME} 会自己选择合适的工具。`);
+			this.builtInHeader = new BrandHeaderComponent({
+				version: this.version,
+				collapsedText: () => compactInstructions,
+				expandedText: () => `${expandedInstructions}\n\n${onboarding}`,
+				expanded: this.getStartupExpansionState(),
+				paddingX: 1,
+			});
 
 			// Setup UI layout
 			this.headerContainer.addChild(new Spacer(1));
@@ -1601,12 +1590,15 @@ export class InteractiveMode {
 	private showLoadedResources(options?: {
 		extensions?: Array<{ path: string; sourceInfo?: SourceInfo }>;
 		force?: boolean;
+		hideListing?: boolean;
 		showDiagnosticsWhenQuiet?: boolean;
 	}): void {
 		// Resource rendering is idempotent; chat clears no longer clear this separate container.
 		this.loadedResourcesContainer.clear();
 
-		const showListing = options?.force || this.options.verbose || !this.settingsManager.getQuietStartup();
+		const showListing =
+			options?.hideListing !== true &&
+			(options?.force || this.options.verbose || !this.settingsManager.getQuietStartup());
 		const showDiagnostics = showListing || options?.showDiagnosticsWhenQuiet === true;
 		if (!showListing && !showDiagnostics) {
 			return;
@@ -1887,7 +1879,15 @@ export class InteractiveMode {
 
 		const extensionRunner = this.session.extensionRunner;
 		this.setupExtensionShortcuts(extensionRunner);
-		this.showLoadedResources({ force: false, showDiagnosticsWhenQuiet: true });
+		const showStartupDetails = shouldShowStartupDetails({
+			expanded: this.toolOutputExpanded,
+			verbose: this.options.verbose ?? false,
+		});
+		this.showLoadedResources({
+			force: showStartupDetails,
+			hideListing: !showStartupDetails,
+			showDiagnosticsWhenQuiet: showStartupDetails,
+		});
 		this.showStartupNoticesIfNeeded();
 	}
 
@@ -2795,7 +2795,7 @@ export class InteractiveMode {
 		this.defaultEditor.onAction("app.clear", () => this.handleCtrlC());
 		this.defaultEditor.onCtrlD = () => this.handleCtrlD();
 		this.defaultEditor.onAction("app.suspend", () => this.handleCtrlZ());
-		this.defaultEditor.onAction("app.thinking.cycle", () => this.cycleThinkingLevel());
+		this.defaultEditor.onAction("app.approval.cycle", () => this.cycleToolApprovalMode());
 		this.defaultEditor.onAction("app.model.cycleForward", () => this.cycleModel("forward"));
 		this.defaultEditor.onAction("app.model.cycleBackward", () => this.cycleModel("backward"));
 
@@ -3995,15 +3995,15 @@ export class InteractiveMode {
 		this.ui.requestRender();
 	}
 
-	private cycleThinkingLevel(): void {
-		const newLevel = this.session.cycleThinkingLevel();
-		if (newLevel === undefined) {
-			this.showStatus("Current model does not support thinking");
-		} else {
-			this.footer.invalidate();
-			this.updateEditorBorderColor();
-			this.showStatus(`Thinking level: ${newLevel}`);
-		}
+	private cycleToolApprovalMode(): void {
+		const mode = this.settingsManager.cycleToolApprovalMode();
+		const message =
+			mode === "yolo"
+				? "安全模式：便捷（普通操作直接执行，危险操作确认）"
+				: mode === "write"
+					? "安全模式：标准（读取直接执行，修改和命令确认）"
+					: "安全模式：严格（所有工具均确认）";
+		this.showStatus(message);
 	}
 
 	private async cycleModel(direction: "forward" | "backward"): Promise<void> {
@@ -4036,6 +4036,14 @@ export class InteractiveMode {
 		const activeHeader = this.customHeader ?? this.builtInHeader;
 		if (isExpandable(activeHeader)) {
 			activeHeader.setExpanded(expanded);
+		}
+		if (typeof this.showLoadedResources === "function") {
+			const showStartupDetails = shouldShowStartupDetails({ verbose: this.options.verbose ?? false, expanded });
+			this.showLoadedResources({
+				force: showStartupDetails,
+				hideListing: !showStartupDetails,
+				showDiagnosticsWhenQuiet: showStartupDetails,
+			});
 		}
 		for (const container of [this.loadedResourcesContainer, this.chatContainer]) {
 			for (const child of container.children) {
@@ -4594,16 +4602,7 @@ export class InteractiveMode {
 
 		const model = await this.findExactModelMatch(searchTerm);
 		if (model) {
-			try {
-				await this.session.setModel(model);
-				this.footer.invalidate();
-				this.updateEditorBorderColor();
-				this.showStatus(`Model: ${model.id}`);
-				void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-				this.checkDaxnutsEasterEgg(model);
-			} catch (error) {
-				this.showError(error instanceof Error ? error.message : String(error));
-			}
+			this.showModelThinkingSelector(model);
 			return;
 		}
 
@@ -4740,22 +4739,11 @@ export class InteractiveMode {
 			const selector = new ModelSelectorComponent(
 				this.ui,
 				this.session.model,
-				this.settingsManager,
 				this.session.modelRuntime,
 				this.session.scopedModels,
-				async (model) => {
-					try {
-						await this.session.setModel(model);
-						this.footer.invalidate();
-						this.updateEditorBorderColor();
-						done();
-						this.showStatus(`Model: ${model.id}`);
-						void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
-						this.checkDaxnutsEasterEgg(model);
-					} catch (error) {
-						done();
-						this.showError(error instanceof Error ? error.message : String(error));
-					}
+				(model) => {
+					done();
+					this.showModelThinkingSelector(model);
 				},
 				() => {
 					done();
@@ -4765,6 +4753,52 @@ export class InteractiveMode {
 			);
 			return { component: selector, focus: selector, dispose: () => selector.dispose() };
 		});
+	}
+
+	private showModelThinkingSelector(model: Model<any>): void {
+		const availableLevels = getSupportedThinkingLevels(model) as ThinkingLevel[];
+		if (!model.reasoning || availableLevels.length <= 1) {
+			void this.applyModelSelection(model, "off");
+			return;
+		}
+
+		const scopedLevel = this.session.scopedModels.find(
+			(scoped) => scoped.model.provider === model.provider && scoped.model.id === model.id,
+		)?.thinkingLevel;
+		const preferredLevel = scopedLevel ?? this.session.thinkingLevel;
+		const initialLevel = availableLevels.includes(preferredLevel) ? preferredLevel : (availableLevels[0] ?? "off");
+
+		this.showSelector((done) => {
+			const selector = new ThinkingSelectorComponent(
+				initialLevel,
+				availableLevels,
+				(level) => {
+					done();
+					void this.applyModelSelection(model, level);
+				},
+				() => {
+					done();
+					this.ui.requestRender();
+				},
+				`思考等级 · ${model.id}`,
+			);
+			return { component: selector, focus: selector.getSelectList() };
+		});
+	}
+
+	private async applyModelSelection(model: Model<any>, thinkingLevel: ThinkingLevel): Promise<void> {
+		try {
+			await this.session.setModel(model);
+			this.session.setThinkingLevel(thinkingLevel);
+			this.footer.invalidate();
+			this.updateEditorBorderColor();
+			const thinkingText = model.reasoning ? ` · 思考：${this.session.thinkingLevel}` : " · 不支持思考";
+			this.showStatus(`模型：${model.id}${thinkingText}`);
+			void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
+			this.checkDaxnutsEasterEgg(model);
+		} catch (error) {
+			this.showError(error instanceof Error ? error.message : String(error));
+		}
 	}
 
 	private showModelsSelector(): void {
@@ -5743,9 +5777,14 @@ export class InteractiveMode {
 			this.setupAutocompleteProvider();
 			const runner = this.session.extensionRunner;
 			this.setupExtensionShortcuts(runner);
+			const showStartupDetails = shouldShowStartupDetails({
+				expanded: this.toolOutputExpanded,
+				verbose: this.options.verbose ?? false,
+			});
 			this.showLoadedResources({
-				force: false,
-				showDiagnosticsWhenQuiet: true,
+				force: showStartupDetails,
+				hideListing: !showStartupDetails,
+				showDiagnosticsWhenQuiet: showStartupDetails,
 			});
 			const savedImplicitProjectTrust = this.maybeSaveImplicitProjectTrustAfterReload();
 			const modelsJsonError = this.session.modelRuntime.getError();
@@ -6123,7 +6162,7 @@ export class InteractiveMode {
 		const clear = this.getAppKeyDisplay("app.clear");
 		const exit = this.getAppKeyDisplay("app.exit");
 		const suspend = this.getAppKeyDisplay("app.suspend");
-		const cycleThinkingLevel = this.getAppKeyDisplay("app.thinking.cycle");
+		const cycleApprovalMode = this.getAppKeyDisplay("app.approval.cycle");
 		const cycleModelForward = this.getAppKeyDisplay("app.model.cycleForward");
 		const selectModel = this.getAppKeyDisplay("app.model.select");
 		const expandTools = this.getAppKeyDisplay("app.tools.expand");
@@ -6168,7 +6207,7 @@ export class InteractiveMode {
 | \`${clear}\` | Clear editor (first) / exit (second) |
 | \`${exit}\` | Exit (when editor is empty) |
 | \`${suspend}\` | Suspend to background |
-| \`${cycleThinkingLevel}\` | Cycle thinking level |
+| \`${cycleApprovalMode}\` | Cycle tool safety mode |
 | \`${cycleModelForward}\` / \`${cycleModelBackward}\` | Cycle models |
 | \`${selectModel}\` | Open model selector |
 | \`${expandTools}\` | Toggle tool output expansion |

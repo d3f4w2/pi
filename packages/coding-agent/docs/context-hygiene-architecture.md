@@ -8,6 +8,7 @@
 - Keep the persisted session transcript unchanged and fully recoverable.
 - Preserve tool-call/tool-result pairing required by provider protocols.
 - Prefer pruning results superseded by a newer result for the same tool request.
+- Invalidate an older file read after a later successful `edit` or `write` changes the same normalized path.
 - When unique old output must be reduced, retain bounded head/tail evidence and a recovery instruction.
 - Never prune errors, images, instruction resources, or the newest protected tool-output budget.
 - Run extension context transforms before the built-in hygiene pass.
@@ -37,6 +38,7 @@ index assistant tool calls by toolCallId
 classify tool results
   | protected: error / image / instruction / recent budget
   | superseded: newer identical request exists
+  | invalidated: later successful edit/write changed the read path
   | stale-large: old, unique, above minimum size
           |
           v
@@ -63,6 +65,7 @@ Pure context transformation and statistics:
 - associates tool results with their assistant tool calls;
 - creates a stable request key from tool name and canonicalized arguments;
 - marks earlier successful duplicates as superseded;
+- tracks successful file mutations and marks earlier same-path reads as invalidated;
 - protects recent output by walking newest to oldest;
 - selects old large candidates only when projected savings clears the configured floor;
 - clones only the messages that are actually changed.
@@ -92,6 +95,8 @@ The pass never changes:
 - results inside the newest protected output-token budget;
 - any result below the minimum result size.
 
+Confirmed stale reads are the exception to the recent and minimum-size rules: correctness takes priority once a later successful `edit` or `write` proves that the old source is obsolete. Their replacement contains no source preview. Failed mutations, different paths, terminal commands, and unknown tools fail open.
+
 Exact duplicate requests are compared using recursively sorted object keys. A later exact request can supersede an earlier one, while a focused `read(offset, limit)` does not incorrectly replace a whole-file read.
 
 ## Failure modes
@@ -100,6 +105,8 @@ Exact duplicate requests are compared using recursively sorted object keys. A la
 |---|---|
 | Unknown/custom message shape | Leave that message unchanged |
 | Circular tool arguments | Treat the request as unique |
+| Failed mutation or path mismatch | Keep the earlier read unchanged |
+| File changed through an unknown tool | Keep the earlier read unchanged |
 | Invalid numeric setting | Use a safe bounded default |
 | Extension transform pipeline throws | Return the original messages unchanged |
 | Hygiene pass throws | Return the extension-transformed messages unchanged |
@@ -115,7 +122,7 @@ Exact duplicate requests are compared using recursively sorted object keys. A la
 
 ## Verification
 
-- Unit tests for duplicate detection, recent-budget protection, protected result types, head/tail previews, deterministic output, disabled mode, and minimum-saving behavior.
+- Unit tests for duplicate detection, stale-read invalidation, failed and unrelated mutations, fresh post-mutation reads, recent-budget protection, protected result types, head/tail previews, deterministic output, disabled mode, and minimum-saving behavior.
 - SDK integration test proving the provider receives the reduced view while `session.messages` remains complete.
 - Benchmark using a synthetic long tool loop, reporting estimated tokens before/after and transform latency.
 - Existing session, extension-context, compaction, and dynamic-tool tests.

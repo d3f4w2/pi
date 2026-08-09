@@ -37,7 +37,7 @@ export class UserMessageComponent extends Container {
 
 	private rebuild(): void {
 		this.clear();
-		const contentBox = new Box(this.outputPad, 1, (content: string) => theme.bg("userMessageBg", content));
+		const contentBox = new Box(0, 1);
 		contentBox.addChild(
 			new Markdown(
 				this.text,
@@ -58,7 +58,9 @@ export class UserMessageComponent extends Container {
 	}
 
 	override render(width: number): string[] {
-		const lines = super.render(width);
+		const rail = width > this.outputPad + 1 ? theme.fg("accent", "│") + " ".repeat(this.outputPad) : "";
+		const contentWidth = Math.max(1, width - this.outputPad - (rail ? 1 : 0));
+		const lines = super.render(contentWidth).map((line) => rail + line);
 		if (lines.length === 0) {
 			return lines;
 		}

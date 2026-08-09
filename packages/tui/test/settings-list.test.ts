@@ -1,6 +1,7 @@
 import assert from "node:assert";
 import { describe, it } from "node:test";
 import { SettingsList, type SettingsListTheme } from "../src/components/settings-list.ts";
+import { visibleWidth } from "../src/utils.ts";
 
 const testTheme: SettingsListTheme = {
 	label: (text) => text,
@@ -20,6 +21,27 @@ const items = [
 ];
 
 describe("SettingsList", () => {
+	it("never renders past the available terminal width", () => {
+		const list = new SettingsList(
+			[
+				{
+					id: "long-setting",
+					label: "A very long setting label",
+					currentValue: "A very long current value",
+					description: "A detailed explanation that should wrap without overflowing the terminal.",
+				},
+			],
+			10,
+			testTheme,
+			() => {},
+			() => {},
+		);
+
+		for (const width of [24, 40, 80]) {
+			for (const line of list.render(width)) assert.ok(visibleWidth(line) <= width);
+		}
+	});
+
 	it("includes spaces in an active search instead of changing the selected setting", () => {
 		const changes: Array<{ id: string; value: string }> = [];
 		const list = new SettingsList(

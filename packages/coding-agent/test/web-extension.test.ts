@@ -63,6 +63,68 @@ describe("web extension", () => {
 		await webSearch?.execute("new-run", { query: "new run" }, undefined, undefined, {} as never);
 		expect(search).toHaveBeenCalledTimes(3);
 	});
+
+	test("coalesces duplicate fetches and rejects excess parallel work", async () => {
+		const tools: ToolDefinition[] = [];
+		const resolvers: Array<() => void> = [];
+		const fetchPage = vi.fn(
+			(options: { url: string; format: "markdown" | "text" | "html" }) =>
+				new Promise<{
+					text: string;
+					details: {
+						url: string;
+						finalUrl: string;
+						format: "markdown" | "text" | "html";
+						status: number;
+						contentType: string;
+						bytes: number;
+						outputBytes: number;
+						truncated: boolean;
+					};
+				}>((resolve) => {
+					resolvers.push(() =>
+						resolve({
+							text: options.url,
+							details: {
+								url: options.url,
+								finalUrl: options.url,
+								format: options.format,
+								status: 200,
+								contentType: "text/plain",
+								bytes: 1,
+								outputBytes: 1,
+								truncated: false,
+							},
+						}),
+					);
+				}),
+		);
+		createWebExtension({ fetchWebPage: fetchPage })({
+			registerTool: (tool: ToolDefinition) => tools.push(tool),
+			on: () => {},
+		} as unknown as ExtensionAPI);
+		const webFetch = tools.find((tool) => tool.name === "web_fetch");
+		if (!webFetch) throw new Error("web_fetch was not registered");
+
+		const first = webFetch.execute("one", { url: "https://one.example" }, undefined, undefined, {} as never);
+		const duplicate = webFetch.execute(
+			"duplicate",
+			{ url: "https://one.example" },
+			undefined,
+			undefined,
+			{} as never,
+		);
+		const second = webFetch.execute("two", { url: "https://two.example" }, undefined, undefined, {} as never);
+		const third = webFetch.execute("three", { url: "https://three.example" }, undefined, undefined, {} as never);
+		const fourth = webFetch.execute("four", { url: "https://four.example" }, undefined, undefined, {} as never);
+
+		await expect(
+			webFetch.execute("five", { url: "https://five.example" }, undefined, undefined, {} as never),
+		).rejects.toThrow("4 个网页读取任务");
+		expect(fetchPage).toHaveBeenCalledTimes(4);
+		for (const resolve of resolvers) resolve();
+		await Promise.all([first, duplicate, second, third, fourth]);
+	});
 });
 
 describe("safe network layer", () => {
@@ -186,6 +248,20 @@ describe("safe network layer", () => {
 		expect(clampTimeoutSeconds(undefined)).toBe(30);
 		expect(clampTimeoutSeconds(0)).toBe(30);
 		expect(clampTimeoutSeconds(999)).toBe(120);
+	});
+
+	test("normalizes request abort errors without leaking the undici exception", async () => {
+		const aborted = Object.assign(new Error("Request aborted"), { name: "AbortError", code: "UND_ERR_ABORTED" });
+		const dependencies: NetworkDependencies = {
+			resolve: async () => [{ address: "93.184.216.34", family: 4 }],
+			request: async () => {
+				throw aborted;
+			},
+		};
+
+		await expect(fetchNetworkResource({ url: "https://example.com", maxBytes: 1024 }, dependencies)).rejects.toThrow(
+			"网页连接被中断",
+		);
 	});
 });
 

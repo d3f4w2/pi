@@ -17,15 +17,27 @@
 - Added a built-in `lsp` tool with bundled TypeScript/JavaScript intelligence, extensible Python and Go language-server adapters, definitions, references, implementations, hover information, symbols, single-file and bounded project diagnostics, safe project-boundary rename edits, compact results, lazy process reuse, failure circuit breaking, and bounded automatic diagnostics after code edits.
 - Added a built-in read-only `ast_grep` tool for bounded structural code search across JavaScript, TypeScript, TSX, HTML, and CSS, with automatic language detection, adaptive grouped output, project-boundary protection, and compact results.
 - Added a built-in `verify` tool for bounded TypeScript/JavaScript, Python, and Go type checks, related tests, and lint, with direct process execution, safe auto-scoping, non-executing standalone Python syntax checks, explicit modification-check routing, source-execution guards, compact failures, and local logs.
+- Added bounded dependency-impact analysis to `verify auto`, selecting transitively affected TypeScript/JavaScript and Python tests while retaining filename fallback and never expanding to the full suite implicitly.
 - Added a built-in `todo` task ledger with stable IDs, revision-safe updates, completion evidence, deterministic progression, branch-local session recovery, bounded context reminders, a compact TUI widget, and `/tasks` inspection.
 - Added an offline `/doctor` command that classifies model, core-tool, shell, project-language, LSP, optional search, web, and config health with concise Chinese remediation while never reading credential contents or adding a model tool schema.
 - Added a default tool execution protection layer with three-failure circuit breaking, 30-second recovery probes, 180-second generic timeouts, bounded redacted errors, and `/doctor` visibility.
+- Added clearly separated tool approval modes, critical destructive-operation confirmation, headless fail-closed behavior, session-scoped exact approvals, persistent per-tool allow/deny decisions, compact risk labels in `/tools`, and persistent `Shift+Tab` safety-mode cycling.
+- Added `/permissions` for viewing and changing persistent per-tool execution policies with cancellable keyboard navigation.
+- Added thinking-level selection to `/model`, using only the levels supported by the selected model and applying the model and thinking level together.
+- Added a bounded `ast_edit` tool for capture-aware structural batch rewrites with project-boundary checks, stale-file protection, multi-file rollback, shared Diff previews, and existing write-approval integration.
+- Added persistent per-turn Git workspace snapshots and `/undo-turn`, with file previews, explicit confirmation, user-change conflict detection, multi-file rollback, dirty-worktree preservation, concurrent-session locking, and no Git history mutation.
+- Added one structured `git` tool and `/git` interface for compact status, per-file Diff, exact staging, strict commits, bounded history, and always-confirmed pushes without shell routing.
+- Added a session-scoped `process` tool and `/process` interface for direct background process launch, bounded cursor logs, restart, stop, URL detection, project boundaries, and automatic cleanup.
+- Added an isolated `browser` tool and `/browser` interface using the local Chrome DevTools Protocol for semantic snapshots, reference-only interaction, bounded console capture, screenshots, local development URLs, temporary profiles, and automatic cleanup.
 
 ### Changed
 
+- Refreshed the interactive TUI with responsive `pi-go` startup branding, a quiet default workspace with `Ctrl+O` detail disclosure, fixed-width forward loading motion, semantic menu and tool states, quieter user/tool presentation, and priority-aware colored footer segments that remain useful on narrow terminals.
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
 - Changed the built-in `grep` tool to be active by default and stopped disabled exact-search capability from being silently replaced with shell `rg` or `grep` commands.
 - Changed Windows terminal routing to use Git Bash for portable commands, support an explicit PowerShell executor for Windows-only operations, and skip legacy WSL `bash.exe` relay paths.
+- Changed `edit` and `write` to use one compact file Diff view with file status, line statistics, intra-line highlighting, expandable large changes, and accurate overwrite previews.
+- Changed provider-context hygiene to invalidate obsolete file reads after a later successful same-path `edit` or `write`, while preserving fresh reads, failed mutations, unrelated paths, and the complete session history.
 
 ### Fixed
 

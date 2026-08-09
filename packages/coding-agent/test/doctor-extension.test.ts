@@ -91,6 +91,7 @@ describe("doctor extension", () => {
 				timeoutMs: 180_000,
 				tools: [],
 			}),
+			getToolApprovalMode: () => "yolo",
 			ui: { setStatus: vi.fn(), notify },
 		} as unknown as ExtensionCommandContext;
 		try {

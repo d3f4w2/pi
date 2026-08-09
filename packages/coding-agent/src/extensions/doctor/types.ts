@@ -46,6 +46,7 @@ export interface DoctorSnapshot {
 	configFiles: Readonly<Record<"settings" | "projectSettings" | "models" | "auth", boolean>>;
 	isBunBinary: boolean;
 	toolFailureGuard?: ToolFailureGuardSnapshot;
+	toolApprovalMode?: "always-ask" | "write" | "yolo";
 }
 
 export interface DoctorFileProbes {

@@ -19,14 +19,18 @@ afterEach(async () => {
 });
 
 describe("ast_grep extension", () => {
-	test("registers one compact read-only structural search tool", () => {
+	test("registers compact structural search and edit tools", () => {
 		const tools: ToolDefinition[] = [];
 		const service = { search: vi.fn() };
-		createAstGrepExtension(service)({
+		const editService = { preview: vi.fn(), edit: vi.fn() };
+		createAstGrepExtension(
+			service,
+			editService,
+		)({
 			registerTool: (tool: ToolDefinition) => tools.push(tool),
 		} as unknown as ExtensionAPI);
 
-		expect(tools).toHaveLength(1);
+		expect(tools).toHaveLength(2);
 		expect(tools[0]?.name).toBe("ast_grep");
 		expect(tools[0]?.description).toContain("代码结构");
 		expect(tools[0]?.description).not.toContain("修改");
@@ -38,6 +42,18 @@ describe("ast_grep extension", () => {
 				pattern: { minLength: 1 },
 				language: { anyOf: expect.arrayContaining([expect.objectContaining({ const: "auto" })]) },
 				max_results: { maximum: 1000 },
+			},
+		});
+		expect(tools[1]).toMatchObject({
+			name: "ast_edit",
+			executionMode: "sequential",
+			approval: { tier: "write" },
+			parameters: {
+				properties: {
+					pattern: { minLength: 1 },
+					replacement: { type: "string" },
+					max_matches: { maximum: 1000 },
+				},
 			},
 		});
 	});

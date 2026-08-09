@@ -1,4 +1,5 @@
 import * as Diff from "diff";
+import type { FileDiff } from "../../../core/tools/edit-diff.ts";
 import { theme } from "../theme/theme.ts";
 
 /**
@@ -69,6 +70,17 @@ export interface RenderDiffOptions {
 	/** File path (unused, kept for API compatibility) */
 	filePath?: string;
 }
+
+export interface RenderFileDiffOptions {
+	expanded?: boolean;
+	maxLines?: number;
+}
+
+const FILE_STATUS_LABELS = {
+	created: "新建",
+	modified: "修改",
+	deleted: "删除",
+} as const;
 
 /**
  * Render a diff string with colored lines and intra-line change highlighting.
@@ -144,4 +156,33 @@ export function renderDiff(diffText: string, _options: RenderDiffOptions = {}): 
 	}
 
 	return result.join("\n");
+}
+
+function compactDiffLines(lines: string[], maxLines: number): { lines: string[]; hidden: number } {
+	if (lines.length <= maxLines) return { lines, hidden: 0 };
+	const hidden = lines.length - maxLines;
+	const leading = Math.ceil((maxLines - 1) / 2);
+	const trailing = Math.floor((maxLines - 1) / 2);
+	return {
+		lines: [...lines.slice(0, leading), `     … ${hidden} 行未显示 …`, ...lines.slice(lines.length - trailing)],
+		hidden,
+	};
+}
+
+/** Render one complete file change with a stable header and optional compact folding. */
+export function renderFileDiff(fileDiff: FileDiff, options: RenderFileDiffOptions = {}): string {
+	const rawLines = fileDiff.diff ? fileDiff.diff.split("\n") : [];
+	const maxLines = options.expanded ? Number.POSITIVE_INFINITY : (options.maxLines ?? 80);
+	const compacted = compactDiffLines(rawLines, maxLines);
+	const status = theme.fg("accent", FILE_STATUS_LABELS[fileDiff.status]);
+	const path = theme.bold(fileDiff.path);
+	const additions = theme.fg("toolDiffAdded", `+${fileDiff.additions}`);
+	const deletions = theme.fg("toolDiffRemoved", `-${fileDiff.deletions}`);
+	const header = `${theme.fg("borderMuted", "──")} ${status} ${path}  ${additions} ${deletions}`;
+	const body = renderDiff(compacted.lines.join("\n"));
+	const folded =
+		compacted.hidden > 0
+			? `\n${theme.fg("muted", `   … 已折叠 ${compacted.hidden} 行，展开工具输出可查看全部`)}`
+			: "";
+	return body ? `${header}\n${body}${folded}` : header;
 }

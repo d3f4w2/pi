@@ -41,6 +41,22 @@ export type StreamFn = (
  */
 export type ToolExecutionMode = "sequential" | "parallel";
 
+/** Broad side-effect level used by hosts when deciding whether a tool needs approval. */
+export type ToolApprovalTier = "read" | "write" | "exec";
+
+export type ToolApprovalPolicy = "allow" | "deny" | "prompt";
+
+export type ToolApprovalDecision =
+	| ToolApprovalTier
+	| {
+			tier: ToolApprovalTier;
+			reason?: string;
+			override?: boolean;
+			policy?: ToolApprovalPolicy;
+	  };
+
+export type ToolApproval = ToolApprovalDecision | ((args: unknown) => ToolApprovalDecision);
+
 /**
  * Controls how many queued user messages are injected when the agent loop reaches a queue drain point.
  *
@@ -102,6 +118,8 @@ export interface BeforeToolCallContext {
 	toolCall: AgentToolCall;
 	/** Validated tool arguments for the target tool schema. */
 	args: unknown;
+	/** Resolved tool definition that will execute the call. */
+	tool: AgentTool;
 	/** Current agent context at the time the tool call is prepared. */
 	context: AgentContext;
 }
@@ -449,6 +467,10 @@ export interface AgentTool<TParameters extends TSchema = TSchema, TDetails = any
 	 * If omitted, the default execution mode applies.
 	 */
 	executionMode?: ToolExecutionMode;
+	/** Side-effect classification used by an interactive host approval policy. */
+	approval?: ToolApproval;
+	/** Optional short details shown by a host in an approval dialog. */
+	formatApprovalDetails?: (args: unknown) => string | string[] | undefined;
 }
 
 /** Context snapshot passed into the low-level agent loop. */

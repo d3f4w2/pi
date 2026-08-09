@@ -12,6 +12,21 @@ describe("tool execution protection settings", () => {
 			cooldownMs: 30_000,
 			timeoutMs: 180_000,
 		});
+		expect(manager.getToolApprovalSettings()).toEqual({ mode: "yolo", policies: {} });
+	});
+
+	it("normalizes approval mode and per-tool policies", () => {
+		const manager = SettingsManager.inMemory({
+			tools: {
+				approvalMode: "write",
+				approval: { Bash: "prompt", read: "allow", blocked: "deny" },
+			},
+		});
+
+		expect(manager.getToolApprovalSettings()).toEqual({
+			mode: "write",
+			policies: { bash: "prompt", read: "allow", blocked: "deny" },
+		});
 	});
 
 	it("clamps configured values and permits disabling the generic timeout", () => {
@@ -43,6 +58,7 @@ describe("tool execution protection settings", () => {
 				cooldownMs: "later",
 				timeoutMs: Number.POSITIVE_INFINITY,
 			},
+			tools: { approvalMode: "sometimes", approval: { bash: "maybe", " ": "deny" } },
 		} as unknown as Partial<Settings>;
 		const manager = SettingsManager.inMemory(malformed);
 
@@ -53,5 +69,6 @@ describe("tool execution protection settings", () => {
 			cooldownMs: 30_000,
 			timeoutMs: 180_000,
 		});
+		expect(manager.getToolApprovalSettings()).toEqual({ mode: "yolo", policies: {} });
 	});
 });

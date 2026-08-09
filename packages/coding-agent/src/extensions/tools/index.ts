@@ -1,6 +1,7 @@
 import { Type } from "typebox";
 import { isBunBinary } from "../../config.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../core/extensions/types.ts";
+import type { ToolApprovalSetting } from "../../core/settings-manager.ts";
 import {
 	deriveActiveToolNames,
 	getToolDescription,
@@ -8,6 +9,7 @@ import {
 	TOOL_DISCOVERY_BUDGET,
 	TOOL_SEARCH_NAME,
 } from "./discovery.ts";
+import { showPermissionsManager } from "./permissions-ui.ts";
 import { applyToolPreferences, ToolPreferencesStorage, type ToolPreferencesStore } from "./storage.ts";
 import { showToolsManager } from "./ui.ts";
 
@@ -72,7 +74,9 @@ async function manageTools(
 	const enabledToolNames = getEnabledToolNames(pi, state);
 	const initialEnabledTools = new Set(enabledToolNames);
 	let codeSearchActivationRequested = false;
+	let browserActivationRequested = false;
 	let lspActivationRequested = false;
+	let processActivationRequested = false;
 	let toolSearchActivationRequested = false;
 	let verifyActivationRequested = false;
 
@@ -84,9 +88,11 @@ async function manageTools(
 			tools,
 			[...enabledToolNames],
 			(toolName, active) => {
+				if (toolName === "browser" && active) browserActivationRequested = true;
 				if (toolName === "code_search" && active) codeSearchActivationRequested = true;
 				if (toolName === "lsp" && active) lspActivationRequested = true;
 				if (toolName === TOOL_SEARCH_NAME && active) toolSearchActivationRequested = true;
+				if (toolName === "process" && active) processActivationRequested = true;
 				if (toolName === "verify" && active) verifyActivationRequested = true;
 				if (enabledToolNames.has(toolName) === active) return;
 				if (active) enabledToolNames.add(toolName);
@@ -159,6 +165,56 @@ async function manageTools(
 			"info",
 		);
 	}
+	if (processActivationRequested && finalEnabledTools.has("process")) {
+		ctx.ui.notify(
+			[
+				"process 已开启。可以在后台启动开发服务器、监听器和测试观察模式。",
+				"日志按游标增量读取，不会反复占用模型上下文。",
+				"只管理 Pi 当前会话启动的进程；退出 Pi 时会自动停止。",
+			].join("\n"),
+			"info",
+		);
+	}
+	if (browserActivationRequested && finalEnabledTools.has("browser")) {
+		ctx.ui.notify(
+			[
+				"browser 已开启。会自动使用本机 Chrome、Edge 或 Chromium，不需要额外安装插件。",
+				"浏览器使用临时隔离配置，不读取个人 Cookie、登录状态或扩展。",
+				"找不到浏览器时，请设置 PI_BROWSER_EXECUTABLE 为浏览器程序路径。",
+			].join("\n"),
+			"info",
+		);
+	}
+}
+
+async function managePermissions(pi: ExtensionAPI, ctx: ExtensionCommandContext): Promise<void> {
+	const tools = pi.getAllTools();
+	if (tools.length === 0) {
+		ctx.ui.notify("当前没有可用工具。", "warning");
+		return;
+	}
+	const settings = ctx.getToolApprovalSettings?.();
+	if (!settings || !ctx.setToolApprovalPolicy) {
+		ctx.ui.notify("当前运行环境不支持权限管理。", "warning");
+		return;
+	}
+
+	const result = await ctx.ui.custom<Readonly<Record<string, ToolApprovalSetting>> | undefined>(
+		(tui, theme, keybindings, done) =>
+			showPermissionsManager(tui, theme, keybindings, tools, settings.mode, settings.policies, done),
+	);
+	if (result === undefined) return;
+
+	try {
+		for (const tool of tools) {
+			const name = tool.name.toLowerCase();
+			const current = settings.policies[name];
+			const next = result[name];
+			if (current !== next) ctx.setToolApprovalPolicy(tool.name, next);
+		}
+	} catch (error) {
+		ctx.ui.notify(`权限保存失败：${error instanceof Error ? error.message : String(error)}`, "warning");
+	}
 }
 
 function registerToolsExtension(pi: ExtensionAPI, preferences: ToolPreferencesStore): void {
@@ -230,6 +286,11 @@ function registerToolsExtension(pi: ExtensionAPI, preferences: ToolPreferencesSt
 
 	pi.on("before_agent_start", () => {
 		applyRuntimeTools(pi, state);
+	});
+
+	pi.registerCommand("permissions", {
+		description: "查看或修改工具执行权限",
+		handler: async (_args, ctx) => managePermissions(pi, ctx),
 	});
 
 	pi.registerCommand("tools", {

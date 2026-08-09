@@ -2,6 +2,7 @@ import type { Component, TUI } from "@earendil-works/pi-tui";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import type { ToolInfo } from "../../core/extensions/types.ts";
 import type { KeybindingsManager } from "../../core/keybindings.ts";
+import { getToolApprovalTier } from "../../core/tool-approval.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { getToolDescription } from "./discovery.ts";
 
@@ -38,16 +39,25 @@ class ToolsManager implements Component {
 	render(width: number): string[] {
 		if (width <= 0) return [];
 		const lines = [
-			this.theme.bold("工具管理"),
-			this.theme.fg("dim", "开=允许使用 · ↑/↓ 选择 · ← 关闭 · → 开启 · Enter/Esc 完成"),
+			this.theme.bold(this.theme.fg("accent", "工具管理")),
+			this.theme.fg("dim", "读/写/执行=风险 · ↑/↓ 选择 · ← 关闭 · → 开启 · Enter/Esc 完成"),
 			"",
 		];
 		for (const [index, tool] of this.tools.entries()) {
 			const selected = index === this.selectedIndex;
-			const status = this.activeTools.has(tool.name) ? "开" : "关";
+			const active = this.activeTools.has(tool.name);
+			const status = this.theme.fg(active ? "success" : "dim", active ? "开" : "关");
+			const tier = getToolApprovalTier(tool);
+			const risk = tier === "read" ? "读" : tier === "write" ? "写" : "执行";
+			const riskText = this.theme.fg(tier === "read" ? "muted" : tier === "write" ? "warning" : "error", risk);
 			const description = getToolDescription(tool.name);
-			const line = `${selected ? "›" : " "} [${status}] ${tool.name} - ${description}`;
-			lines.push(selected ? this.theme.fg("accent", line) : line);
+			const cursor = selected ? this.theme.fg("accent", "›") : " ";
+			const name = selected
+				? this.theme.bold(this.theme.fg("accent", tool.name))
+				: active
+					? tool.name
+					: this.theme.fg("dim", tool.name);
+			lines.push(`${cursor} [${status}/${riskText}] ${name} ${this.theme.fg("muted", description)}`);
 		}
 		return lines.map((line) => truncateToWidth(line, width, ""));
 	}

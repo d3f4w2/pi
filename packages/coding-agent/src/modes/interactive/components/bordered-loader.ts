@@ -1,5 +1,6 @@
 import { CancellableLoader, Container, Loader, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
 import type { Theme } from "../theme/theme.ts";
+import { PI_GO_LOADER_FRAMES } from "./brand.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint } from "./keybinding-hints.ts";
 
@@ -20,6 +21,7 @@ export class BorderedLoader extends Container {
 				(s) => theme.fg("accent", s),
 				(s) => theme.fg("muted", s),
 				message,
+				{ frames: [...PI_GO_LOADER_FRAMES], intervalMs: 80 },
 			);
 		} else {
 			this.signalController = new AbortController();
@@ -28,6 +30,7 @@ export class BorderedLoader extends Container {
 				(s) => theme.fg("accent", s),
 				(s) => theme.fg("muted", s),
 				message,
+				{ frames: [...PI_GO_LOADER_FRAMES], intervalMs: 80 },
 			);
 		}
 		this.addChild(this.loader);

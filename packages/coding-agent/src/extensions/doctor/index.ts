@@ -74,6 +74,7 @@ function collectDoctorSnapshot(
 	const currentModel = ctx.model;
 	const modelError = ctx.modelRegistry.getError();
 	const toolFailureGuard = ctx.getToolFailureGuardStatus?.();
+	const toolApprovalMode = ctx.getToolApprovalMode?.();
 	return {
 		platform: process.platform,
 		cwd: ctx.cwd,
@@ -102,6 +103,7 @@ function collectDoctorSnapshot(
 		},
 		isBunBinary,
 		...(toolFailureGuard === undefined ? {} : { toolFailureGuard }),
+		...(toolApprovalMode === undefined ? {} : { toolApprovalMode }),
 	};
 }
 

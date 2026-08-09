@@ -8,6 +8,7 @@ import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
 import type { AutocompleteProviderFactory } from "../src/core/extensions/types.ts";
 import type { SourceInfo } from "../src/core/source-info.ts";
 import type { AuthSelectorProvider } from "../src/modes/interactive/components/oauth-selector.ts";
+import type { ThinkingSelectorComponent } from "../src/modes/interactive/components/thinking-selector.ts";
 import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
@@ -115,6 +116,121 @@ describe("InteractiveMode.showStatus", () => {
 		// adds spacer + text
 		expect(fakeThis.chatContainer.children).toHaveLength(5);
 		expect(renderLastLine(fakeThis.chatContainer)).toContain("STATUS_TWO");
+	});
+});
+
+describe("InteractiveMode.cycleToolApprovalMode", () => {
+	test("persists the next mode and explains it in Chinese", () => {
+		type ApprovalMode = "yolo" | "write" | "always-ask";
+		type FakeInteractiveMode = {
+			settingsManager: { cycleToolApprovalMode: () => ApprovalMode };
+			showStatus: (message: string) => void;
+		};
+		const cycleToolApprovalMode = (
+			InteractiveMode as unknown as {
+				prototype: { cycleToolApprovalMode(this: FakeInteractiveMode): void };
+			}
+		).prototype.cycleToolApprovalMode;
+		const cases = [
+			["yolo", "安全模式：便捷（普通操作直接执行，危险操作确认）"],
+			["write", "安全模式：标准（读取直接执行，修改和命令确认）"],
+			["always-ask", "安全模式：严格（所有工具均确认）"],
+		] as const satisfies ReadonlyArray<readonly [ApprovalMode, string]>;
+
+		for (const [mode, message] of cases) {
+			const cycleSetting = vi.fn(() => mode);
+			const showStatus = vi.fn();
+
+			cycleToolApprovalMode.call({ settingsManager: { cycleToolApprovalMode: cycleSetting }, showStatus });
+
+			expect(cycleSetting).toHaveBeenCalledOnce();
+			expect(showStatus).toHaveBeenCalledWith(message);
+		}
+	});
+});
+
+describe("InteractiveMode model thinking selection", () => {
+	type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
+	type TestModel = {
+		id: string;
+		provider: string;
+		reasoning: boolean;
+		thinkingLevelMap?: Partial<Record<ThinkingLevel, string | null>>;
+	};
+
+	test("opens a supported thinking selector before applying a reasoning model", () => {
+		let selector: ThinkingSelectorComponent | undefined;
+		const applyModelSelection = vi.fn(async () => {});
+		const done = vi.fn();
+		const fakeThis = {
+			session: { scopedModels: [], thinkingLevel: "high" as ThinkingLevel },
+			ui: { requestRender: vi.fn() },
+			applyModelSelection,
+			showSelector: (create: (doneSelection: () => void) => { component: Component; focus: Component }): void => {
+				selector = create(done).component as ThinkingSelectorComponent;
+			},
+		};
+		const showModelThinkingSelector = (
+			InteractiveMode as unknown as {
+				prototype: { showModelThinkingSelector(this: typeof fakeThis, model: TestModel): void };
+			}
+		).prototype.showModelThinkingSelector;
+		const model: TestModel = { id: "reasoning", provider: "faux", reasoning: true };
+
+		showModelThinkingSelector.call(fakeThis, model);
+		expect(selector).toBeDefined();
+		expect(selector ? renderAll(selector) : "").toContain("思考等级 · reasoning");
+		selector?.getSelectList().handleInput("\r");
+
+		expect(done).toHaveBeenCalledOnce();
+		expect(applyModelSelection).toHaveBeenCalledWith(model, "high");
+	});
+
+	test("applies a non-reasoning model directly with thinking off", () => {
+		const applyModelSelection = vi.fn(async () => {});
+		const showSelector = vi.fn();
+		const fakeThis = {
+			session: { scopedModels: [], thinkingLevel: "high" as ThinkingLevel },
+			ui: { requestRender: vi.fn() },
+			applyModelSelection,
+			showSelector,
+		};
+		const showModelThinkingSelector = (
+			InteractiveMode as unknown as {
+				prototype: { showModelThinkingSelector(this: typeof fakeThis, model: TestModel): void };
+			}
+		).prototype.showModelThinkingSelector;
+		const model: TestModel = { id: "plain", provider: "faux", reasoning: false };
+
+		showModelThinkingSelector.call(fakeThis, model);
+
+		expect(showSelector).not.toHaveBeenCalled();
+		expect(applyModelSelection).toHaveBeenCalledWith(model, "off");
+	});
+
+	test("cancelling the thinking step leaves the model unchanged", () => {
+		let selector: ThinkingSelectorComponent | undefined;
+		const applyModelSelection = vi.fn(async () => {});
+		const done = vi.fn();
+		const fakeThis = {
+			session: { scopedModels: [], thinkingLevel: "medium" as ThinkingLevel },
+			ui: { requestRender: vi.fn() },
+			applyModelSelection,
+			showSelector: (create: (doneSelection: () => void) => { component: Component; focus: Component }): void => {
+				selector = create(done).component as ThinkingSelectorComponent;
+			},
+		};
+		const showModelThinkingSelector = (
+			InteractiveMode as unknown as {
+				prototype: { showModelThinkingSelector(this: typeof fakeThis, model: TestModel): void };
+			}
+		).prototype.showModelThinkingSelector;
+
+		showModelThinkingSelector.call(fakeThis, { id: "reasoning", provider: "faux", reasoning: true });
+		selector?.getSelectList().handleInput("\x1b");
+
+		expect(done).toHaveBeenCalledOnce();
+		expect(applyModelSelection).not.toHaveBeenCalled();
 	});
 });
 

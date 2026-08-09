@@ -2,7 +2,7 @@ import { constants } from "node:fs";
 import { access, readFile, realpath, stat } from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
-import { glob } from "glob";
+import { findJavaScriptRelatedTests, findPythonRelatedTests } from "./impact.ts";
 import type { PlannedVerifyCheck, VerifyCommand, VerifyLanguage, VerifyOperation, VerifyRequest } from "./types.ts";
 
 const require = createRequire(import.meta.url);
@@ -13,9 +13,7 @@ try {
 	// A project-local or PATH tsc may still be available.
 }
 
-const IGNORED_PATHS = ["**/node_modules/**", "**/.git/**", "**/dist/**", "**/build/**", "**/coverage/**"];
 const JS_EXTENSIONS = new Set([".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"]);
-const TEST_FILE_PATTERN = /(?:^|[._-])(test|spec)(?:[._-]|$)/i;
 const PYTHON_SYNTAX_SCRIPT =
 	"import ast,sys,tokenize; f=tokenize.open(sys.argv[1]); source=f.read(); f.close(); ast.parse(source,filename=sys.argv[1])";
 
@@ -194,33 +192,6 @@ async function findExecutableUpward(workspace: VerifyWorkspace, relativePath: st
 	return undefined;
 }
 
-function testStem(filePath: string): string {
-	return path
-		.basename(filePath)
-		.replace(/\.(test|spec)$/i, "")
-		.replace(/\.[^.]+$/, "");
-}
-
-function isTestFile(filePath: string): boolean {
-	return TEST_FILE_PATTERN.test(path.basename(filePath)) || /(^|[/\\])(test|tests|__tests__)([/\\]|$)/i.test(filePath);
-}
-
-async function relatedJavaScriptTests(workspace: VerifyWorkspace): Promise<string[]> {
-	if (workspace.targetIsFile && isTestFile(workspace.targetPath)) return [workspace.relativeTarget];
-	if (!workspace.targetIsFile || workspace.relativeTarget === ".") return [];
-	const stem = testStem(workspace.targetPath);
-	return (
-		await glob([`**/${stem}.{test,spec}.{ts,tsx,mts,cts,js,jsx,mjs,cjs}`, `**/${stem}-test.{ts,tsx,js,jsx}`], {
-			cwd: workspace.workspaceRoot,
-			nodir: true,
-			ignore: IGNORED_PATHS,
-		})
-	)
-		.slice(0, 20)
-		.map((filePath) => filePath.replaceAll("\\", "/"))
-		.sort();
-}
-
 async function planJavaScript(workspace: VerifyWorkspace, operation: VerifyOperation): Promise<VerifyPlan> {
 	const packageJson = await readPackageJson(workspace.workspaceRoot);
 	const manager = await detectPackageManager(workspace, packageJson);
@@ -260,7 +231,11 @@ async function planJavaScript(workspace: VerifyWorkspace, operation: VerifyOpera
 
 	if (operation === "auto" || operation === "test") {
 		const testScript = packageJson.scripts.test;
-		const relatedTests = await relatedJavaScriptTests(workspace);
+		const impact = workspace.targetIsFile
+			? await findJavaScriptRelatedTests(workspace.workspaceRoot, workspace.targetPath)
+			: { files: [], strategy: "none" as const, truncated: false };
+		const relatedTests = impact.files;
+		if (impact.note) notes.push(impact.note);
 		if (testScript) {
 			if (operation === "test" || relatedTests.length > 0) {
 				const targets =
@@ -314,22 +289,6 @@ function pythonCommands(workspaceRoot: string, label: string, module: string, ar
 	return pythonInterpreterCommands(workspaceRoot, label, ["-m", module, ...args]);
 }
 
-async function relatedPythonTests(workspace: VerifyWorkspace): Promise<string[]> {
-	if (workspace.targetIsFile && isTestFile(workspace.targetPath)) return [workspace.relativeTarget];
-	if (!workspace.targetIsFile || workspace.relativeTarget === ".") return [];
-	const stem = testStem(workspace.targetPath);
-	return (
-		await glob([`**/test_${stem}.py`, `**/${stem}_test.py`], {
-			cwd: workspace.workspaceRoot,
-			nodir: true,
-			ignore: [...IGNORED_PATHS, "**/.venv/**", "**/venv/**"],
-		})
-	)
-		.slice(0, 20)
-		.map((filePath) => filePath.replaceAll("\\", "/"))
-		.sort();
-}
-
 async function planPython(workspace: VerifyWorkspace, operation: VerifyOperation): Promise<VerifyPlan> {
 	const checks: PlannedVerifyCheck[] = [];
 	const notes: string[] = [];
@@ -358,7 +317,11 @@ async function planPython(workspace: VerifyWorkspace, operation: VerifyOperation
 		});
 	}
 	if (operation === "auto" || operation === "test") {
-		const relatedTests = await relatedPythonTests(workspace);
+		const impact = workspace.targetIsFile
+			? await findPythonRelatedTests(workspace.workspaceRoot, workspace.targetPath)
+			: { files: [], strategy: "none" as const, truncated: false };
+		const relatedTests = impact.files;
+		if (impact.note) notes.push(impact.note);
 		if (operation === "test" || relatedTests.length > 0) {
 			const targets =
 				relatedTests.length > 0

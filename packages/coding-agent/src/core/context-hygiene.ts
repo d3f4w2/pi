@@ -32,6 +32,7 @@ export interface ContextPruningStats {
 	prunedTokens: number;
 	prunedResults: number;
 	supersededResults: number;
+	invalidatedResults: number;
 }
 
 export interface ContextPruningResult {
@@ -51,6 +52,7 @@ interface PruningCandidate {
 	originalTokens: number;
 	replacementTokens: number;
 	superseded: boolean;
+	invalidated: boolean;
 }
 
 function normalizedInteger(value: number | undefined, fallback: number, minimum: number, maximum: number): number {
@@ -164,7 +166,10 @@ function getArgumentPath(argumentsValue: unknown): string | undefined {
 	if (typeof argumentsValue !== "object" || argumentsValue === null || Array.isArray(argumentsValue)) return undefined;
 	const record = argumentsValue as Record<string, unknown>;
 	const candidate = record.path ?? record.file_path;
-	return typeof candidate === "string" ? candidate.replaceAll("\\", "/").toLowerCase() : undefined;
+	if (typeof candidate !== "string") return undefined;
+	const normalized = candidate.replaceAll("\\", "/").replaceAll(/\/{2,}/g, "/");
+	const withoutCurrentDirectory = normalized.startsWith("./") ? normalized.slice(2) : normalized;
+	return process.platform === "win32" ? withoutCurrentDirectory.toLowerCase() : withoutCurrentDirectory;
 }
 
 function isInstructionResult(message: ToolResultMessage, request: ToolRequest | undefined): boolean {
@@ -174,13 +179,21 @@ function isInstructionResult(message: ToolResultMessage, request: ToolRequest | 
 
 	const targetPath = getArgumentPath(request?.argumentsValue);
 	if (!targetPath) return false;
+	const lowercasePath = targetPath.toLowerCase();
 	return (
-		targetPath.startsWith("skill://") ||
-		targetPath.endsWith("/agents.md") ||
-		targetPath === "agents.md" ||
-		targetPath.endsWith("/skill.md") ||
-		targetPath === "skill.md"
+		lowercasePath.startsWith("skill://") ||
+		lowercasePath.endsWith("/agents.md") ||
+		lowercasePath === "agents.md" ||
+		lowercasePath.endsWith("/skill.md") ||
+		lowercasePath === "skill.md"
 	);
+}
+
+function getMutationPath(request: ToolRequest | undefined, isError: boolean): string | undefined {
+	if (isError || !request) return undefined;
+	const toolName = request.name.toLowerCase();
+	if (toolName !== "edit" && toolName !== "write") return undefined;
+	return getArgumentPath(request.argumentsValue);
 }
 
 function createReplacement(
@@ -188,11 +201,14 @@ function createReplacement(
 	request: ToolRequest | undefined,
 	originalTokens: number,
 	superseded: boolean,
+	invalidatedBy: string | undefined,
 	previewCharacters: number,
 ): ToolResultMessage<unknown> {
 	const toolName = request?.name ?? message.toolName;
 	let text: string;
-	if (superseded) {
+	if (invalidatedBy) {
+		text = `[Earlier ${toolName} output invalidated: the file was modified by a later ${invalidatedBy}. Re-run ${toolName} to inspect the current file. Original remains in session history.]`;
+	} else if (superseded) {
 		text = `[Earlier ${toolName} output elided: about ${originalTokens} tokens. A newer result for the same ${toolName} request is available. Original remains in session history.]`;
 	} else {
 		const original = getText(message.content);
@@ -216,6 +232,7 @@ function emptyStats(messages: readonly AgentMessage[]): ContextPruningStats {
 		prunedTokens: 0,
 		prunedResults: 0,
 		supersededResults: 0,
+		invalidatedResults: 0,
 	};
 }
 
@@ -228,6 +245,7 @@ export function pruneContextToolOutputs(
 
 	const requests = indexToolRequests(messages);
 	const seenSuccessfulRequests = new Set<string>();
+	const laterMutations = new Map<string, string>();
 	const candidates: PruningCandidate[] = [];
 	let recentTokens = 0;
 	let seenToolResults = 0;
@@ -238,6 +256,11 @@ export function pruneContextToolOutputs(
 
 		const request = requests.get(message.toolCallId);
 		const key = request?.requestKey;
+		const toolName = (request?.name ?? message.toolName).toLowerCase();
+		const argumentPath = getArgumentPath(request?.argumentsValue);
+		const mutationPath = getMutationPath(request, message.isError);
+		if (mutationPath) laterMutations.set(mutationPath, toolName);
+		const invalidatedBy = toolName === "read" && argumentPath ? laterMutations.get(argumentPath) : undefined;
 		const originalTokens = estimateTokens(message);
 		const protectedByRecency = seenToolResults === 0 || recentTokens + originalTokens <= settings.protectRecentTokens;
 		recentTokens += originalTokens;
@@ -247,31 +270,48 @@ export function pruneContextToolOutputs(
 		if (!message.isError && key !== undefined) seenSuccessfulRequests.add(key);
 
 		if (
-			protectedByRecency ||
 			message.isError ||
 			containsImage(message) ||
 			isInstructionResult(message, request) ||
-			originalTokens < settings.minimumResultTokens
+			(!invalidatedBy && (protectedByRecency || originalTokens < settings.minimumResultTokens))
 		) {
 			continue;
 		}
 
-		const replacement = createReplacement(message, request, originalTokens, superseded, settings.previewCharacters);
+		const replacement = createReplacement(
+			message,
+			request,
+			originalTokens,
+			superseded,
+			invalidatedBy,
+			settings.previewCharacters,
+		);
 		const replacementTokens = estimateTokens(replacement);
 		if (replacementTokens >= originalTokens) continue;
-		candidates.push({ index, replacement, originalTokens, replacementTokens, superseded });
+		candidates.push({
+			index,
+			replacement,
+			originalTokens,
+			replacementTokens,
+			superseded: superseded && invalidatedBy === undefined,
+			invalidated: invalidatedBy !== undefined,
+		});
 	}
 
 	const projectedSavings = candidates.reduce(
 		(sum, candidate) => sum + candidate.originalTokens - candidate.replacementTokens,
 		0,
 	);
-	if (projectedSavings < settings.minimumSavingsTokens || candidates.length === 0) {
+	const selectedCandidates =
+		projectedSavings >= settings.minimumSavingsTokens
+			? candidates
+			: candidates.filter((candidate) => candidate.invalidated);
+	if (selectedCandidates.length === 0) {
 		return { messages, stats: emptyStats(messages) };
 	}
 
 	const transformed = [...messages];
-	for (const candidate of candidates) transformed[candidate.index] = candidate.replacement;
+	for (const candidate of selectedCandidates) transformed[candidate.index] = candidate.replacement;
 	const estimatedTokensBefore = messages.reduce((sum, message) => sum + estimateTokens(message), 0);
 	const estimatedTokensAfter = transformed.reduce((sum, message) => sum + estimateTokens(message), 0);
 
@@ -281,8 +321,9 @@ export function pruneContextToolOutputs(
 			estimatedTokensBefore,
 			estimatedTokensAfter,
 			prunedTokens: estimatedTokensBefore - estimatedTokensAfter,
-			prunedResults: candidates.length,
-			supersededResults: candidates.filter((candidate) => candidate.superseded).length,
+			prunedResults: selectedCandidates.length,
+			supersededResults: selectedCandidates.filter((candidate) => candidate.superseded).length,
+			invalidatedResults: selectedCandidates.filter((candidate) => candidate.invalidated).length,
 		},
 	};
 }

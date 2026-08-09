@@ -46,7 +46,7 @@ describe("SettingsManager", () => {
 			currentSettings.enabledModels = ["claude-opus-4-5", "gpt-5.2-codex"];
 			writeFileSync(settingsPath, JSON.stringify(currentSettings, null, 2));
 
-			// User changes thinking level via Shift+Tab
+			// User changes thinking level through model/settings UI
 			manager.setDefaultThinkingLevel("high");
 			await manager.flush();
 
@@ -452,6 +452,41 @@ describe("SettingsManager", () => {
 				consecutiveLimit: 3,
 				cooldownMs: 30_000,
 				timeoutMs: 180_000,
+			});
+		});
+	});
+
+	describe("tool approval mode", () => {
+		it("cycles all modes in a stable order and persists the result", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			expect(manager.cycleToolApprovalMode()).toBe("write");
+			expect(manager.cycleToolApprovalMode()).toBe("always-ask");
+			expect(manager.cycleToolApprovalMode()).toBe("yolo");
+			expect(manager.cycleToolApprovalMode()).toBe("write");
+			await manager.flush();
+
+			const saved = JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8")) as {
+				tools?: { approvalMode?: string };
+			};
+			expect(saved.tools?.approvalMode).toBe("write");
+			expect(SettingsManager.create(projectDir, agentDir).getToolApprovalSettings().mode).toBe("write");
+		});
+
+		it("persists normalized per-tool allow and deny decisions", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+
+			manager.setToolApprovalPolicy(" Bash ", "allow");
+			manager.setToolApprovalPolicy("WRITE", "deny");
+			await manager.flush();
+
+			const reloaded = SettingsManager.create(projectDir, agentDir);
+			expect(reloaded.getToolApprovalSettings().policies).toEqual({ bash: "allow", write: "deny" });
+
+			reloaded.setToolApprovalPolicy("bash", undefined);
+			await reloaded.flush();
+			expect(SettingsManager.create(projectDir, agentDir).getToolApprovalSettings().policies).toEqual({
+				write: "deny",
 			});
 		});
 	});

@@ -341,6 +341,32 @@ describe("automatic LSP diagnostics", () => {
 		expect(result.message).toBeUndefined();
 	});
 
+	test("tracks files changed by structural editing", async () => {
+		const service = {
+			execute: vi.fn(async (request: { path: string }) => ({
+				text: `${request.path}: clean`,
+				details: {
+					operation: "diagnostics" as const,
+					language: "typescript" as const,
+					workspaceRoot: "project",
+					truncated: false,
+					resultCount: 0,
+				},
+			})),
+		};
+		const diagnostics = new LspAutoDiagnostics(service);
+		diagnostics.recordToolResult(
+			toolResult(
+				"ast_edit",
+				{ pattern: "oldCall($A)", replacement: "newCall($A)" },
+				{ changedFiles: ["src/a.ts", "src/b.ts"] },
+			),
+		);
+
+		await expect(diagnostics.flush("project")).resolves.toMatchObject({ kind: "clean", checkedFiles: 2 });
+		expect(service.execute).toHaveBeenCalledTimes(2);
+	});
+
 	test("stops automatic feedback after two diagnostic rounds", async () => {
 		const service = {
 			execute: vi.fn(async () => ({

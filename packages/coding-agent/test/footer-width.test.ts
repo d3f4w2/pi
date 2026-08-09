@@ -3,7 +3,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import type { AgentSession } from "../src/core/agent-session.ts";
 import type { ReadonlyFooterDataProvider } from "../src/core/footer-data-provider.ts";
 import { FooterComponent, formatCwdForFooter } from "../src/modes/interactive/components/footer.ts";
-import { initTheme } from "../src/modes/interactive/theme/theme.ts";
+import { initTheme, theme } from "../src/modes/interactive/theme/theme.ts";
 import { stripAnsi } from "../src/utils/ansi.ts";
 
 type AssistantUsage = {
@@ -150,6 +150,33 @@ describe("FooterComponent width handling", () => {
 		for (const line of lines) {
 			expect(visibleWidth(line)).toBeLessThanOrEqual(width);
 		}
+	});
+
+	it("uses semantic colors for branch and model state", () => {
+		const session = createSession({ sessionName: "" });
+		const footer = new FooterComponent(session, createFooterData(1));
+		const lines = footer.render(80);
+
+		expect(lines[0]).toContain(theme.fg("success", "(main)"));
+		expect(lines[1]).toContain(theme.fg("accent", "test-model"));
+	});
+
+	it("keeps model and context visible before optional usage metrics on narrow terminals", () => {
+		const session = createSession({
+			sessionName: "",
+			usage: {
+				input: 123_456,
+				output: 67_890,
+				cacheRead: 234_567,
+				cacheWrite: 34_567,
+				cost: { total: 12.345 },
+			},
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+		const stats = stripAnsi(footer.render(40)[1]);
+
+		expect(stats).toContain("12.3%/200k");
+		expect(stats).toContain("test-model");
 	});
 
 	it("includes summary and tool result usage in the total cost", () => {

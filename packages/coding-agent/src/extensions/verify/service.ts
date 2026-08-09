@@ -82,6 +82,7 @@ export class VerifyService implements VerifyToolService {
 		onStatus?: (message: string) => void,
 	): Promise<VerifyResult> {
 		const startedAt = Date.now();
+		onStatus?.("正在确定最小验证范围…");
 		const plan = await createVerifyPlan(request, cwd);
 		const timeoutMs = Math.min(300_000, Math.max(5_000, (request.timeoutSeconds ?? 60) * 1000));
 		const controller = new AbortController();

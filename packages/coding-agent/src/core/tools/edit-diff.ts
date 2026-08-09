@@ -382,9 +382,11 @@ export function generateDiffString(
 	oldContent: string,
 	newContent: string,
 	contextLines = 4,
-): { diff: string; firstChangedLine: number | undefined } {
+): { diff: string; firstChangedLine: number | undefined; additions: number; deletions: number } {
 	const parts = Diff.diffLines(oldContent, newContent);
 	const output: string[] = [];
+	let additions = 0;
+	let deletions = 0;
 
 	const oldLines = oldContent.split("\n");
 	const newLines = newContent.split("\n");
@@ -412,10 +414,12 @@ export function generateDiffString(
 			// Show the change
 			for (const line of raw) {
 				if (part.added) {
+					additions++;
 					const lineNum = String(newLineNum).padStart(lineNumWidth, " ");
 					output.push(`+${lineNum} ${line}`);
 					newLineNum++;
 				} else {
+					deletions++;
 					// removed
 					const lineNum = String(oldLineNum).padStart(lineNumWidth, " ");
 					output.push(`-${lineNum} ${line}`);
@@ -500,16 +504,35 @@ export function generateDiffString(
 		}
 	}
 
-	return { diff: output.join("\n"), firstChangedLine };
+	return { diff: output.join("\n"), firstChangedLine, additions, deletions };
 }
 
-export interface EditDiffResult {
+export type FileDiffStatus = "created" | "modified" | "deleted";
+
+export interface FileDiff {
+	path: string;
+	status: FileDiffStatus;
 	diff: string;
 	firstChangedLine: number | undefined;
+	additions: number;
+	deletions: number;
 }
+
+export type EditDiffResult = FileDiff;
 
 export interface EditDiffError {
 	error: string;
+}
+
+export function createFileDiff(path: string, oldContent: string | null, newContent: string | null): FileDiff {
+	const normalizedOld = normalizeToLF(oldContent ?? "");
+	const normalizedNew = normalizeToLF(newContent ?? "");
+	const generated = generateDiffString(normalizedOld, normalizedNew);
+	return {
+		path,
+		status: oldContent === null ? "created" : newContent === null ? "deleted" : "modified",
+		...generated,
+	};
 }
 
 /**
@@ -541,7 +564,7 @@ export async function computeEditsDiff(
 		const { baseContent, newContent } = applyEditsToNormalizedContent(normalizedContent, edits, path);
 
 		// Generate the diff
-		return generateDiffString(baseContent, newContent);
+		return createFileDiff(path, baseContent, newContent);
 	} catch (err) {
 		return { error: err instanceof Error ? err.message : String(err) };
 	}
@@ -572,7 +595,7 @@ export async function computeAnchoredEditsDiff(
 		}
 		const { text: content } = stripBom(rawContent);
 		const { baseContent, newContent } = applyAnchoredEdits(normalizeToLF(content), edits, path);
-		return generateDiffString(baseContent, newContent);
+		return createFileDiff(path, baseContent, newContent);
 	} catch (error: unknown) {
 		return { error: error instanceof Error ? error.message : String(error) };
 	}
@@ -589,4 +612,22 @@ export async function computeEditDiff(
 	cwd: string,
 ): Promise<EditDiffResult | EditDiffError> {
 	return computeEditsDiff(path, [{ oldText, newText }], cwd);
+}
+
+/** Compute a full-file write preview. Missing targets are treated as newly created files. */
+export async function computeWriteDiff(
+	path: string,
+	newContent: string,
+	cwd: string,
+): Promise<EditDiffResult | EditDiffError> {
+	const absolutePath = resolveToCwd(path, cwd);
+	try {
+		const oldContent = await readFile(absolutePath, "utf8");
+		return createFileDiff(path, oldContent, newContent);
+	} catch (error: unknown) {
+		if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+			return createFileDiff(path, null, newContent);
+		}
+		return { error: error instanceof Error ? error.message : String(error) };
+	}
 }

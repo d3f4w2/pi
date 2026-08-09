@@ -1,6 +1,13 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import { Container, type SelectItem, SelectList, type SelectListLayoutOptions } from "@earendil-works/pi-tui";
-import { getSelectListTheme } from "../theme/theme.ts";
+import {
+	Container,
+	type SelectItem,
+	SelectList,
+	type SelectListLayoutOptions,
+	Spacer,
+	Text,
+} from "@earendil-works/pi-tui";
+import { getSelectListTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 
 const THINKING_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
@@ -29,6 +36,7 @@ export class ThinkingSelectorComponent extends Container {
 		availableLevels: ThinkingLevel[],
 		onSelect: (level: ThinkingLevel) => void,
 		onCancel: () => void,
+		title = "Thinking level",
 	) {
 		super();
 
@@ -40,6 +48,8 @@ export class ThinkingSelectorComponent extends Container {
 
 		// Add top border
 		this.addChild(new DynamicBorder());
+		this.addChild(new Text(theme.bold(title), 1, 0));
+		this.addChild(new Spacer(1));
 
 		// Create selector
 		this.selectList = new SelectList(

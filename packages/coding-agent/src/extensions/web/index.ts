@@ -5,6 +5,7 @@ import { searchWeb } from "./search.ts";
 import type { WebFetchDetails, WebSearchDetails } from "./types.ts";
 
 const MAX_CONSECUTIVE_EMPTY_SEARCHES = 2;
+const MAX_IN_FLIGHT_FETCHES = 4;
 const SEARCH_BUDGET_EXHAUSTED =
 	"联网搜索已连续两次没有结果，本轮停止继续搜索。已知官方网址时改用 web_fetch，否则说明没有找到。";
 
@@ -45,6 +46,7 @@ const FetchParams = Type.Object(
 function registerWebExtension(pi: ExtensionAPI, dependencies: WebExtensionDependencies): void {
 	let consecutiveEmptySearches = 0;
 	let inFlightSearches = 0;
+	const inFlightFetches = new Map<string, ReturnType<typeof fetchWebPage>>();
 	pi.on("agent_start", () => {
 		consecutiveEmptySearches = 0;
 		inFlightSearches = 0;
@@ -135,12 +137,27 @@ function registerWebExtension(pi: ExtensionAPI, dependencies: WebExtensionDepend
 		parameters: FetchParams,
 		executionMode: "parallel",
 		async execute(_toolCallId, params, signal) {
-			const result = await dependencies.fetchWebPage({
-				url: params.url,
-				format: params.format ?? "markdown",
-				...(params.timeout === undefined ? {} : { timeoutSeconds: params.timeout }),
-				...(signal === undefined ? {} : { signal }),
-			});
+			const format = params.format ?? "markdown";
+			const key = JSON.stringify([params.url, format, params.timeout ?? 30]);
+			let request = inFlightFetches.get(key);
+			if (!request) {
+				if (inFlightFetches.size >= MAX_IN_FLIGHT_FETCHES) {
+					throw new Error(`当前已有 ${MAX_IN_FLIGHT_FETCHES} 个网页读取任务，请缩小范围后再试。`);
+				}
+				request = dependencies.fetchWebPage({
+					url: params.url,
+					format,
+					...(params.timeout === undefined ? {} : { timeoutSeconds: params.timeout }),
+					...(signal === undefined ? {} : { signal }),
+				});
+				inFlightFetches.set(key, request);
+			}
+			let result: Awaited<ReturnType<typeof fetchWebPage>>;
+			try {
+				result = await request;
+			} finally {
+				if (inFlightFetches.get(key) === request) inFlightFetches.delete(key);
+			}
 			return { content: [{ type: "text", text: result.text }], details: result.details };
 		},
 	});

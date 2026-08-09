@@ -186,6 +186,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
 | `/session` | Show session info (file, ID, messages, tokens, cost) |
+| [`/undo-turn`](docs/turn-undo.md) | Preview and safely undo the latest agent file changes |
 | `/tree` | Jump to any point in the session and continue from there |
 | `/trust` | Save project trust decision for future sessions (restart required) |
 | `/fork` | Create a new session from a previous user message |
@@ -214,7 +215,7 @@ See `/hotkeys` for the full list. Customize via `~/.pi/agent/keybindings.json`. 
 | Escape twice | Open `/tree` |
 | Ctrl+L | Open model selector |
 | Ctrl+P / Shift+Ctrl+P | Cycle scoped models forward/backward |
-| Shift+Tab | Cycle thinking level |
+| Shift+Tab | [Cycle tool safety mode](docs/tool-approval.md) |
 | Ctrl+O | Collapse/expand tool output |
 | Ctrl+T | Collapse/expand thinking blocks |
 | Ctrl+X | Copy the last assistant message |
@@ -500,7 +501,7 @@ Pi is aggressively extensible so it doesn't have to dictate your workflow. Featu
 
 **No sub-agents.** There's many ways to do this. Spawn pi instances via tmux, or build your own with [extensions](#extensions), or install a package that does it your way.
 
-**No permission popups.** Run in a container, or build your own confirmation flow with [extensions](#extensions) inline with your environment and security requirements.
+**No mandatory sandbox.** Built-in [tool approval modes](docs/tool-approval.md) confirm risky operations, but strong isolation still requires a container or another sandbox suited to your environment.
 
 **No plan mode.** Write plans to files, or build it with [extensions](#extensions), or install a package.
 

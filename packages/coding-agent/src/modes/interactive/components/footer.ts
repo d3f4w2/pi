@@ -40,7 +40,7 @@ export function formatCwdForFooter(cwd: string, home: string | undefined): strin
 		(relativeToHome !== ".." && !relativeToHome.startsWith(`..${sep}`) && !isAbsolute(relativeToHome));
 
 	if (!isInsideHome) return cwd;
-	return relativeToHome === "" ? "~" : `~${sep}${relativeToHome}`;
+	return relativeToHome === "" ? "~" : `~/${relativeToHome.replaceAll("\\", "/").replaceAll(sep, "/")}`;
 }
 
 /**
@@ -110,124 +110,99 @@ export class FooterComponent implements Component {
 		const contextPercentValue = contextUsage?.percent ?? 0;
 		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
 
-		// Replace home directory with ~
-		let pwd = formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE);
-
-		// Add git branch if available
+		const projectParts = [
+			theme.fg(
+				"muted",
+				formatCwdForFooter(this.session.sessionManager.getCwd(), process.env.HOME || process.env.USERPROFILE),
+			),
+		];
 		const branch = this.footerData.getGitBranch();
-		if (branch) {
-			pwd = `${pwd} (${branch})`;
-		}
-
-		// Add session name if set
+		if (branch) projectParts.push(theme.fg("success", `(${branch})`));
 		const sessionName = this.session.sessionManager.getSessionName();
-		if (sessionName) {
-			pwd = `${pwd} • ${sessionName}`;
-		}
+		if (sessionName) projectParts.push(theme.fg("accent", `• ${sessionName}`));
 
-		// Build stats line
-		const statsParts = [];
-		if (usageTotals.input) statsParts.push(`↑${formatTokens(usageTotals.input)}`);
-		if (usageTotals.output) statsParts.push(`↓${formatTokens(usageTotals.output)}`);
-		if (usageTotals.cacheRead) statsParts.push(`R${formatTokens(usageTotals.cacheRead)}`);
-		if (usageTotals.cacheWrite) statsParts.push(`W${formatTokens(usageTotals.cacheWrite)}`);
+		type FooterSegment = { text: string; priority: number; required?: boolean };
+		const segments: FooterSegment[] = [];
+		if (usageTotals.input) {
+			segments.push({ text: theme.fg("muted", `↑${formatTokens(usageTotals.input)}`), priority: 50 });
+		}
+		if (usageTotals.output) {
+			segments.push({ text: theme.fg("accent", `↓${formatTokens(usageTotals.output)}`), priority: 60 });
+		}
+		if (usageTotals.cacheRead) {
+			segments.push({ text: theme.fg("dim", `R${formatTokens(usageTotals.cacheRead)}`), priority: 20 });
+		}
+		if (usageTotals.cacheWrite) {
+			segments.push({ text: theme.fg("dim", `W${formatTokens(usageTotals.cacheWrite)}`), priority: 10 });
+		}
 		if ((usageTotals.cacheRead > 0 || usageTotals.cacheWrite > 0) && latestCacheHitRate !== undefined) {
-			statsParts.push(`CH${latestCacheHitRate.toFixed(1)}%`);
+			segments.push({ text: theme.fg("success", `CH${latestCacheHitRate.toFixed(1)}%`), priority: 30 });
 		}
 
-		// Kimi Coding is subscription-backed despite using API-key authentication.
 		const usingSubscription = state.model
 			? state.model.provider === "kimi-coding" || this.session.modelRuntime.isUsingSubscription(state.model.provider)
 			: false;
 		if (usageTotals.cost || usingSubscription) {
-			const costStr = `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
-			statsParts.push(costStr);
+			const cost = `$${usageTotals.cost.toFixed(3)}${usingSubscription ? " (sub)" : ""}`;
+			segments.push({ text: theme.fg("warning", cost), priority: 70 });
 		}
 
-		// Colorize context percentage based on usage
-		let contextPercentStr: string;
 		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
-		const contextPercentDisplay =
+		const contextDisplay =
 			contextPercent === "?"
 				? `?/${formatTokens(contextWindow)}${autoIndicator}`
 				: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
-		if (contextPercentValue > 90) {
-			contextPercentStr = theme.fg("error", contextPercentDisplay);
-		} else if (contextPercentValue > 70) {
-			contextPercentStr = theme.fg("warning", contextPercentDisplay);
-		} else {
-			contextPercentStr = contextPercentDisplay;
-		}
-		statsParts.push(contextPercentStr);
+		const contextColor = contextPercentValue > 90 ? "error" : contextPercentValue > 70 ? "warning" : "success";
+		segments.push({
+			text: theme.fg(contextPercent === "?" ? "dim" : contextColor, contextDisplay),
+			priority: 100,
+			required: true,
+		});
 		if (areExperimentalFeaturesEnabled()) {
-			statsParts.push(`${theme.fg("dim", "•")} ${theme.bold(theme.fg("warning", "xp"))}`);
+			segments.push({ text: theme.bold(theme.fg("warning", "xp")), priority: 40 });
 		}
 
-		let statsLeft = statsParts.join(" ");
-
-		// Add model name on the right side, plus thinking level if model supports it
 		const modelName = state.model?.id || "no-model";
-
-		let statsLeftWidth = visibleWidth(statsLeft);
-
-		// If statsLeft is too wide, truncate it
-		if (statsLeftWidth > width) {
-			statsLeft = truncateToWidth(statsLeft, width, "...");
-			statsLeftWidth = visibleWidth(statsLeft);
-		}
-
-		// Calculate available space for padding (minimum 2 spaces between stats and model)
-		const minPadding = 2;
-
-		// Add thinking level indicator if model supports reasoning
-		let rightSideWithoutProvider = modelName;
+		let modelDisplay = theme.fg("accent", modelName);
 		if (state.model?.reasoning) {
 			const thinkingLevel = state.thinkingLevel || "off";
-			rightSideWithoutProvider =
-				thinkingLevel === "off" ? `${modelName} • thinking off` : `${modelName} • ${thinkingLevel}`;
+			const thinkingText = thinkingLevel === "off" ? "thinking off" : thinkingLevel;
+			modelDisplay += `${theme.fg("dim", " • ")}${theme.getThinkingBorderColor(thinkingLevel)(thinkingText)}`;
 		}
-
-		// Prepend the provider in parentheses if there are multiple providers and there's enough room
-		let rightSide = rightSideWithoutProvider;
+		const modelWithoutProvider = modelDisplay;
 		if (this.footerData.getAvailableProviderCount() > 1 && state.model) {
-			rightSide = `(${state.model!.provider}) ${rightSideWithoutProvider}`;
-			if (statsLeftWidth + minPadding + visibleWidth(rightSide) > width) {
-				// Too wide, fall back
-				rightSide = rightSideWithoutProvider;
-			}
+			modelDisplay = `${theme.fg("muted", `(${state.model.provider})`)} ${modelDisplay}`;
 		}
 
-		const rightSideWidth = visibleWidth(rightSide);
-		const totalNeeded = statsLeftWidth + minPadding + rightSideWidth;
-
-		let statsLine: string;
-		if (totalNeeded <= width) {
-			// Both fit - add padding to right-align model
-			const padding = " ".repeat(width - statsLeftWidth - rightSideWidth);
-			statsLine = statsLeft + padding + rightSide;
-		} else {
-			// Need to truncate right side
-			const availableForRight = width - statsLeftWidth - minPadding;
-			if (availableForRight > 0) {
-				const truncatedRight = truncateToWidth(rightSide, availableForRight, "");
-				const truncatedRightWidth = visibleWidth(truncatedRight);
-				const padding = " ".repeat(Math.max(0, width - statsLeftWidth - truncatedRightWidth));
-				statsLine = statsLeft + padding + truncatedRight;
-			} else {
-				// Not enough space for right side at all
-				statsLine = statsLeft;
+		const minPadding = 2;
+		const getLeft = () => segments.map((segment) => segment.text).join(" ");
+		while (visibleWidth(getLeft()) + minPadding + visibleWidth(modelDisplay) > width) {
+			let removableIndex = -1;
+			for (let index = 0; index < segments.length; index++) {
+				const segment = segments[index];
+				if (segment.required) continue;
+				if (
+					removableIndex === -1 ||
+					segment.priority < (segments[removableIndex]?.priority ?? Number.POSITIVE_INFINITY)
+				) {
+					removableIndex = index;
+				}
 			}
+			if (removableIndex === -1) break;
+			segments.splice(removableIndex, 1);
 		}
 
-		// Apply dim to each part separately. statsLeft may contain color codes (for context %)
-		// that end with a reset, which would clear an outer dim wrapper. So we dim the parts
-		// before and after the colored section independently.
-		const dimStatsLeft = theme.fg("dim", statsLeft);
-		const remainder = statsLine.slice(statsLeft.length); // padding + rightSide
-		const dimRemainder = theme.fg("dim", remainder);
+		let statsLeft = getLeft();
+		if (visibleWidth(statsLeft) + minPadding + visibleWidth(modelDisplay) > width)
+			modelDisplay = modelWithoutProvider;
+		if (visibleWidth(statsLeft) > width) statsLeft = truncateToWidth(statsLeft, width, "");
+		const availableForModel = Math.max(0, width - visibleWidth(statsLeft) - minPadding);
+		const fittedModel = truncateToWidth(modelDisplay, availableForModel, "");
+		const padding = " ".repeat(Math.max(0, width - visibleWidth(statsLeft) - visibleWidth(fittedModel)));
+		const statsLine = statsLeft + padding + fittedModel;
 
-		const pwdLine = truncateToWidth(theme.fg("dim", pwd), width, theme.fg("dim", "..."));
-		const lines = [pwdLine, dimStatsLeft + dimRemainder];
+		const projectLine = truncateToWidth(projectParts.join(" "), width, theme.fg("dim", "..."));
+		const lines = [projectLine, statsLine];
 
 		// Add extension statuses on a single line, sorted by key alphabetically
 		const extensionStatuses = this.footerData.getExtensionStatuses();

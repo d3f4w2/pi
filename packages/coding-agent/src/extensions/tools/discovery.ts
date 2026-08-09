@@ -21,6 +21,9 @@ const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
 	web_search: "搜索互联网并返回来源",
 	web_fetch: "读取并整理网页内容",
 	tool_search: "按需要查找并加载工具",
+	git: "安全查看、暂存、提交和推送代码",
+	process: "启动后台服务并增量查看日志",
+	browser: "打开网页并验证真实交互和截图",
 };
 
 function normalizeText(value: string): string {

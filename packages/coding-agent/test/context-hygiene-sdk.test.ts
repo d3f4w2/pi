@@ -104,6 +104,38 @@ describe("SDK context hygiene", () => {
 		expect(session.messages).toEqual(messages);
 	});
 
+	it("removes a stale read only from the provider-visible context", async () => {
+		const model = getModel("anthropic", "claude-sonnet-4-5");
+		if (!model) throw new Error("test model unavailable");
+		const settingsManager = SettingsManager.inMemory({
+			contextPruning: {
+				protectRecentTokens: 100_000,
+				minimumSavingsTokens: 1,
+				minimumResultTokens: 1,
+			},
+		});
+		const { session } = await createAgentSession({
+			model,
+			settingsManager,
+			sessionManager: SessionManager.inMemory(process.cwd()),
+			resourceLoader: createTestResourceLoader(),
+		});
+		sessions.push(session);
+		const originalRead = `old-source-${"x".repeat(8_000)}`;
+		const messages = [
+			...exchange("read", "read", { path: "src/app.ts" }, originalRead, 1),
+			...exchange("edit", "edit", { path: "src/app.ts", oldText: "old", newText: "new" }, "updated", 3),
+		];
+		session.agent.state.messages = messages;
+
+		const transformed = await session.agent.transformContext?.(session.messages);
+		if (!transformed) throw new Error("context transform unavailable");
+
+		expect(messageText(transformed[1]!)).toContain("modified by a later edit");
+		expect(messageText(transformed[3]!)).toBe("updated");
+		expect(messageText(session.messages[1]!)).toBe(originalRead);
+	});
+
 	it("fails open when custom tool arguments cannot be inspected", async () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
 		if (!model) throw new Error("test model unavailable");

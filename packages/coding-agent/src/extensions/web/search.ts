@@ -259,6 +259,9 @@ export async function searchWeb(options: {
 			results = await searchBrave(query, maxResults, braveApiKey, filters, options.signal);
 			if (results.length === 0) throw new Error("Brave 没有返回结果。");
 		} catch (error) {
+			if (options.signal?.aborted) {
+				throw options.signal.reason instanceof Error ? options.signal.reason : new Error("联网搜索已取消。");
+			}
 			provider = "duckduckgo";
 			fallbackReason = error instanceof Error ? error.message : String(error);
 			results = await searchDuckDuckGo(query, maxResults, filters, options.signal);

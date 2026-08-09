@@ -346,6 +346,55 @@ describe("tools extension", () => {
 		expect(notify).toHaveBeenCalledWith(expect.stringContaining("不会擅自运行整个仓库测试"), "info");
 	});
 
+	test("explains process lifecycle and isolated browser setup after they are enabled", async () => {
+		let handler: RegisteredCommand["handler"] | undefined;
+		let activeTools = ["read"];
+		const notify = vi.fn();
+		const managedTools = [{ name: "read" }, { name: "process" }, { name: "browser" }] as ToolInfo[];
+		const pi = {
+			registerTool: () => {},
+			registerCommand: (_name: string, command: Omit<RegisteredCommand, "name" | "sourceInfo">) => {
+				handler = command.handler;
+			},
+			on: () => {},
+			getAllTools: () => managedTools,
+			getActiveTools: () => activeTools,
+			setActiveTools: (names: string[]) => {
+				activeTools = names;
+			},
+		} as unknown as ExtensionAPI;
+		toolsExtension(pi);
+
+		const custom = async (
+			factory: (
+				tui: TUI,
+				theme: Theme,
+				keybindings: KeybindingsManager,
+				done: (result: undefined) => void,
+			) => Component | Promise<Component>,
+		): Promise<void> => {
+			const component = await factory(
+				{ requestRender: () => {} } as unknown as TUI,
+				{ bold: (text: string) => text, fg: (_color: string, text: string) => text } as unknown as Theme,
+				{ matches: (data: string, action: string) => data === action } as unknown as KeybindingsManager,
+				() => {},
+			);
+			component.handleInput?.("tui.select.down");
+			component.handleInput?.("tui.editor.cursorRight");
+			component.handleInput?.("tui.select.down");
+			component.handleInput?.("tui.editor.cursorRight");
+			component.handleInput?.("tui.select.confirm");
+		};
+
+		await handler?.("", { ui: { custom, notify } } as unknown as ExtensionCommandContext);
+
+		expect(activeTools).toEqual(["read", "process", "browser"]);
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("日志按游标增量读取"), "info");
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("退出 Pi 时会自动停止"), "info");
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("临时隔离配置"), "info");
+		expect(notify).toHaveBeenCalledWith(expect.stringContaining("PI_BROWSER_EXECUTABLE"), "info");
+	});
+
 	test("saves tool changes after the manager closes", async () => {
 		let handler: RegisteredCommand["handler"] | undefined;
 		let activeTools = ["read"];
@@ -445,6 +494,7 @@ describe("tools extension", () => {
 
 		expect(lines.join("\n")).toContain("读取文件内容");
 		expect(lines.join("\n")).toContain("搜索文件里的文字");
+		expect(lines.join("\n")).toContain("[开/读] read");
 		for (const line of lines) expect(visibleWidth(line)).toBeLessThanOrEqual(32);
 	});
 

@@ -179,6 +179,15 @@ The execution guard contains tool exceptions, bounds execution time, blocks unch
 
 See [Tool Execution Protection](tool-failure-guard.md) for timeout limitations, redaction, circuit recovery, and exact reset rules.
 
+### Tool Approval
+
+| Setting | Type | Default | Description |
+|---------|------|---------|-------------|
+| `tools.approvalMode` | `always-ask` \| `write` \| `yolo` | `yolo` | Confirm all tools, writes/commands, or only dangerous operations |
+| `tools.approval.<name>` | `allow` \| `prompt` \| `deny` | unset | Persistent per-tool policy; clearly dangerous operations still require confirmation |
+
+See [工具操作确认](tool-approval.md) for the risk tiers, modes, and protected command examples.
+
 ### Branch Summary
 
 | Setting | Type | Default | Description |

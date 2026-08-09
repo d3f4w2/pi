@@ -206,4 +206,86 @@ describe("context hygiene", () => {
 		expect(resultText(messages[1]!)).toBe(original);
 		expect(first.stats.estimatedTokensAfter).toBeLessThan(first.stats.estimatedTokensBefore);
 	});
+
+	it("invalidates an older read after a successful same-path mutation", () => {
+		const oldOutput = `OLD-SOURCE-${"x".repeat(8_000)}`;
+		const messages = [
+			...exchange("read-old", "read", { path: "src\\app.ts" }, oldOutput, 1),
+			...exchange(
+				"edit",
+				"edit",
+				{ path: "src/app.ts", oldText: "before", newText: "after" },
+				"Updated src/app.ts",
+				3,
+			),
+		];
+		const result = pruneContextToolOutputs(messages, {
+			...AGGRESSIVE_SETTINGS,
+			protectRecentTokens: 100_000,
+		});
+		const invalidated = resultText(result.messages[1]!);
+
+		expect(invalidated).toContain("invalidated");
+		expect(invalidated).toContain("modified by a later edit");
+		expect(invalidated).not.toContain("OLD-SOURCE");
+		expect(resultText(result.messages[3]!)).toBe("Updated src/app.ts");
+		expect(result.stats.invalidatedResults).toBe(1);
+		expect(resultText(messages[1]!)).toBe(oldOutput);
+	});
+
+	it("keeps reads when a mutation failed or changed a different path", () => {
+		const failedMessages = [
+			...exchange("read", "read", { path: "src/app.ts" }, "source".repeat(1_000), 1),
+			...exchange("edit", "edit", { path: "src/app.ts" }, "edit failed", 3, true),
+		];
+		const unrelatedMessages = [
+			...exchange("read", "read", { path: "src/app.ts" }, "source".repeat(1_000), 1),
+			...exchange("write", "write", { path: "src/other.ts", content: "new" }, "written", 3),
+		];
+		const settings = { ...AGGRESSIVE_SETTINGS, protectRecentTokens: 100_000 };
+
+		const failed = pruneContextToolOutputs(failedMessages, settings);
+		const unrelated = pruneContextToolOutputs(unrelatedMessages, settings);
+
+		expect(failed.messages).toBe(failedMessages);
+		expect(unrelated.messages).toBe(unrelatedMessages);
+		expect(failed.stats.invalidatedResults).toBe(0);
+		expect(unrelated.stats.invalidatedResults).toBe(0);
+	});
+
+	it("keeps a fresh read after mutation while invalidating the older read", () => {
+		const messages = [
+			...exchange("read-old", "read", { path: "src/app.ts" }, "old".repeat(2_000), 1),
+			...exchange("write", "write", { path: "src/app.ts", content: "new" }, "written", 3),
+			...exchange("read-new", "read", { path: "src/app.ts" }, "new source", 5),
+		];
+		const result = pruneContextToolOutputs(messages, {
+			...AGGRESSIVE_SETTINGS,
+			protectRecentTokens: 100_000,
+		});
+
+		expect(resultText(result.messages[1]!)).toContain("invalidated");
+		expect(resultText(result.messages[5]!)).toBe("new source");
+		expect(result.stats.invalidatedResults).toBe(1);
+	});
+
+	it("does not prune unrelated candidates when only invalidation bypasses the savings floor", () => {
+		const unrelatedOutput = "unrelated".repeat(1_000);
+		const messages = [
+			...exchange("bash", "bash", { command: "inspect" }, unrelatedOutput, 1),
+			...exchange("read", "read", { path: "src/app.ts" }, "old".repeat(2_000), 3),
+			...exchange("write", "write", { path: "src/app.ts", content: "new" }, "written", 5),
+		];
+		const result = pruneContextToolOutputs(messages, {
+			...AGGRESSIVE_SETTINGS,
+			protectRecentTokens: 1,
+			minimumSavingsTokens: 100_000,
+		});
+
+		expect(resultText(result.messages[1]!)).toBe(unrelatedOutput);
+		expect(resultText(result.messages[3]!)).toContain("invalidated");
+		expect(result.stats.prunedResults).toBe(1);
+		expect(result.stats.supersededResults).toBe(0);
+		expect(result.stats.invalidatedResults).toBe(1);
+	});
 });

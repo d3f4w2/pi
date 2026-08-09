@@ -1,11 +1,13 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Container, Text } from "@earendil-works/pi-tui";
-import { mkdir as fsMkdir, writeFile as fsWriteFile } from "fs/promises";
+import { mkdir as fsMkdir, readFile as fsReadFile, writeFile as fsWriteFile } from "fs/promises";
 import { dirname } from "path";
 import { type Static, Type } from "typebox";
+import { renderFileDiff } from "../../modes/interactive/components/diff.ts";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { computeWriteDiff, createFileDiff, type EditDiffError, type FileDiff } from "./edit-diff.ts";
 import { withFileMutationQueue } from "./file-mutation-queue.ts";
 import { resolveToCwd } from "./path-utils.ts";
 import { normalizeDisplayText, renderToolPath, replaceTabs, str } from "./render-utils.ts";
@@ -30,12 +32,15 @@ export type WriteToolInput = Static<typeof writeSchema>;
 export interface WriteOperations {
 	/** Write content to a file */
 	writeFile: (absolutePath: string, content: string) => Promise<void>;
+	/** Read existing content for accurate overwrite details. Omit for write-only remote backends. */
+	readFile?: (absolutePath: string) => Promise<string>;
 	/** Create directory recursively */
 	mkdir: (dir: string) => Promise<void>;
 }
 
 const defaultWriteOperations: WriteOperations = {
 	writeFile: (path, content) => fsWriteFile(path, content, "utf-8"),
+	readFile: (path) => fsReadFile(path, "utf8"),
 	mkdir: (dir) => fsMkdir(dir, { recursive: true }).then(() => {}),
 };
 
@@ -52,8 +57,18 @@ type WriteHighlightCache = {
 	highlightedLines: string[];
 };
 
+export type WriteToolDetails = FileDiff;
+
+interface WriteRenderState {
+	callComponent?: WriteCallRenderComponent;
+}
+
 class WriteCallRenderComponent extends Text {
 	cache?: WriteHighlightCache;
+	argsKey?: string;
+	preview?: FileDiff;
+	previewError?: string;
+	previewPending = false;
 
 	constructor() {
 		super("", 0, 0);
@@ -139,13 +154,19 @@ function formatWriteCall(
 	theme: Theme,
 	cache: WriteHighlightCache | undefined,
 	cwd: string,
+	preview: FileDiff | undefined,
+	previewError: string | undefined,
 ): string {
 	const rawPath = str(args?.file_path ?? args?.path);
 	const fileContent = str(args?.content);
 	const pathDisplay = renderToolPath(rawPath, theme, cwd);
 	let text = `${theme.fg("toolTitle", theme.bold("write"))} ${pathDisplay}`;
 
-	if (fileContent === null) {
+	if (previewError) {
+		text += `\n\n${theme.fg("error", previewError)}`;
+	} else if (preview) {
+		text += `\n\n${renderFileDiff(preview, { expanded: options.expanded })}`;
+	} else if (fileContent === null) {
 		text += `\n\n${theme.fg("error", "[invalid content arg - expected string]")}`;
 	} else if (fileContent) {
 		const lang = rawPath ? getLanguageFromPath(rawPath) : undefined;
@@ -186,7 +207,7 @@ function formatWriteResult(
 export function createWriteToolDefinition(
 	cwd: string,
 	options?: WriteToolOptions,
-): ToolDefinition<typeof writeSchema, undefined> {
+): ToolDefinition<typeof writeSchema, WriteToolDetails, WriteRenderState> {
 	const ops = options?.operations ?? defaultWriteOperations;
 	return {
 		name: "write",
@@ -215,6 +236,14 @@ export function createWriteToolDefinition(
 				};
 
 				throwIfAborted();
+				let oldContent: string | null = null;
+				if (ops.readFile) {
+					try {
+						oldContent = await ops.readFile(absolutePath);
+					} catch (error: unknown) {
+						if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) throw error;
+					}
+				}
 				// Create parent directories if needed.
 				await ops.mkdir(dir);
 				throwIfAborted();
@@ -225,7 +254,7 @@ export function createWriteToolDefinition(
 
 				return {
 					content: [{ type: "text", text: `Successfully wrote ${content.length} bytes to ${path}` }],
-					details: undefined,
+					details: createFileDiff(path, oldContent, content),
 				};
 			});
 		},
@@ -235,12 +264,41 @@ export function createWriteToolDefinition(
 			const fileContent = str(renderArgs?.content);
 			const component =
 				(context.lastComponent as WriteCallRenderComponent | undefined) ?? new WriteCallRenderComponent();
+			context.state.callComponent = component;
+			const argsKey =
+				context.argsComplete && rawPath !== null && fileContent !== null
+					? JSON.stringify({ rawPath, fileContent })
+					: undefined;
+			if (component.argsKey !== argsKey) {
+				component.argsKey = argsKey;
+				component.preview = undefined;
+				component.previewError = undefined;
+				component.previewPending = false;
+			}
 			if (fileContent !== null) {
 				component.cache = context.argsComplete
 					? rebuildWriteHighlightCacheFull(rawPath, fileContent)
 					: updateWriteHighlightCacheIncremental(component.cache, rawPath, fileContent);
 			} else {
 				component.cache = undefined;
+			}
+			if (
+				context.argsComplete &&
+				rawPath !== null &&
+				fileContent !== null &&
+				!component.preview &&
+				!component.previewError &&
+				!component.previewPending
+			) {
+				component.previewPending = true;
+				const requestKey = argsKey;
+				void computeWriteDiff(rawPath, fileContent, context.cwd).then((preview: FileDiff | EditDiffError) => {
+					if (component.argsKey !== requestKey) return;
+					component.previewPending = false;
+					if ("error" in preview) component.previewError = preview.error;
+					else component.preview = preview;
+					context.invalidate();
+				});
 			}
 			component.setText(
 				formatWriteCall(
@@ -249,11 +307,30 @@ export function createWriteToolDefinition(
 					theme,
 					component.cache,
 					context.cwd,
+					component.preview,
+					component.previewError,
 				),
 			);
 			return component;
 		},
 		renderResult(result, _options, theme, context) {
+			const callComponent = context.state.callComponent;
+			if (!context.isError && result.details && callComponent) {
+				callComponent.preview = result.details;
+				callComponent.previewError = undefined;
+				const renderArgs = context.args as { path?: string; file_path?: string; content?: string } | undefined;
+				callComponent.setText(
+					formatWriteCall(
+						renderArgs,
+						{ expanded: context.expanded, isPartial: context.isPartial },
+						theme,
+						callComponent.cache,
+						context.cwd,
+						callComponent.preview,
+						undefined,
+					),
+				);
+			}
 			const output = formatWriteResult({ ...result, isError: context.isError }, theme);
 			if (!output) {
 				const component = (context.lastComponent as Container | undefined) ?? new Container();

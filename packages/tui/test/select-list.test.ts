@@ -18,6 +18,51 @@ const visibleIndexOf = (line: string, text: string): number => {
 };
 
 describe("SelectList", () => {
+	it("styles the selected cursor, label, and description independently", () => {
+		const selectedPrefixes: string[] = [];
+		const selectedLabels: string[] = [];
+		const descriptions: string[] = [];
+		const list = new SelectList([{ value: "read", label: "read", description: "Read file contents" }], 5, {
+			...testTheme,
+			selectedPrefix: (text) => {
+				selectedPrefixes.push(text);
+				return text;
+			},
+			selectedText: (text) => {
+				selectedLabels.push(text);
+				return text;
+			},
+			description: (text) => {
+				descriptions.push(text);
+				return text;
+			},
+		});
+
+		list.render(80);
+
+		assert.deepStrictEqual(selectedPrefixes, ["› "]);
+		assert.deepStrictEqual(selectedLabels, ["read"]);
+		assert.deepStrictEqual(descriptions, ["                            Read file contents"]);
+	});
+
+	it("never renders past the available terminal width", () => {
+		const list = new SelectList(
+			[
+				{
+					value: "very-long-command-name-that-needs-truncation",
+					label: "very-long-command-name-that-needs-truncation",
+					description: "A long description that must disappear before the command name becomes unreadable",
+				},
+			],
+			5,
+			testTheme,
+		);
+
+		for (const width of [24, 40, 80]) {
+			for (const line of list.render(width)) assert.ok(visibleWidth(line) <= width);
+		}
+	});
+
 	it("normalizes multiline descriptions to single line", () => {
 		const items = [
 			{

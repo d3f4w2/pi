@@ -129,6 +129,42 @@ describe("verify service", () => {
 		expect(result.text).toContain("2 项验证全部通过");
 	});
 
+	test("auto-checks the test that transitively depends on the changed TypeScript file", async () => {
+		const project = await createTempDirectory();
+		await mkdir(path.join(project, "src", "shared"), { recursive: true });
+		await mkdir(path.join(project, "test", "api"), { recursive: true });
+		await writeFile(
+			path.join(project, "package.json"),
+			JSON.stringify({ scripts: { typecheck: "tsc --noEmit", test: "vitest --run" } }),
+			"utf8",
+		);
+		await writeFile(path.join(project, "tsconfig.json"), "{}", "utf8");
+		await writeFile(path.join(project, "src", "shared", "parser.ts"), "export const parse = () => 1;\n", "utf8");
+		await writeFile(
+			path.join(project, "src", "user-service.ts"),
+			'import { parse } from "./shared/parser";\nexport const user = parse();\n',
+			"utf8",
+		);
+		await writeFile(
+			path.join(project, "test", "api", "user-api.test.ts"),
+			'import { user } from "../../src/user-service";\ntest("user", () => user);\n',
+			"utf8",
+		);
+		const runner = passingRunner();
+
+		await new VerifyService({ runner }).verify({ operation: "auto", path: "src/shared/parser.ts" }, project);
+
+		expect(runner).toHaveBeenNthCalledWith(
+			2,
+			expect.objectContaining({
+				command: "npm",
+				args: ["run", "test", "--", "test/api/user-api.test.ts"],
+			}),
+			expect.any(AbortSignal),
+			60_000,
+		);
+	});
+
 	test("auto mode does not run the full test suite when no related test is found", async () => {
 		const project = await createTempDirectory();
 		await mkdir(path.join(project, "src"), { recursive: true });

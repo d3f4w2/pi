@@ -13,8 +13,9 @@ import type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
 	ThinkingLevel,
-	ToolFailureGuardSnapshot,
+	ToolApproval,
 	ToolExecutionMode,
+	ToolFailureGuardSnapshot,
 } from "@earendil-works/pi-agent-core";
 import type {
 	Api,
@@ -64,6 +65,7 @@ import type {
 	SessionEntry,
 	SessionManager,
 } from "../session-manager.ts";
+import type { ToolApprovalMode, ToolApprovalSetting } from "../settings-manager.ts";
 import type { SlashCommandInfo } from "../slash-commands.ts";
 import type { SourceInfo } from "../source-info.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
@@ -351,6 +353,12 @@ export interface ExtensionContext {
 	getSystemPrompt(): string;
 	/** Get the latest bounded tool execution-protection state, when provided by the host. */
 	getToolFailureGuardStatus?(): ToolFailureGuardSnapshot | undefined;
+	/** Get the effective interactive tool-approval mode. */
+	getToolApprovalMode?(): ToolApprovalMode | undefined;
+	/** Get the current safety mode and normalized persistent per-tool policies. */
+	getToolApprovalSettings?():
+		| { mode: ToolApprovalMode; policies: Readonly<Record<string, ToolApprovalSetting>> }
+		| undefined;
 }
 
 /**
@@ -360,6 +368,8 @@ export interface ExtensionContext {
 export interface ExtensionCommandContext extends ExtensionContext {
 	/** Get the current base system-prompt construction options. */
 	getSystemPromptOptions(): BuildSystemPromptOptions;
+	/** Persist or remove one per-tool policy. Available only to explicit user-initiated commands. */
+	setToolApprovalPolicy?(toolName: string, policy: ToolApprovalSetting | undefined): void;
 
 	/** Wait for the agent to finish streaming */
 	waitForIdle(): Promise<void>;
@@ -491,6 +501,10 @@ export interface ToolDefinition<TParams extends TSchema = TSchema, TDetails = un
 	 * If omitted, the default execution mode applies.
 	 */
 	executionMode?: ToolExecutionMode;
+	/** Side-effect classification used by the host approval policy. */
+	approval?: ToolApproval;
+	/** Optional short details shown in the approval dialog. */
+	formatApprovalDetails?: (args: unknown) => string | string[] | undefined;
 
 	/** Execute the tool. */
 	execute(
@@ -1590,7 +1604,7 @@ export type GetActiveToolsHandler = () => string[];
 /** Tool info with model-facing metadata and source metadata. */
 export type ToolInfo = Pick<
 	ToolDefinition,
-	"name" | "description" | "parameters" | "promptGuidelines" | "discovery"
+	"name" | "description" | "parameters" | "promptGuidelines" | "discovery" | "approval"
 > & {
 	sourceInfo: SourceInfo;
 };
@@ -1676,6 +1690,11 @@ export interface ExtensionContextActions {
 	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
 	getToolFailureGuardStatus?: () => ToolFailureGuardSnapshot | undefined;
+	getToolApprovalMode?: () => ToolApprovalMode | undefined;
+	getToolApprovalSettings?: () =>
+		| { mode: ToolApprovalMode; policies: Readonly<Record<string, ToolApprovalSetting>> }
+		| undefined;
+	setToolApprovalPolicy?: (toolName: string, policy: ToolApprovalSetting | undefined) => void;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
 }
 

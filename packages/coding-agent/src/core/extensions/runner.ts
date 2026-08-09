@@ -11,6 +11,7 @@ import type { KeybindingsConfig } from "../keybindings.ts";
 import type { ModelRegistry } from "../model-registry.ts";
 import type { ScopedModel } from "../model-resolver.ts";
 import type { SessionManager } from "../session-manager.ts";
+import type { ToolApprovalMode, ToolApprovalSetting } from "../settings-manager.ts";
 import type { BuildSystemPromptOptions } from "../system-prompt.ts";
 import type {
 	BeforeAgentStartEvent,
@@ -73,7 +74,7 @@ const RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS = [
 	"app.clear",
 	"app.exit",
 	"app.suspend",
-	"app.thinking.cycle",
+	"app.approval.cycle",
 	"app.model.cycleForward",
 	"app.model.cycleBackward",
 	"app.model.select",
@@ -286,6 +287,11 @@ export class ExtensionRunner {
 	private compactFn: (options?: CompactOptions) => void = () => {};
 	private getSystemPromptFn: () => string = () => "";
 	private getToolFailureGuardStatusFn: () => ToolFailureGuardSnapshot | undefined = () => undefined;
+	private getToolApprovalModeFn: () => ToolApprovalMode | undefined = () => undefined;
+	private getToolApprovalSettingsFn: () =>
+		| { mode: ToolApprovalMode; policies: Readonly<Record<string, ToolApprovalSetting>> }
+		| undefined = () => undefined;
+	private setToolApprovalPolicyFn: (toolName: string, policy: ToolApprovalSetting | undefined) => void = () => {};
 	private getSystemPromptOptionsFn: () => BuildSystemPromptOptions = () => ({ cwd: this.cwd });
 	private newSessionHandler: NewSessionHandler = async () => ({ cancelled: false });
 	private forkHandler: ForkHandler = async () => ({ cancelled: false });
@@ -350,6 +356,9 @@ export class ExtensionRunner {
 		this.compactFn = contextActions.compact;
 		this.getSystemPromptFn = contextActions.getSystemPrompt;
 		this.getToolFailureGuardStatusFn = contextActions.getToolFailureGuardStatus ?? (() => undefined);
+		this.getToolApprovalModeFn = contextActions.getToolApprovalMode ?? (() => undefined);
+		this.getToolApprovalSettingsFn = contextActions.getToolApprovalSettings ?? (() => undefined);
+		this.setToolApprovalPolicyFn = contextActions.setToolApprovalPolicy ?? (() => {});
 		this.getSystemPromptOptionsFn = contextActions.getSystemPromptOptions ?? (() => ({ cwd: this.cwd }));
 
 		// Flush provider registrations queued during extension loading
@@ -753,6 +762,14 @@ export class ExtensionRunner {
 				runner.assertActive();
 				return runner.getToolFailureGuardStatusFn();
 			},
+			getToolApprovalMode: () => {
+				runner.assertActive();
+				return runner.getToolApprovalModeFn();
+			},
+			getToolApprovalSettings: () => {
+				runner.assertActive();
+				return runner.getToolApprovalSettingsFn();
+			},
 		};
 	}
 
@@ -767,6 +784,10 @@ export class ExtensionRunner {
 		context.getSystemPromptOptions = () => {
 			this.assertActive();
 			return this.getSystemPromptOptionsFn();
+		};
+		context.setToolApprovalPolicy = (toolName, policy) => {
+			this.assertActive();
+			this.setToolApprovalPolicyFn(toolName, policy);
 		};
 		context.waitForIdle = () => {
 			this.assertActive();

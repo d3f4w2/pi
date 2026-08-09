@@ -13,18 +13,18 @@ import {
 	writeFile as fsWriteFile,
 } from "fs/promises";
 import { type Static, Type } from "typebox";
-import { renderDiff } from "../../modes/interactive/components/diff.ts";
+import { renderFileDiff } from "../../modes/interactive/components/diff.ts";
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import type { ToolDefinition } from "../extensions/types.ts";
 import {
 	applyEditsToNormalizedContent,
 	computeAnchoredEditsDiff,
 	computeEditsDiff,
+	createFileDiff,
 	detectLineEnding,
 	type Edit,
 	type EditDiffError,
 	type EditDiffResult,
-	generateDiffString,
 	generateUnifiedPatch,
 	normalizeToLF,
 	restoreLineEndings,
@@ -96,13 +96,9 @@ type LegacyEditToolInput = EditToolInput & {
 	newText?: unknown;
 };
 
-export interface EditToolDetails {
-	/** Display-oriented diff of the changes made */
-	diff: string;
+export interface EditToolDetails extends EditDiffResult {
 	/** Standard unified patch of the changes made */
 	patch: string;
-	/** Line number of the first change in the new file (for editor navigation) */
-	firstChangedLine?: number;
 }
 
 /**
@@ -346,7 +342,17 @@ function formatEditResult(
 
 	const resultDiff = result.details?.diff;
 	if (resultDiff && resultDiff !== previewDiff) {
-		return renderDiff(resultDiff, { filePath: rawPath ?? undefined });
+		return renderFileDiff(
+			{
+				path: rawPath ?? "unknown",
+				status: result.details?.status ?? "modified",
+				diff: resultDiff,
+				firstChangedLine: result.details?.firstChangedLine,
+				additions: result.details?.additions ?? 0,
+				deletions: result.details?.deletions ?? 0,
+			},
+			{ expanded: true },
+		);
 	}
 
 	return undefined;
@@ -374,6 +380,7 @@ function buildEditCallComponent(
 	args: RenderableEditArgs | undefined,
 	theme: Theme,
 	cwd: string,
+	expanded: boolean,
 ): EditCallRenderComponent {
 	component.setBgFn(getEditHeaderBg(component.preview, component.settledError, theme));
 	component.clear();
@@ -384,7 +391,9 @@ function buildEditCallComponent(
 	}
 
 	const body =
-		"error" in component.preview ? theme.fg("error", component.preview.error) : renderDiff(component.preview.diff);
+		"error" in component.preview
+			? theme.fg("error", component.preview.error)
+			: renderFileDiff(component.preview, { expanded });
 	component.addChild(new Spacer(1));
 	component.addChild(new Text(body, 0, 0));
 	return component;
@@ -480,7 +489,7 @@ export function createEditToolDefinition(
 				if (ops.replaceFile) await ops.replaceFile(absolutePath, finalContent);
 				else await ops.writeFile(absolutePath, finalContent);
 
-				const diffResult = generateDiffString(baseContent, newContent);
+				const diffResult = createFileDiff(path, baseContent, newContent);
 				const patch = generateUnifiedPatch(path, baseContent, newContent);
 				return {
 					content: [
@@ -489,7 +498,7 @@ export function createEditToolDefinition(
 							text: `Successfully replaced ${validated.edits.length} block(s) in ${path}.`,
 						},
 					],
-					details: { diff: diffResult.diff, patch, firstChangedLine: diffResult.firstChangedLine },
+					details: { ...diffResult, patch },
 				};
 			});
 		},
@@ -520,7 +529,7 @@ export function createEditToolDefinition(
 				});
 			}
 
-			return buildEditCallComponent(component, args, theme, context.cwd);
+			return buildEditCallComponent(component, args, theme, context.cwd, context.expanded);
 		},
 		renderResult(result, _options, theme, context) {
 			const callComponent = context.state.callComponent;
@@ -530,13 +539,8 @@ export function createEditToolDefinition(
 			const resultDiff = !context.isError ? typedResult.details?.diff : undefined;
 			let changed = false;
 			if (callComponent) {
-				if (typeof resultDiff === "string") {
-					changed =
-						setEditPreview(
-							callComponent,
-							{ diff: resultDiff, firstChangedLine: typedResult.details?.firstChangedLine },
-							argsKey,
-						) || changed;
+				if (typeof resultDiff === "string" && typedResult.details) {
+					changed = setEditPreview(callComponent, typedResult.details, argsKey) || changed;
 				}
 				if (callComponent.settledError !== context.isError) {
 					callComponent.settledError = context.isError;
@@ -548,6 +552,7 @@ export function createEditToolDefinition(
 						context.args as RenderableEditArgs | undefined,
 						theme,
 						context.cwd,
+						context.expanded,
 					);
 				}
 			}

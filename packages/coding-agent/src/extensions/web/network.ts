@@ -294,6 +294,11 @@ function abortError(signal: AbortSignal): Error {
 	return signal.reason instanceof Error ? signal.reason : new Error("联网请求已取消。");
 }
 
+function isRequestAbort(error: unknown): boolean {
+	if (!(error instanceof Error)) return false;
+	return error.name === "AbortError" || ("code" in error && error.code === "UND_ERR_ABORTED");
+}
+
 function safelyDestroyBody(body: RawNetworkBody, error?: Error): void {
 	body.on?.("error", () => {});
 	try {
@@ -357,13 +362,20 @@ export async function fetchNetworkResource(
 		for (let redirectCount = 0; ; redirectCount += 1) {
 			if (abort.signal.aborted) throw abortError(abort.signal);
 			await assertPublicResolution(currentUrl.hostname, dependencies.resolve);
-			const response = await dependencies.request(currentUrl.toString(), {
-				method,
-				headers,
-				...(body === undefined ? {} : { body }),
-				signal: abort.signal,
-				timeoutMs,
-			});
+			let response: RawNetworkResponse;
+			try {
+				response = await dependencies.request(currentUrl.toString(), {
+					method,
+					headers,
+					...(body === undefined ? {} : { body }),
+					signal: abort.signal,
+					timeoutMs,
+				});
+			} catch (error) {
+				if (abort.signal.aborted) throw abortError(abort.signal);
+				if (isRequestAbort(error)) throw new Error("网页连接被中断。");
+				throw error;
+			}
 			const location = headerValue(response.headers, "location");
 			if (REDIRECT_STATUSES.has(response.status) && location) {
 				safelyDestroyBody(response.body);

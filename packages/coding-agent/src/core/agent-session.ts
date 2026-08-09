@@ -105,6 +105,7 @@ import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
+import { evaluateToolApproval } from "./tool-approval.ts";
 import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
@@ -368,6 +369,7 @@ export class AgentSession {
 	private _toolDefinitions: Map<string, ToolDefinitionEntry> = new Map();
 	private _toolPromptSnippets: Map<string, string> = new Map();
 	private _toolPromptGuidelines: Map<string, string[]> = new Map();
+	private readonly _approvedToolOperations = new Set<string>();
 
 	// Base system prompt (without extension appends) - used to apply fresh appends each turn
 	private _baseSystemPrompt = "";
@@ -477,25 +479,59 @@ export class AgentSession {
 	 * happens here instead of in wrappers.
 	 */
 	private _installAgentToolHooks(): void {
-		this.agent.beforeToolCall = async ({ toolCall, args }) => {
+		this.agent.beforeToolCall = async ({ toolCall, args, tool }, signal) => {
 			const runner = this._extensionRunner;
-			if (!runner.hasHandlers("tool_call")) {
-				return undefined;
+			if (runner.hasHandlers("tool_call")) {
+				try {
+					const hookResult = await runner.emitToolCall({
+						type: "tool_call",
+						toolName: toolCall.name,
+						toolCallId: toolCall.id,
+						input: args as Record<string, unknown>,
+					});
+					if (hookResult?.block) return hookResult;
+				} catch (err) {
+					if (err instanceof Error) throw err;
+					throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+				}
 			}
 
-			try {
-				return await runner.emitToolCall({
-					type: "tool_call",
-					toolName: toolCall.name,
-					toolCallId: toolCall.id,
-					input: args as Record<string, unknown>,
-				});
-			} catch (err) {
-				if (err instanceof Error) {
-					throw err;
-				}
-				throw new Error(`Extension failed, blocking execution: ${String(err)}`);
+			const context = runner.createContext();
+			const evaluation = evaluateToolApproval({
+				tool,
+				args,
+				cwd: this._cwd,
+				settings: this.settingsManager.getToolApprovalSettings(),
+				canPrompt: context.hasUI,
+				approvedFingerprints: this._approvedToolOperations,
+			});
+			if (evaluation.action === "allow") return undefined;
+			if (evaluation.action === "deny") {
+				return { block: true, reason: evaluation.reason ?? "工具操作已被安全策略禁止" };
 			}
+
+			const title = [`允许工具：${toolCall.name}`, `风险级别：${evaluation.tier}`, `原因：${evaluation.reason}`]
+				.concat(evaluation.details)
+				.join("\n");
+			const choice = await context.ui.select(
+				title,
+				["允许本次", "本次会话允许相同操作", "始终允许此工具", "始终禁止此工具", "拒绝本次"],
+				{ signal },
+			);
+			if (choice === "允许本次") return undefined;
+			if (choice === "本次会话允许相同操作" && evaluation.fingerprint) {
+				this._approvedToolOperations.add(evaluation.fingerprint);
+				return undefined;
+			}
+			if (choice === "始终允许此工具") {
+				this.settingsManager.setToolApprovalPolicy(toolCall.name, "allow");
+				return undefined;
+			}
+			if (choice === "始终禁止此工具") {
+				this.settingsManager.setToolApprovalPolicy(toolCall.name, "deny");
+				return { block: true, reason: "用户已将该工具加入黑名单" };
+			}
+			return { block: true, reason: "用户拒绝了本次工具操作" };
 		};
 
 		this.agent.afterToolCall = async ({ toolCall, args, result, isError }) => {
@@ -912,6 +948,7 @@ export class AgentSession {
 			parameters: definition.parameters,
 			promptGuidelines: definition.promptGuidelines,
 			discovery: definition.discovery,
+			approval: definition.approval,
 			sourceInfo,
 		}));
 	}
@@ -2443,6 +2480,9 @@ export class AgentSession {
 				},
 				getSystemPrompt: () => this.systemPrompt,
 				getToolFailureGuardStatus: () => this.agent.state.toolFailureGuard,
+				getToolApprovalMode: () => this.settingsManager.getToolApprovalSettings().mode,
+				getToolApprovalSettings: () => this.settingsManager.getToolApprovalSettings(),
+				setToolApprovalPolicy: (toolName, policy) => this.settingsManager.setToolApprovalPolicy(toolName, policy),
 				getSystemPromptOptions: () => this._baseSystemPromptOptions,
 			},
 			{

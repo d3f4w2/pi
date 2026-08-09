@@ -295,6 +295,22 @@ export function runDoctorChecks(snapshot: DoctorSnapshot, probes: DoctorFileProb
 		});
 	}
 
+	if (snapshot.toolApprovalMode) {
+		const modeText =
+			snapshot.toolApprovalMode === "yolo"
+				? "普通操作直接执行，明确危险操作仍会确认。"
+				: snapshot.toolApprovalMode === "write"
+					? "读取和改文件直接执行，运行命令前会确认。"
+					: "读取直接执行，改文件或运行命令前会确认。";
+		add({
+			id: "tool-approval",
+			area: "core",
+			severity: "ok",
+			label: "工具确认",
+			detail: modeText,
+		});
+	}
+
 	const shell = resolveDoctorShell(snapshot, probes);
 	add({
 		id: "shell",

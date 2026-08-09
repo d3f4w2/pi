@@ -30,7 +30,7 @@ const IGNORED_PATHS = [
 	"**/vendor/**",
 ];
 
-interface LanguageConfig {
+export interface LanguageConfig {
 	id: AstGrepExplicitLanguage;
 	lang: Lang;
 	globs: string[];
@@ -55,7 +55,7 @@ const LANGUAGE_CONFIGS: Readonly<Record<AstGrepExplicitLanguage, LanguageConfig>
 	css: { id: "css", lang: Lang.Css, globs: ["**/*.css"], extensions: [".css"] },
 };
 
-const ALL_LANGUAGE_CONFIGS = Object.values(LANGUAGE_CONFIGS);
+export const ALL_LANGUAGE_CONFIGS = Object.values(LANGUAGE_CONFIGS);
 
 interface FileMatch {
 	filePath: string;
@@ -81,7 +81,7 @@ function formatPath(projectRoot: string, filePath: string): string {
 	return path.relative(projectRoot, filePath).replaceAll("\\", "/") || path.basename(filePath);
 }
 
-async function resolveSearchTarget(
+export async function resolveSearchTarget(
 	cwd: string,
 	requestedPath: string,
 ): Promise<{ projectRoot: string; target: string }> {
@@ -96,7 +96,7 @@ async function resolveSearchTarget(
 	return { projectRoot, target };
 }
 
-async function collectFiles(
+export async function collectFiles(
 	target: string,
 	language: AstGrepLanguage,
 	signal: AbortSignal,
@@ -136,7 +136,7 @@ async function collectFiles(
 	return { files, skippedFiles };
 }
 
-function configForFile(filePath: string, language: AstGrepLanguage): LanguageConfig | undefined {
+export function configForFile(filePath: string, language: AstGrepLanguage): LanguageConfig | undefined {
 	if (language !== "auto") return LANGUAGE_CONFIGS[language];
 	const extension = path.extname(filePath).toLowerCase();
 	return ALL_LANGUAGE_CONFIGS.find((config) => config.extensions.includes(extension));

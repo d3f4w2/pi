@@ -1,6 +1,7 @@
 import { type Component, Loader, type TUI } from "@earendil-works/pi-tui";
 import type { WorkingIndicatorOptions } from "../../../core/extensions/index.ts";
 import { theme } from "../theme/theme.ts";
+import { PI_GO_LOADER_FRAMES } from "./brand.ts";
 import { CountdownTimer } from "./countdown-timer.ts";
 import { keyText } from "./keybinding-hints.ts";
 
@@ -17,7 +18,13 @@ export class StatusIndicator extends Loader {
 		message: string,
 		indicator?: WorkingIndicatorOptions,
 	) {
-		super(ui, spinnerColorFn, messageColorFn, message, indicator);
+		super(
+			ui,
+			spinnerColorFn,
+			messageColorFn,
+			message,
+			indicator ?? { frames: [...PI_GO_LOADER_FRAMES], intervalMs: 80 },
+		);
 		this.kind = kind;
 	}
 

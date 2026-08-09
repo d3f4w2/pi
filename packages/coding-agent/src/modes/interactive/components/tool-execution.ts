@@ -10,9 +10,44 @@ export interface ToolExecutionOptions {
 	imageWidthCells?: number;
 }
 
+type ToolVisualState = "pending" | "success" | "error";
+
+class ToolStateFrame implements Component {
+	private readonly child: Component;
+	private state: ToolVisualState = "pending";
+
+	constructor(child: Component) {
+		this.child = child;
+	}
+
+	setState(state: ToolVisualState): void {
+		this.state = state;
+	}
+
+	invalidate(): void {
+		this.child.invalidate?.();
+	}
+
+	render(width: number): string[] {
+		if (width <= 2) return this.child.render(width);
+		const lines = this.child.render(width - 2);
+		if (lines.length === 0) return [];
+		const firstMarker =
+			this.state === "pending"
+				? theme.fg("accent", "● ")
+				: this.state === "success"
+					? theme.fg("success", "✓ ")
+					: theme.fg("error", "× ");
+		const continuation = "  ";
+		return lines.map((line, index) => (index === 0 ? firstMarker : continuation) + line);
+	}
+}
+
 export class ToolExecutionComponent extends Container {
 	private contentBox: Box;
 	private contentText: Text;
+	private contentFrame: ToolStateFrame;
+	private fallbackFrame: ToolStateFrame;
 	private selfRenderContainer: Container;
 	private callRendererComponent?: Component;
 	private resultRendererComponent?: Component;
@@ -65,14 +100,16 @@ export class ToolExecutionComponent extends Container {
 		// Always create all shell variants. contentBox is used for default renderer-based composition.
 		// selfRenderContainer is used when the tool renders its own framing.
 		// contentText is reserved for generic fallback rendering when no tool definition exists.
-		this.contentBox = new Box(1, 1, (text: string) => theme.bg("toolPendingBg", text));
-		this.contentText = new Text("", 1, 1, (text: string) => theme.bg("toolPendingBg", text));
+		this.contentBox = new Box(0, 0);
+		this.contentText = new Text("", 0, 0);
+		this.contentFrame = new ToolStateFrame(this.contentBox);
+		this.fallbackFrame = new ToolStateFrame(this.contentText);
 		this.selfRenderContainer = new Container();
 
 		if (this.hasRendererDefinition()) {
-			this.addChild(this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox);
+			this.addChild(this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentFrame);
 		} else {
-			this.addChild(this.contentText);
+			this.addChild(this.fallbackFrame);
 		}
 
 		this.updateDisplay();
@@ -251,19 +288,14 @@ export class ToolExecutionComponent extends Container {
 	}
 
 	private updateDisplay(): void {
-		const bgFn = this.isPartial
-			? (text: string) => theme.bg("toolPendingBg", text)
-			: this.result?.isError
-				? (text: string) => theme.bg("toolErrorBg", text)
-				: (text: string) => theme.bg("toolSuccessBg", text);
+		const visualState: ToolVisualState = this.isPartial ? "pending" : this.result?.isError ? "error" : "success";
+		this.contentFrame.setState(visualState);
+		this.fallbackFrame.setState(visualState);
 
 		let hasContent = false;
 		this.hideComponent = false;
 		if (this.hasRendererDefinition()) {
 			const renderContainer = this.getRenderShell() === "self" ? this.selfRenderContainer : this.contentBox;
-			if (renderContainer instanceof Box) {
-				renderContainer.setBgFn(bgFn);
-			}
 			renderContainer.clear();
 
 			const callRenderer = this.getCallRenderer();
@@ -313,7 +345,6 @@ export class ToolExecutionComponent extends Container {
 				}
 			}
 		} else {
-			this.contentText.setCustomBgFn(bgFn);
 			this.contentText.setText(this.formatToolExecution());
 			hasContent = true;
 		}

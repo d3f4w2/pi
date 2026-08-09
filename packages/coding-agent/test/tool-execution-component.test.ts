@@ -35,6 +35,26 @@ describe("ToolExecutionComponent parity", () => {
 		initTheme("dark");
 	});
 
+	test("uses compact semantic markers for pending, successful, and failed tools", () => {
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-semantic-state",
+			{},
+			{},
+			createBaseToolDefinition(),
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		expect(stripAnsi(component.render(40).join("\n"))).toContain("● custom_tool");
+
+		component.updateResult({ content: [{ type: "text", text: "done" }], details: {}, isError: false }, false);
+		expect(stripAnsi(component.render(40).join("\n"))).toContain("✓ custom_tool");
+
+		component.updateResult({ content: [{ type: "text", text: "failed" }], details: {}, isError: true }, false);
+		expect(stripAnsi(component.render(40).join("\n"))).toContain("× custom_tool");
+	});
+
 	test("stacks custom call and result renderers like the old implementation", () => {
 		const toolDefinition: ToolDefinition = {
 			...createBaseToolDefinition(),
@@ -185,8 +205,8 @@ describe("ToolExecutionComponent parity", () => {
 
 		const rendered = stripAnsi(component.render(200).join("\n"));
 		expect(rendered.match(/Full output:/g)?.length ?? 0).toBe(1);
-		expect(rendered).toMatch(/line-4000[^\n]*\n[^\S\n]*\n \[Full output:/);
-		expect(rendered).not.toMatch(/line-4000[^\n]*\n[^\S\n]*\n[^\S\n]*\n \[Full output:/);
+		expect(rendered).toMatch(/line-4000[^\n]*\n[^\S\n]*\n[^\S\n]*\[Full output:/);
+		expect(rendered).not.toMatch(/line-4000[^\n]*\n[^\S\n]*\n[^\S\n]*\n[^\S\n]*\[Full output:/);
 		expect(rendered).toContain("Truncated: showing 2000 of 4000 lines");
 		expect(rendered).not.toContain("[Showing lines 2001-4000 of 4000. Full output:");
 	});

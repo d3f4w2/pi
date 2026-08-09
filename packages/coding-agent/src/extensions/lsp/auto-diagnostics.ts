@@ -62,7 +62,7 @@ function changedFilesFromResult(event: ToolResultEvent): string[] {
 	if (event.toolName === "edit" || event.toolName === "write") {
 		return typeof event.input.path === "string" ? [event.input.path] : [];
 	}
-	if (event.toolName !== "lsp" || typeof event.details !== "object" || event.details === null) return [];
+	if (typeof event.details !== "object" || event.details === null) return [];
 	const changedFiles = Reflect.get(event.details, "changedFiles");
 	return Array.isArray(changedFiles)
 		? changedFiles.filter((filePath): filePath is string => typeof filePath === "string")

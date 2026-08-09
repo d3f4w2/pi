@@ -33,6 +33,14 @@ export interface ToolFailureGuardSettings {
 	timeoutMs?: number; // default: 180000; 0 disables generic tool timeout
 }
 
+export type ToolApprovalMode = "always-ask" | "write" | "yolo";
+export type ToolApprovalSetting = "allow" | "deny" | "prompt";
+
+export interface ToolRuntimeSettings {
+	approvalMode?: ToolApprovalMode; // default: yolo
+	approval?: Record<string, ToolApprovalSetting>;
+}
+
 export interface ProviderRetrySettings {
 	timeoutMs?: number; // SDK/provider request timeout in milliseconds
 	maxRetries?: number; // SDK/provider retry attempts
@@ -112,6 +120,7 @@ export interface Settings {
 	compaction?: CompactionSettings;
 	contextPruning?: ContextPruningSettings;
 	toolFailureGuard?: ToolFailureGuardSettings;
+	tools?: ToolRuntimeSettings;
 	branchSummary?: BranchSummarySettings;
 	retry?: RetrySettings;
 	hideThinkingBlock?: boolean;
@@ -834,6 +843,53 @@ export class SettingsManager {
 			? Math.min(86_400_000, Math.max(0, Math.floor(settings?.timeoutMs ?? 180_000)))
 			: 180_000;
 		return { enabled, repeatLimit, consecutiveLimit, cooldownMs, timeoutMs };
+	}
+
+	getToolApprovalSettings(): {
+		mode: ToolApprovalMode;
+		policies: Readonly<Record<string, ToolApprovalSetting>>;
+	} {
+		const mode =
+			this.settings.tools?.approvalMode === "always-ask" ||
+			this.settings.tools?.approvalMode === "write" ||
+			this.settings.tools?.approvalMode === "yolo"
+				? this.settings.tools.approvalMode
+				: "yolo";
+		const policies: Record<string, ToolApprovalSetting> = {};
+		for (const [name, policy] of Object.entries(this.settings.tools?.approval ?? {})) {
+			const normalizedName = name.trim().toLowerCase();
+			if (!normalizedName || (policy !== "allow" && policy !== "deny" && policy !== "prompt")) continue;
+			policies[normalizedName] = policy;
+		}
+		return { mode, policies };
+	}
+
+	setToolApprovalMode(mode: ToolApprovalMode): void {
+		this.globalSettings.tools ??= {};
+		this.globalSettings.tools.approvalMode = mode;
+		this.markModified("tools", "approvalMode");
+		this.save();
+	}
+
+	setToolApprovalPolicy(toolName: string, policy: ToolApprovalSetting | undefined): void {
+		const normalizedName = toolName.trim().toLowerCase();
+		if (!normalizedName) throw new Error("Tool name cannot be empty");
+		this.globalSettings.tools ??= {};
+		this.globalSettings.tools.approval ??= {};
+		if (policy === undefined) delete this.globalSettings.tools.approval[normalizedName];
+		else this.globalSettings.tools.approval[normalizedName] = policy;
+		if (Object.keys(this.globalSettings.tools.approval).length === 0) {
+			delete this.globalSettings.tools.approval;
+		}
+		this.markModified("tools", "approval");
+		this.save();
+	}
+
+	cycleToolApprovalMode(): ToolApprovalMode {
+		const current = this.getToolApprovalSettings().mode;
+		const next = current === "yolo" ? "write" : current === "write" ? "always-ask" : "yolo";
+		this.setToolApprovalMode(next);
+		return next;
 	}
 
 	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {

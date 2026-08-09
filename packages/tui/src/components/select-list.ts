@@ -143,7 +143,7 @@ export class SelectList implements Component {
 		descriptionSingleLine: string | undefined,
 		primaryColumnWidth: number,
 	): string {
-		const prefix = isSelected ? "→ " : "  ";
+		const prefix = isSelected ? this.theme.selectedPrefix("› ") : "  ";
 		const prefixWidth = visibleWidth(prefix);
 
 		if (descriptionSingleLine && width > 40) {
@@ -157,22 +157,16 @@ export class SelectList implements Component {
 
 			if (remainingWidth > MIN_DESCRIPTION_WIDTH) {
 				const truncatedDesc = truncateToWidth(descriptionSingleLine, remainingWidth, "");
-				if (isSelected) {
-					return this.theme.selectedText(`${prefix}${truncatedValue}${spacing}${truncatedDesc}`);
-				}
-
+				const primaryText = isSelected ? this.theme.selectedText(truncatedValue) : truncatedValue;
 				const descText = this.theme.description(spacing + truncatedDesc);
-				return prefix + truncatedValue + descText;
+				return truncateToWidth(prefix + primaryText + descText, width, "");
 			}
 		}
 
 		const maxWidth = width - prefixWidth - 2;
 		const truncatedValue = this.truncatePrimary(item, isSelected, maxWidth, maxWidth);
-		if (isSelected) {
-			return this.theme.selectedText(`${prefix}${truncatedValue}`);
-		}
-
-		return prefix + truncatedValue;
+		const primaryText = isSelected ? this.theme.selectedText(truncatedValue) : truncatedValue;
+		return truncateToWidth(prefix + primaryText, width, "");
 	}
 
 	private getPrimaryColumnWidth(): number {
