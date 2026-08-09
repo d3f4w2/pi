@@ -1,4 +1,4 @@
-# Repeated Tool Failure Guard
+# Tool Failure Guard
 
 The guard prevents an agent from executing the exact same failing tool call indefinitely.
 
@@ -17,9 +17,16 @@ Agent-core consumers opt in with:
 const agent = new Agent({
   streamFn,
   repeatedToolFailureLimit: 2,
+  toolConsecutiveFailureLimit: 3,
+  toolFailureCooldownMs: 30_000,
+  toolExecutionTimeoutMs: 180_000,
 });
 ```
 
-Omit the option or set it to `0` to disable the guard. Pi coding-agent enables a limit of two by default and exposes it through `toolFailureGuard` settings.
+The tool-wide circuit opens after consecutive execution failures even when arguments differ. It blocks work until cooldown, permits one half-open probe, closes on success, and reopens on failure. User cancellation is not counted. Thrown errors are redacted and capped before entering model context.
+
+The generic timeout sends a child `AbortSignal`, stops waiting, observes any late settlement, and ignores late updates. A tool that ignores the signal may keep running, so tools should release resources promptly when aborted.
+
+Omit an option or set it to `0` to disable that part of the guard. Pi coding-agent enables conservative defaults through `toolFailureGuard` settings. The latest bounded state is available at `agent.state.toolFailureGuard`.
 
 The guard does not call a model or start another process. A 50,000-operation synthetic benchmark took about 153 ms on the development machine, roughly 3.1 microseconds per fingerprint check and update.

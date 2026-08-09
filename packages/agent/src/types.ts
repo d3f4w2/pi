@@ -146,6 +146,26 @@ export interface AgentLoopTurnUpdate {
 
 export interface PrepareNextTurnContext extends ShouldStopAfterTurnContext {}
 
+export type ToolCircuitStatus = "closed" | "open" | "half-open";
+
+/** Bounded diagnostic state for one tool in the current execution-protection run. */
+export interface ToolFailureGuardToolSnapshot {
+	name: string;
+	status: ToolCircuitStatus;
+	consecutiveFailures: number;
+	retryAt?: number;
+	lastError?: string;
+}
+
+/** Read-only execution-protection state exposed for diagnostics such as `/doctor`. */
+export interface ToolFailureGuardSnapshot {
+	repeatLimit: number;
+	consecutiveLimit: number;
+	cooldownMs: number;
+	timeoutMs: number;
+	tools: readonly ToolFailureGuardToolSnapshot[];
+}
+
 export interface AgentLoopConfig extends SimpleStreamOptions {
 	model: Model<any>;
 
@@ -276,6 +296,18 @@ export interface AgentLoopConfig extends SimpleStreamOptions {
 	 */
 	repeatedToolFailureLimit?: number;
 
+	/** Consecutive execution failures for one tool before its circuit opens. Zero disables it. */
+	toolConsecutiveFailureLimit?: number;
+
+	/** Cooldown before one half-open recovery probe is allowed. */
+	toolFailureCooldownMs?: number;
+
+	/** Generic maximum duration for one tool execution. Zero disables it. */
+	toolExecutionTimeoutMs?: number;
+
+	/** Receives bounded protection-state changes for runtime diagnostics. */
+	onToolFailureGuardChange?: (snapshot: ToolFailureGuardSnapshot) => void;
+
 	/**
 	 * Called before a tool is executed, after arguments have been validated.
 	 *
@@ -364,6 +396,8 @@ export interface AgentState {
 	readonly pendingToolCalls: ReadonlySet<string>;
 	/** Error message from the most recent failed or aborted assistant turn, if any. */
 	readonly errorMessage?: string;
+	/** Latest bounded tool execution-protection snapshot. */
+	readonly toolFailureGuard: ToolFailureGuardSnapshot;
 }
 
 /** Final or partial result produced by a tool. */

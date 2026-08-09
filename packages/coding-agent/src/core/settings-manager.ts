@@ -28,6 +28,9 @@ export interface BranchSummarySettings {
 export interface ToolFailureGuardSettings {
 	enabled?: boolean; // default: true
 	repeatLimit?: number; // default: 2
+	consecutiveLimit?: number; // default: 3
+	cooldownMs?: number; // default: 30000
+	timeoutMs?: number; // default: 180000; 0 disables generic tool timeout
 }
 
 export interface ProviderRetrySettings {
@@ -809,13 +812,28 @@ export class SettingsManager {
 		return resolveContextPruningSettings(this.settings.contextPruning);
 	}
 
-	getToolFailureGuardSettings(): { enabled: boolean; repeatLimit: number } {
+	getToolFailureGuardSettings(): {
+		enabled: boolean;
+		repeatLimit: number;
+		consecutiveLimit: number;
+		cooldownMs: number;
+		timeoutMs: number;
+	} {
 		const settings = this.settings.toolFailureGuard;
 		const enabled = typeof settings?.enabled === "boolean" ? settings.enabled : true;
 		const repeatLimit = Number.isFinite(settings?.repeatLimit)
 			? Math.min(10, Math.max(1, Math.floor(settings?.repeatLimit ?? 2)))
 			: 2;
-		return { enabled, repeatLimit };
+		const consecutiveLimit = Number.isFinite(settings?.consecutiveLimit)
+			? Math.min(10, Math.max(1, Math.floor(settings?.consecutiveLimit ?? 3)))
+			: 3;
+		const cooldownMs = Number.isFinite(settings?.cooldownMs)
+			? Math.min(86_400_000, Math.max(0, Math.floor(settings?.cooldownMs ?? 30_000)))
+			: 30_000;
+		const timeoutMs = Number.isFinite(settings?.timeoutMs)
+			? Math.min(86_400_000, Math.max(0, Math.floor(settings?.timeoutMs ?? 180_000)))
+			: 180_000;
+		return { enabled, repeatLimit, consecutiveLimit, cooldownMs, timeoutMs };
 	}
 
 	getBranchSummarySettings(): { reserveTokens: number; skipPrompt: boolean } {

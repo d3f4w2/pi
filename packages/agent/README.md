@@ -123,6 +123,8 @@ The `beforeToolCall` hook runs after `tool_execution_start` and validated argume
 
 Set `repeatedToolFailureLimit` to stop unchanged calls after repeated identical errors. The guard is scoped to one run, clears on success or new user input, and emits a normal error tool result without executing the blocked tool. It allows one recovery turn, then terminates the run if the model repeats the blocked call. Agent core leaves it disabled by default; see [Repeated Tool Failure Guard](docs/tool-failure-guard.md).
 
+Set `toolConsecutiveFailureLimit`, `toolFailureCooldownMs`, and `toolExecutionTimeoutMs` to add a tool-wide circuit breaker and generic execution timeout. Timeouts use a child `AbortSignal`; promises that ignore cancellation remain observed and their late updates are discarded. Thrown errors are redacted and capped before entering model context. Agent core leaves these options disabled by default; see [Tool Execution Protection Architecture](docs/tool-execution-protection-architecture.md).
+
 Tools, blocked `beforeToolCall` results, and `afterToolCall` overrides can return `terminate: true` to hint that the automatic follow-up LLM call should be skipped. The loop only stops early when every finalized tool result in that batch sets `terminate: true`. Mixed batches continue normally.
 
 The `Agent` class accepts `shouldStopAfterTurn` in `AgentOptions`. Low-level loop callers can set the same hook in `AgentLoopConfig`:
@@ -215,6 +217,13 @@ const agent = new Agent({
   // Block another unchanged call after two identical failures (default: 0 / disabled)
   repeatedToolFailureLimit: 2,
 
+  // Open one tool's circuit after three failures; probe again after 30 seconds.
+  toolConsecutiveFailureLimit: 3,
+  toolFailureCooldownMs: 30_000,
+
+  // Stop waiting for one tool after three minutes (default: 0 / disabled).
+  toolExecutionTimeoutMs: 180_000,
+
   // Preflight each tool call after args are validated. Can block execution.
   beforeToolCall: async ({ toolCall, args, context }) => {
     if (toolCall.name === "bash") {
@@ -260,6 +269,7 @@ interface AgentState {
   readonly streamingMessage?: AgentMessage;
   readonly pendingToolCalls: ReadonlySet<string>;
   readonly errorMessage?: string;
+  readonly toolFailureGuard: ToolFailureGuardSnapshot;
 }
 ```
 
@@ -300,6 +310,9 @@ agent.state.thinkingLevel = "medium";
 agent.state.tools = [myTool];
 agent.toolExecution = "sequential";
 agent.repeatedToolFailureLimit = 2;
+agent.toolConsecutiveFailureLimit = 3;
+agent.toolFailureCooldownMs = 30_000;
+agent.toolExecutionTimeoutMs = 180_000;
 agent.beforeToolCall = async ({ toolCall }) => undefined;
 agent.afterToolCall = async ({ toolCall, result }) => undefined;
 agent.shouldStopAfterTurn = async ({ context }) => shouldCompactBeforeNextTurn(context.messages);

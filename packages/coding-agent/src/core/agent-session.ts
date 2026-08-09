@@ -2442,6 +2442,7 @@ export class AgentSession {
 					})();
 				},
 				getSystemPrompt: () => this.systemPrompt,
+				getToolFailureGuardStatus: () => this.agent.state.toolFailureGuard,
 				getSystemPromptOptions: () => this._baseSystemPromptOptions,
 			},
 			{

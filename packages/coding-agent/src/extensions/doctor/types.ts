@@ -1,3 +1,5 @@
+import type { ToolFailureGuardSnapshot } from "@earendil-works/pi-agent-core";
+
 export type DoctorSeverity = "ok" | "info" | "warning" | "error";
 export type DoctorArea = "core" | "shell" | "lsp" | "search" | "web" | "config";
 export type DoctorLanguage = "typescript" | "python" | "go";
@@ -43,6 +45,7 @@ export interface DoctorSnapshot {
 	paths: DoctorPaths;
 	configFiles: Readonly<Record<"settings" | "projectSettings" | "models" | "auth", boolean>>;
 	isBunBinary: boolean;
+	toolFailureGuard?: ToolFailureGuardSnapshot;
 }
 
 export interface DoctorFileProbes {

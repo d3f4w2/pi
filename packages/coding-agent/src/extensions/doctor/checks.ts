@@ -270,6 +270,31 @@ export function runDoctorChecks(snapshot: DoctorSnapshot, probes: DoctorFileProb
 		...(missingCoreTools.length === 0 ? {} : { fix: "输入 /reload；仍缺失时检查内置扩展加载错误。" }),
 	});
 
+	if (snapshot.toolFailureGuard) {
+		const guard = snapshot.toolFailureGuard;
+		const protectedRuntime = guard.repeatLimit > 0 || guard.consecutiveLimit > 0 || guard.timeoutMs > 0;
+		const unavailable = guard.tools.filter((tool) => tool.status === "open" || tool.status === "half-open");
+		const pendingFailures = guard.tools.filter((tool) => tool.status === "closed");
+		const timeout = guard.timeoutMs === 0 ? "不限制统一时长" : `单次最长 ${Math.ceil(guard.timeoutMs / 1_000)} 秒`;
+		add({
+			id: "tool-protection",
+			area: "core",
+			severity: unavailable.length > 0 ? "warning" : protectedRuntime ? "ok" : "info",
+			label: "工具保护",
+			detail:
+				unavailable.length > 0
+					? `已暂时停用：${unavailable.map((tool) => tool.name).join("、")}。`
+					: protectedRuntime
+						? `异常隔离和熔断已启用，${timeout}；当前没有停用工具${pendingFailures.length > 0 ? `，${pendingFailures.length} 个工具有失败记录` : ""}。`
+						: "工具熔断和统一超时未启用。",
+			...(unavailable.length > 0
+				? { fix: "等待冷却后重试，开始新的用户任务，或先改用其他工具。" }
+				: protectedRuntime
+					? {}
+					: { fix: "在 settings.json 启用 toolFailureGuard。" }),
+		});
+	}
+
 	const shell = resolveDoctorShell(snapshot, probes);
 	add({
 		id: "shell",

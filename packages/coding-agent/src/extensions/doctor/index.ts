@@ -73,6 +73,7 @@ function collectDoctorSnapshot(
 	};
 	const currentModel = ctx.model;
 	const modelError = ctx.modelRegistry.getError();
+	const toolFailureGuard = ctx.getToolFailureGuardStatus?.();
 	return {
 		platform: process.platform,
 		cwd: ctx.cwd,
@@ -100,6 +101,7 @@ function collectDoctorSnapshot(
 			auth: fileExists(paths.auth),
 		},
 		isBunBinary,
+		...(toolFailureGuard === undefined ? {} : { toolFailureGuard }),
 	};
 }
 

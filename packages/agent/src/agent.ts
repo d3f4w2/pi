@@ -27,6 +27,7 @@ import type {
 	ShouldStopAfterTurnContext,
 	StreamFn,
 	ToolExecutionMode,
+	ToolFailureGuardSnapshot,
 } from "./types.ts";
 
 export type { QueueMode } from "./types.ts";
@@ -55,6 +56,7 @@ type MutableAgentState = Omit<AgentState, "isStreaming" | "streamingMessage" | "
 	streamingMessage?: AgentMessage;
 	pendingToolCalls: Set<string>;
 	errorMessage?: string;
+	toolFailureGuard: ToolFailureGuardSnapshot;
 };
 
 function createMutableAgentState(
@@ -83,6 +85,13 @@ function createMutableAgentState(
 		streamingMessage: undefined,
 		pendingToolCalls: new Set<string>(),
 		errorMessage: undefined,
+		toolFailureGuard: {
+			repeatLimit: 0,
+			consecutiveLimit: 0,
+			cooldownMs: 0,
+			timeoutMs: 0,
+			tools: [],
+		},
 	};
 }
 
@@ -114,6 +123,12 @@ export interface AgentOptions {
 	toolExecution?: ToolExecutionMode;
 	/** Number of identical tool failures allowed before another unchanged call is blocked. Zero disables it. */
 	repeatedToolFailureLimit?: number;
+	/** Consecutive failures for one tool before its circuit opens. Zero disables it. */
+	toolConsecutiveFailureLimit?: number;
+	/** Cooldown before one recovery probe is allowed for an open tool circuit. */
+	toolFailureCooldownMs?: number;
+	/** Generic maximum duration for one tool execution. Zero disables it. */
+	toolExecutionTimeoutMs?: number;
 }
 
 class PendingMessageQueue {
@@ -208,6 +223,12 @@ export class Agent {
 	public toolExecution: ToolExecutionMode;
 	/** Number of identical tool failures allowed in one run before blocking an unchanged retry. */
 	public repeatedToolFailureLimit: number;
+	/** Consecutive failures for one tool before opening its circuit. */
+	public toolConsecutiveFailureLimit: number;
+	/** Cooldown before an open tool circuit allows one recovery probe. */
+	public toolFailureCooldownMs: number;
+	/** Generic maximum duration for one tool execution. */
+	public toolExecutionTimeoutMs: number;
 
 	constructor(options: AgentOptions) {
 		// Older compiled consumers may omit options or streamFn even though the current API requires them.
@@ -234,6 +255,22 @@ export class Agent {
 		this.repeatedToolFailureLimit = Number.isFinite(runtimeOptions.repeatedToolFailureLimit)
 			? Math.max(0, Math.floor(runtimeOptions.repeatedToolFailureLimit ?? 0))
 			: 0;
+		this.toolConsecutiveFailureLimit = Number.isFinite(runtimeOptions.toolConsecutiveFailureLimit)
+			? Math.max(0, Math.floor(runtimeOptions.toolConsecutiveFailureLimit ?? 0))
+			: 0;
+		this.toolFailureCooldownMs = Number.isFinite(runtimeOptions.toolFailureCooldownMs)
+			? Math.max(0, Math.floor(runtimeOptions.toolFailureCooldownMs ?? 0))
+			: 0;
+		this.toolExecutionTimeoutMs = Number.isFinite(runtimeOptions.toolExecutionTimeoutMs)
+			? Math.max(0, Math.floor(runtimeOptions.toolExecutionTimeoutMs ?? 0))
+			: 0;
+		this._state.toolFailureGuard = {
+			repeatLimit: this.repeatedToolFailureLimit,
+			consecutiveLimit: this.toolConsecutiveFailureLimit,
+			cooldownMs: this.toolFailureCooldownMs,
+			timeoutMs: this.toolExecutionTimeoutMs,
+			tools: [],
+		};
 	}
 
 	/**
@@ -339,6 +376,10 @@ export class Agent {
 		this._state.streamingMessage = undefined;
 		this._state.pendingToolCalls = new Set<string>();
 		this._state.errorMessage = undefined;
+		this._state.toolFailureGuard = {
+			...this._state.toolFailureGuard,
+			tools: [],
+		};
 		this.clearFollowUpQueue();
 		this.clearSteeringQueue();
 	}
@@ -455,6 +496,12 @@ export class Agent {
 			maxRetryDelayMs: this.maxRetryDelayMs,
 			toolExecution: this.toolExecution,
 			repeatedToolFailureLimit: this.repeatedToolFailureLimit,
+			toolConsecutiveFailureLimit: this.toolConsecutiveFailureLimit,
+			toolFailureCooldownMs: this.toolFailureCooldownMs,
+			toolExecutionTimeoutMs: this.toolExecutionTimeoutMs,
+			onToolFailureGuardChange: (snapshot) => {
+				this._state.toolFailureGuard = snapshot;
+			},
 			beforeToolCall: this.beforeToolCall,
 			afterToolCall: this.afterToolCall,
 			shouldStopAfterTurn: shouldStopAfterTurn

@@ -12,7 +12,7 @@ import {
 } from "@earendil-works/pi-ai";
 import { createAgentFailureMessage } from "./run-failure.ts";
 import { getDefaultStreamFn } from "./stream-fn.ts";
-import { RepeatedToolFailureGuard } from "./tool-failure-guard.ts";
+import { normalizeToolExecutionError, RepeatedToolFailureGuard } from "./tool-failure-guard.ts";
 import type {
 	AgentContext,
 	AgentEvent,
@@ -25,6 +25,8 @@ import type {
 } from "./types.ts";
 
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
+
+const MAX_TOOL_EXECUTION_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
 
 /**
  * Start an agent loop with a new prompt message.
@@ -186,7 +188,13 @@ async function runLoop(
 	let currentContext = initialContext;
 	let config = initialConfig;
 	let firstTurn = true;
-	const repeatedFailureGuard = new RepeatedToolFailureGuard(initialConfig.repeatedToolFailureLimit);
+	const repeatedFailureGuard = new RepeatedToolFailureGuard({
+		repeatLimit: initialConfig.repeatedToolFailureLimit,
+		consecutiveLimit: initialConfig.toolConsecutiveFailureLimit,
+		cooldownMs: initialConfig.toolFailureCooldownMs,
+		timeoutMs: initialConfig.toolExecutionTimeoutMs,
+		onChange: initialConfig.onToolFailureGuardChange,
+	});
 	// Check for steering messages at start (user may have typed while waiting)
 	let pendingMessages: AgentMessage[] = (await config.getSteeringMessages?.()) || [];
 
@@ -514,7 +522,7 @@ async function executeToolCallsSequential(
 					isError: preparation.isError,
 				};
 			} else {
-				const executed = await executePreparedToolCall(preparation, signal, emit);
+				const executed = await executePreparedToolCall(preparation, signal, emit, config.toolExecutionTimeoutMs);
 				finalized = await finalizeExecutedToolCall(
 					currentContext,
 					assistantMessage,
@@ -527,7 +535,9 @@ async function executeToolCallsSequential(
 		}
 
 		if (!finalized.guardBlocked) {
-			repeatedFailureGuard.record(finalized.toolCall, finalized.result, finalized.isError);
+			repeatedFailureGuard.record(finalized.toolCall, finalized.result, finalized.isError, {
+				countTowardCircuit: finalized.countTowardCircuit,
+			});
 		}
 		await emitToolExecutionEnd(finalized, emit);
 		const toolResultMessage = createToolResultMessage(finalized);
@@ -597,7 +607,7 @@ async function executeToolCallsParallel(
 		}
 
 		finalizedCalls.push(async () => {
-			const executed = await executePreparedToolCall(preparation, signal, emit);
+			const executed = await executePreparedToolCall(preparation, signal, emit, config.toolExecutionTimeoutMs);
 			const finalized = await finalizeExecutedToolCall(
 				currentContext,
 				assistantMessage,
@@ -620,7 +630,9 @@ async function executeToolCallsParallel(
 	const messages: ToolResultMessage[] = [];
 	for (const finalized of orderedFinalizedCalls) {
 		if (!finalized.guardBlocked) {
-			repeatedFailureGuard.record(finalized.toolCall, finalized.result, finalized.isError);
+			repeatedFailureGuard.record(finalized.toolCall, finalized.result, finalized.isError, {
+				countTowardCircuit: finalized.countTowardCircuit,
+			});
 		}
 		const toolResultMessage = createToolResultMessage(finalized);
 		await emitToolResultMessage(toolResultMessage, emit);
@@ -649,6 +661,7 @@ type ImmediateToolCallOutcome = {
 type ExecutedToolCallOutcome = {
 	result: AgentToolResult<any>;
 	isError: boolean;
+	failureKind?: "cancelled" | "failed" | "timeout";
 };
 
 type FinalizedToolCallOutcome = {
@@ -656,6 +669,7 @@ type FinalizedToolCallOutcome = {
 	result: AgentToolResult<any>;
 	isError: boolean;
 	guardBlocked?: boolean;
+	countTowardCircuit?: boolean;
 };
 
 type FinalizedToolCallEntry = FinalizedToolCallOutcome | (() => Promise<FinalizedToolCallOutcome>);
@@ -742,7 +756,7 @@ async function prepareToolCall(
 	} catch (error) {
 		return {
 			kind: "immediate",
-			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+			result: createErrorToolResult(normalizeToolExecutionError(error)),
 			isError: true,
 		};
 	}
@@ -752,15 +766,42 @@ async function executePreparedToolCall(
 	prepared: PreparedToolCall,
 	signal: AbortSignal | undefined,
 	emit: AgentEventSink,
+	timeoutMs: number | undefined,
 ): Promise<ExecutedToolCallOutcome> {
 	const updateEvents: Promise<void>[] = [];
 	let acceptingUpdates = true;
+	const controller = new AbortController();
+	let timeout: ReturnType<typeof setTimeout> | undefined;
+	let stopKind: "cancelled" | "timeout" | undefined;
+	const onParentAbort = (): void => {
+		stopKind = "cancelled";
+		controller.abort();
+	};
+	if (signal?.aborted) onParentAbort();
+	else signal?.addEventListener("abort", onParentAbort, { once: true });
+
+	let rejectStopped = (_error: Error): void => {};
+	const stopped = new Promise<never>((_resolve, reject) => {
+		rejectStopped = reject;
+	});
+	const onChildAbort = (): void => rejectStopped(new Error("Tool execution stopped"));
+	controller.signal.addEventListener("abort", onChildAbort, { once: true });
+	if (controller.signal.aborted) onChildAbort();
+	const resolvedTimeoutMs = Number.isFinite(timeoutMs)
+		? Math.min(MAX_TOOL_EXECUTION_TIMEOUT_MS, Math.max(0, Math.floor(timeoutMs ?? 0)))
+		: 0;
+	if (resolvedTimeoutMs > 0 && !controller.signal.aborted) {
+		timeout = setTimeout(() => {
+			stopKind = "timeout";
+			controller.abort();
+		}, resolvedTimeoutMs);
+	}
 
 	try {
-		const result = await prepared.tool.execute(
+		const execution = prepared.tool.execute(
 			prepared.toolCall.id,
 			prepared.args as never,
-			signal,
+			controller.signal,
 			(partialResult) => {
 				if (!acceptingUpdates) return;
 				updateEvents.push(
@@ -776,18 +817,39 @@ async function executePreparedToolCall(
 				);
 			},
 		);
+		const result = await Promise.race([execution, stopped]);
 		acceptingUpdates = false;
 		await Promise.all(updateEvents);
 		return { result, isError: false };
 	} catch (error) {
 		acceptingUpdates = false;
 		await Promise.all(updateEvents);
+		if (stopKind === "cancelled" || signal?.aborted) {
+			return {
+				result: createErrorToolResult("Operation cancelled by the user."),
+				isError: true,
+				failureKind: "cancelled",
+			};
+		}
+		if (stopKind === "timeout") {
+			return {
+				result: createErrorToolResult(
+					`Tool ${prepared.toolCall.name} timed out after ${resolvedTimeoutMs} ms. Use another tool, reduce the scope, or increase the tool timeout.`,
+				),
+				isError: true,
+				failureKind: "timeout",
+			};
+		}
 		return {
-			result: createErrorToolResult(error instanceof Error ? error.message : String(error)),
+			result: createErrorToolResult(normalizeToolExecutionError(error)),
 			isError: true,
+			failureKind: "failed",
 		};
 	} finally {
 		acceptingUpdates = false;
+		if (timeout) clearTimeout(timeout);
+		signal?.removeEventListener("abort", onParentAbort);
+		controller.signal.removeEventListener("abort", onChildAbort);
 	}
 }
 
@@ -801,6 +863,7 @@ async function finalizeExecutedToolCall(
 ): Promise<FinalizedToolCallOutcome> {
 	let result = executed.result;
 	let isError = executed.isError;
+	let failureKind = executed.failureKind;
 
 	if (config.afterToolCall) {
 		try {
@@ -824,23 +887,33 @@ async function finalizeExecutedToolCall(
 					terminate: afterResult.terminate ?? result.terminate,
 				};
 				isError = afterResult.isError ?? isError;
+				if (isError && failureKind === undefined) failureKind = "failed";
 			}
 		} catch (error) {
-			result = createErrorToolResult(error instanceof Error ? error.message : String(error));
+			result = createErrorToolResult(normalizeToolExecutionError(error));
 			isError = true;
+			failureKind = "failed";
 		}
+	}
+	if (isError) {
+		const text = result.content.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
+		result = {
+			...result,
+			content: [{ type: "text", text: normalizeToolExecutionError(text || "Tool execution failed") }],
+		};
 	}
 
 	return {
 		toolCall: prepared.toolCall,
 		result,
 		isError,
+		countTowardCircuit: isError && failureKind !== "cancelled",
 	};
 }
 
 function createErrorToolResult(message: string): AgentToolResult<any> {
 	return {
-		content: [{ type: "text", text: message }],
+		content: [{ type: "text", text: normalizeToolExecutionError(message) }],
 		details: {},
 	};
 }

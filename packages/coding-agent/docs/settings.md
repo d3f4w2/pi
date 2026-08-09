@@ -155,23 +155,29 @@ See [Context Hygiene](context-hygiene.md) for protection and recovery behavior.
 
 ### Tool Failure Guard
 
-The failure guard prevents the model from executing an unchanged tool call indefinitely after receiving the same error. It resets when arguments or errors change, a call succeeds, or new user input starts another turn.
+The execution guard contains tool exceptions, bounds execution time, blocks unchanged failure loops, and temporarily opens a tool-wide circuit after consecutive failures. User cancellation does not count as a failure. New user input starts with a clean circuit.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `toolFailureGuard.enabled` | boolean | `true` | Enable repeated identical failure protection |
+| `toolFailureGuard.enabled` | boolean | `true` | Enable the complete tool execution protection layer |
 | `toolFailureGuard.repeatLimit` | number | `2` | Real identical failures allowed before blocking another unchanged call (1-10) |
+| `toolFailureGuard.consecutiveLimit` | number | `3` | Consecutive execution failures before temporarily disabling one tool (1-10) |
+| `toolFailureGuard.cooldownMs` | number | `30000` | Delay before one recovery probe is allowed (0-86400000) |
+| `toolFailureGuard.timeoutMs` | number | `180000` | Generic per-call execution limit; `0` disables it (0-86400000) |
 
 ```json
 {
   "toolFailureGuard": {
     "enabled": true,
-    "repeatLimit": 2
+    "repeatLimit": 2,
+    "consecutiveLimit": 3,
+    "cooldownMs": 30000,
+    "timeoutMs": 180000
   }
 }
 ```
 
-See [Tool Failure Guard](tool-failure-guard.md) for the exact reset rules.
+See [Tool Execution Protection](tool-failure-guard.md) for timeout limitations, redaction, circuit recovery, and exact reset rules.
 
 ### Branch Summary
 

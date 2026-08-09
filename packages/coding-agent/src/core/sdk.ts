@@ -369,6 +369,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		thinkingBudgets: settingsManager.getThinkingBudgets(),
 		maxRetryDelayMs: settingsManager.getProviderRetrySettings().maxRetryDelayMs,
 		repeatedToolFailureLimit: toolFailureGuardSettings.enabled ? toolFailureGuardSettings.repeatLimit : 0,
+		toolConsecutiveFailureLimit: toolFailureGuardSettings.enabled ? toolFailureGuardSettings.consecutiveLimit : 0,
+		toolFailureCooldownMs: toolFailureGuardSettings.enabled ? toolFailureGuardSettings.cooldownMs : 0,
+		toolExecutionTimeoutMs: toolFailureGuardSettings.enabled ? toolFailureGuardSettings.timeoutMs : 0,
 	});
 
 	// Restore messages if session has existing data

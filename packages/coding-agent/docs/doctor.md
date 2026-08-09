@@ -12,6 +12,7 @@
 
 - 当前模型是否选中、是否有可用模型、`models.json` 是否加载失败。
 - `read`、`bash`、`edit`、`write`、`grep` 核心工具是否注册。
+- 工具执行保护是否启用，以及当前哪些工具因连续失败被暂时熔断。
 - Windows 是否找到真正的 Git Bash，而不是损坏的旧 WSL `bash.exe` 中继。
 - 当前目录是不是 TypeScript/JavaScript、Python 或 Go 项目。
 - 当前项目需要的语言服务器是否在 PATH。
@@ -36,6 +37,7 @@ Windows 没有 Git Bash    → 安装 Git for Windows，或设置 shellPath
 Python LSP 缺失          → pip install basedpyright
 Go LSP 缺失              → go install golang.org/x/tools/gopls@latest
 mgrep 缺失               → npm install -g @mixedbread/mgrep，然后 mgrep login
+工具被暂时停用           → 等待冷却、开始新任务，或改用其他工具
 ```
 
 ## 隐私与速度

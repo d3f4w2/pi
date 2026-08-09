@@ -5,6 +5,7 @@
 ### Added
 
 - Added an opt-in, loop-scoped repeated tool failure guard that blocks unchanged calls after configurable identical errors while preserving normal tool events and recovery through changed input.
+- Added opt-in tool-wide circuit breaking, half-open recovery probes, generic execution timeouts, bounded redacted errors, and diagnostic guard snapshots.
 
 ### Fixed
 

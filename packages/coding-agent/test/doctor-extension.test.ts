@@ -84,12 +84,20 @@ describe("doctor extension", () => {
 				getAvailable: () => [],
 			},
 			isProjectTrusted: () => false,
+			getToolFailureGuardStatus: () => ({
+				repeatLimit: 2,
+				consecutiveLimit: 3,
+				cooldownMs: 30_000,
+				timeoutMs: 180_000,
+				tools: [],
+			}),
 			ui: { setStatus: vi.fn(), notify },
 		} as unknown as ExtensionCommandContext;
 		try {
 			createDoctorExtension({ probes: fileProbes })(api);
 			await runDoctor?.("", context);
 			expect(notify).toHaveBeenCalledWith(expect.stringContaining(path.join(agentDir, "auth.json")), "error");
+			expect(notify).toHaveBeenCalledWith(expect.stringContaining("工具保护"), "error");
 			expect(notify.mock.calls.flat().join(" ")).not.toContain("api_key");
 		} finally {
 			vi.unstubAllEnvs();

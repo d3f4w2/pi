@@ -13,6 +13,7 @@ import type {
 	AgentToolResult,
 	AgentToolUpdateCallback,
 	ThinkingLevel,
+	ToolFailureGuardSnapshot,
 	ToolExecutionMode,
 } from "@earendil-works/pi-agent-core";
 import type {
@@ -348,6 +349,8 @@ export interface ExtensionContext {
 	compact(options?: CompactOptions): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string;
+	/** Get the latest bounded tool execution-protection state, when provided by the host. */
+	getToolFailureGuardStatus?(): ToolFailureGuardSnapshot | undefined;
 }
 
 /**
@@ -1672,6 +1675,7 @@ export interface ExtensionContextActions {
 	getContextUsage: () => ContextUsage | undefined;
 	compact: (options?: CompactOptions) => void;
 	getSystemPrompt: () => string;
+	getToolFailureGuardStatus?: () => ToolFailureGuardSnapshot | undefined;
 	getSystemPromptOptions?: () => BuildSystemPromptOptions;
 }
 

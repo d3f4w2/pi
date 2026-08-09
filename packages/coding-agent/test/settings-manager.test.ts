@@ -408,7 +408,13 @@ describe("SettingsManager", () => {
 		it("defaults to two repeated failures", () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 
-			expect(manager.getToolFailureGuardSettings()).toEqual({ enabled: true, repeatLimit: 2 });
+			expect(manager.getToolFailureGuardSettings()).toEqual({
+				enabled: true,
+				repeatLimit: 2,
+				consecutiveLimit: 3,
+				cooldownMs: 30_000,
+				timeoutMs: 180_000,
+			});
 		});
 
 		it("merges overrides and normalizes unsafe values", () => {
@@ -423,7 +429,13 @@ describe("SettingsManager", () => {
 
 			const manager = SettingsManager.create(projectDir, agentDir);
 
-			expect(manager.getToolFailureGuardSettings()).toEqual({ enabled: true, repeatLimit: 10 });
+			expect(manager.getToolFailureGuardSettings()).toEqual({
+				enabled: true,
+				repeatLimit: 10,
+				consecutiveLimit: 3,
+				cooldownMs: 30_000,
+				timeoutMs: 180_000,
+			});
 		});
 
 		it("uses safe defaults for invalid JSON values", () => {
@@ -434,7 +446,13 @@ describe("SettingsManager", () => {
 
 			const manager = SettingsManager.create(projectDir, agentDir);
 
-			expect(manager.getToolFailureGuardSettings()).toEqual({ enabled: true, repeatLimit: 2 });
+			expect(manager.getToolFailureGuardSettings()).toEqual({
+				enabled: true,
+				repeatLimit: 2,
+				consecutiveLimit: 3,
+				cooldownMs: 30_000,
+				timeoutMs: 180_000,
+			});
 		});
 	});
 

@@ -144,6 +144,60 @@ describe("doctor checks and report", () => {
 		expect(report.findings.find((finding) => finding.id === "web")?.severity).toBe("ok");
 	});
 
+	it("reports open tool circuits with a direct recovery action", () => {
+		const report = runDoctorChecks(
+			snapshot({
+				toolFailureGuard: {
+					repeatLimit: 2,
+					consecutiveLimit: 3,
+					cooldownMs: 30_000,
+					timeoutMs: 180_000,
+					tools: [
+						{
+							name: "web_fetch",
+							status: "open",
+							consecutiveFailures: 3,
+							retryAt: Date.now() + 20_000,
+							lastError: "request failed",
+						},
+					],
+				},
+			}),
+			probes(["C:\\Program Files\\Git\\bin\\bash.exe"]),
+		);
+
+		expect(report.findings).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					id: "tool-protection",
+					severity: "warning",
+					detail: "已暂时停用：web_fetch。",
+					fix: expect.stringContaining("其他工具"),
+				}),
+			]),
+		);
+	});
+
+	it("reports a healthy enabled protection layer", () => {
+		const report = runDoctorChecks(
+			snapshot({
+				toolFailureGuard: {
+					repeatLimit: 2,
+					consecutiveLimit: 3,
+					cooldownMs: 30_000,
+					timeoutMs: 180_000,
+					tools: [],
+				},
+			}),
+			probes(["C:\\Program Files\\Git\\bin\\bash.exe"]),
+		);
+
+		expect(report.findings.find((finding) => finding.id === "tool-protection")).toMatchObject({
+			severity: "ok",
+			detail: expect.stringContaining("当前没有停用工具"),
+		});
+	});
+
 	it("never includes credential or environment values and bounds output", () => {
 		const secret = "sk-super-secret-value";
 		const state = snapshot({
