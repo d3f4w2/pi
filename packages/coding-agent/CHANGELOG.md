@@ -18,6 +18,7 @@
 - Added a built-in read-only `ast_grep` tool for bounded structural code search across JavaScript, TypeScript, TSX, HTML, and CSS, with automatic language detection, adaptive grouped output, project-boundary protection, and compact results.
 - Added a built-in `verify` tool for bounded TypeScript/JavaScript, Python, and Go type checks, related tests, and lint, with direct process execution, safe auto-scoping, non-executing standalone Python syntax checks, explicit modification-check routing, source-execution guards, compact failures, and local logs.
 - Added a built-in `todo` task ledger with stable IDs, revision-safe updates, completion evidence, deterministic progression, branch-local session recovery, bounded context reminders, a compact TUI widget, and `/tasks` inspection.
+- Added an offline `/doctor` command that classifies model, core-tool, shell, project-language, LSP, optional search, web, and config health with concise Chinese remediation while never reading credential contents or adding a model tool schema.
 
 ### Changed
 
