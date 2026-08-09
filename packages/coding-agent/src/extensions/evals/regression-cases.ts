@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { access, mkdir, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { assessRegressionDraftQuality } from "./regression-quality.ts";
 import type {
 	ApprovedRegressionCase,
 	EvalCategory,
@@ -24,6 +25,7 @@ const VALID_CATEGORIES = new Set<EvalCategory>([
 	"debugging",
 	"fallback",
 ]);
+const VALID_TEST_FRAMEWORKS = new Set(["node:test", "vitest", "pytest", "go test"]);
 const SECRET_PATTERNS = [
 	/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,
 	/\b(?:sk|ghp|github_pat)_[A-Za-z0-9_-]{16,}\b/i,
@@ -139,6 +141,33 @@ function suppressionName(fingerprint: string): string {
 	return `${createHash("sha256").update(fingerprint).digest("hex")}.json`;
 }
 
+function validQuality(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		value.version === 1 &&
+		typeof value.framework === "string" &&
+		VALID_TEST_FRAMEWORKS.has(value.framework) &&
+		typeof value.assertionCount === "number" &&
+		Number.isInteger(value.assertionCount) &&
+		value.assertionCount > 0 &&
+		Array.isArray(value.productReferences) &&
+		value.productReferences.length > 0 &&
+		value.productReferences.every((reference) => typeof reference === "string" && reference.length > 0)
+	);
+}
+
+function validApprovedFile(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		typeof value.path === "string" &&
+		typeof value.bytes === "number" &&
+		Number.isInteger(value.bytes) &&
+		value.bytes >= 0 &&
+		typeof value.digest === "string" &&
+		/^[a-f0-9]{64}$/.test(value.digest)
+	);
+}
+
 function parseApproved(value: unknown): ApprovedRegressionCase | undefined {
 	if (
 		!isRecord(value) ||
@@ -153,7 +182,10 @@ function parseApproved(value: unknown): ApprovedRegressionCase | undefined {
 		!value.reproduction.every((step) => typeof step === "string") ||
 		typeof value.expectedFailure !== "string" ||
 		typeof value.expectedSuccess !== "string" ||
-		!Array.isArray(value.files)
+		(value.quality !== undefined && !validQuality(value.quality)) ||
+		!Array.isArray(value.files) ||
+		value.files.length === 0 ||
+		!value.files.every(validApprovedFile)
 	) {
 		return undefined;
 	}
@@ -237,6 +269,8 @@ export class RegressionCaseWriter implements RegressionCaseWriterLike {
 		now = new Date(),
 	): Promise<ApprovedRegressionCase> {
 		validateRegressionDraft(draft);
+		const quality = assessRegressionDraftQuality(draft);
+		if (!quality.passed || !quality.evidence) throw new Error("回归测试没有通过真实代码质量门。");
 		const root = await realpath(workspace);
 		const targets = draft.files.map((file) => ({ file, target: path.resolve(root, file.path) }));
 		for (const { file, target } of targets) {
@@ -269,6 +303,7 @@ export class RegressionCaseWriter implements RegressionCaseWriterLike {
 				reproduction: [...draft.reproduction],
 				expectedFailure: draft.expectedFailure,
 				expectedSuccess: draft.expectedSuccess,
+				quality: quality.evidence,
 				files: draft.files.map((file) => ({
 					path: file.path.replaceAll("\\", "/"),
 					bytes: Buffer.byteLength(file.content, "utf8"),

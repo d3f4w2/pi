@@ -185,7 +185,7 @@ const EN_MESSAGES = {
 	"evalCapture.unusedGrant": "No valid test candidate was produced. The generation grant expired.",
 	"evalCapture.preferenceError": "Could not read regression-test preferences: {error}",
 	"evalCapture.agentInstruction":
-		"The user explicitly approved generation of one minimal regression-test candidate.\ngrantId: {grantId}\nFailure: {summary}\nUse only information already present in this conversation. Do not read files, browse, or call another tool.\nCall eval_case directly with at most two new test files and no more than 4,000 total characters.\nThe full candidate will be shown to the user and written only after a second approval.",
+		"The user explicitly approved generation of one minimal regression-test candidate.\ngrantId: {grantId}\nFailure: {summary}\nUse only information already present in this conversation. Do not read files, browse, or call another tool.\nThe test must call a real project module, package, or CLI and contain an observable assertion. Do not recreate the target behavior inside the test.\nCall eval_case directly with at most two new test files and no more than 4,000 total characters.\nThe full candidate will be shown to the user and written only after a second approval.",
 	"evalMenu.title": "Evaluation center",
 	"evalMenu.recent": "Test latest case",
 	"evalMenu.history": "Choose a previous case",
@@ -206,6 +206,17 @@ const EN_MESSAGES = {
 	"evalCase.duration": "Duration: {duration} ms",
 	"evalCase.timeout": "The test was stopped after reaching its time limit.",
 	"evalCase.noOutput": "The test produced no output.",
+	"evalQuality.rejected": "Candidate rejected before review: it does not prove that real product code is exercised.",
+	"evalQuality.missingFramework": "No supported test framework was found.",
+	"evalQuality.missingAssertion": "No observable assertion or failure check was found.",
+	"evalQuality.missingProductReference":
+		"No real project module, package, CLI, or Go product call was found; local fake implementations do not count.",
+	"evalQuality.passed": "Quality gate: passed",
+	"evalQuality.framework": "Framework: {framework}",
+	"evalQuality.assertions": "Assertions: {count}",
+	"evalQuality.references": "Product references: {references}",
+	"evalQuality.verifiedMarker": "[verified]",
+	"evalQuality.legacyMarker": "[unverified]",
 } as const;
 
 export type MessageKey = keyof typeof EN_MESSAGES;
@@ -390,7 +401,7 @@ const ZH_CN_MESSAGES: Record<MessageKey, string> = {
 	"evalCapture.unusedGrant": "本次没有生成有效测试候选，制题授权已自动失效。",
 	"evalCapture.preferenceError": "读取回归测试偏好失败：{error}",
 	"evalCapture.agentInstruction":
-		"用户已明确批准制作一个最小回归测试候选。\ngrantId：{grantId}\n错误摘要：{summary}\n只能基于当前对话已经存在的信息，不得读取额外文件、联网或调用其他工具。\n直接调用 eval_case，提交最多两个新的测试文件，总内容不超过 4000 个字符。\n提交后系统会向用户展示完整内容；只有用户再次批准才会写入项目。",
+		"用户已明确批准制作一个最小回归测试候选。\ngrantId：{grantId}\n错误摘要：{summary}\n只能基于当前对话已经存在的信息，不得读取额外文件、联网或调用其他工具。\n测试必须调用真实项目模块、包或 CLI，并包含可观察断言；不得在测试内重新实现被测功能。\n直接调用 eval_case，提交最多两个新的测试文件，总内容不超过 4000 个字符。\n提交后系统会向用户展示完整内容；只有用户再次批准才会写入项目。",
 	"evalMenu.title": "评测中心",
 	"evalMenu.recent": "测试最近案例",
 	"evalMenu.history": "选择历史案例",
@@ -411,6 +422,16 @@ const ZH_CN_MESSAGES: Record<MessageKey, string> = {
 	"evalCase.duration": "耗时：{duration} 毫秒",
 	"evalCase.timeout": "测试达到时间上限，已停止。",
 	"evalCase.noOutput": "测试没有输出。",
+	"evalQuality.rejected": "候选已在审查前拒绝：没有证据表明它测试了真实产品代码。",
+	"evalQuality.missingFramework": "没有识别到支持的测试框架。",
+	"evalQuality.missingAssertion": "没有识别到可观察的断言或失败检查。",
+	"evalQuality.missingProductReference": "没有引用真实项目模块、包、CLI 或 Go 产品调用；测试内的假实现不算。",
+	"evalQuality.passed": "质量门：通过",
+	"evalQuality.framework": "测试框架：{framework}",
+	"evalQuality.assertions": "断言数量：{count}",
+	"evalQuality.references": "真实代码触达：{references}",
+	"evalQuality.verifiedMarker": "[已验证]",
+	"evalQuality.legacyMarker": "[未验证]",
 };
 
 function systemLocale(): string {

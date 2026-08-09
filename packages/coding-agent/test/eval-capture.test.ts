@@ -11,7 +11,9 @@ import {
 	RegressionCaseWriter,
 	validateRegressionDraft,
 } from "../src/extensions/evals/regression-cases.ts";
+import { assessRegressionDraftQuality } from "../src/extensions/evals/regression-quality.ts";
 import type {
+	ApprovedRegressionCase,
 	RecoveredFailureSignal,
 	RegressionCaseStoreLike,
 	RegressionCaseWriterLike,
@@ -52,7 +54,8 @@ function draft(overrides: Partial<RegressionTestDraft> = {}): RegressionTestDraf
 		files: [
 			{
 				path: "test/regressions/read-fallback.test.ts",
-				content: 'import { test } from "vitest";\n\ntest("fallback", () => {});\n',
+				content:
+					'import { expect, test } from "vitest";\nimport { recoverReadFailure } from "../../src/read-recovery.ts";\n\ntest("fallback", () => {\n  expect(recoverReadFailure()).toBe("recovered");\n});\n',
 			},
 		],
 		...overrides,
@@ -64,6 +67,8 @@ describe("recovered failure tracker", () => {
 		const tracker = new RecoveredFailureTracker();
 		tracker.start(1_000);
 		tracker.recordTool(tool("read", true, { secret: "never retain" }, { path: "private/file.ts" }));
+		tracker.recordTool(tool("edit", false, {}, { path: "src/recovery.ts" }));
+		tracker.recordTool(tool("verify", false, { passed: true }));
 		tracker.recordTurn("stop");
 		const result = tracker.finish(2_000);
 		expect(result).toMatchObject({ kind: "tool_error", toolName: "read" });
@@ -78,6 +83,8 @@ describe("recovered failure tracker", () => {
 		tracker.recordTurn("error");
 		expect(tracker.finish(2_000)).toBeUndefined();
 		tracker.start(3_000);
+		tracker.recordTool(tool("edit", false, {}, { path: "src/recovery.ts" }));
+		tracker.recordTool(tool("verify", false, { passed: true }));
 		tracker.recordTurn("stop");
 		expect(tracker.finish(4_000)).toMatchObject({ kind: "verification_failure", toolName: "verify" });
 	});
@@ -99,6 +106,24 @@ describe("recovered failure tracker", () => {
 		tracker.recordTool(tool("read", true));
 		expect(tracker.finish(2_000)).toBeUndefined();
 	});
+
+	it("ignores an expected tool error without a code fix and passing verification", () => {
+		const tracker = new RecoveredFailureTracker();
+		tracker.start(1_000);
+		tracker.recordTool(tool("read", true));
+		tracker.recordTurn("stop");
+		expect(tracker.finish(2_000)).toBeUndefined();
+	});
+
+	it("requires verification to pass after the recovery edit", () => {
+		const tracker = new RecoveredFailureTracker();
+		tracker.start(1_000);
+		tracker.recordTool(tool("read", true));
+		tracker.recordTool(tool("verify", false, { passed: true }));
+		tracker.recordTool(tool("edit", false, {}, { path: "src/too-late.ts" }));
+		tracker.recordTurn("stop");
+		expect(tracker.finish(2_000)).toBeUndefined();
+	});
 });
 
 describe("regression draft validation", () => {
@@ -109,6 +134,54 @@ describe("regression draft validation", () => {
 		expect(preview).toContain("read-fallback.test.ts");
 		expect(preview).toContain('test("fallback"');
 		expect(preview).toContain("读取工具失败后任务恢复");
+	});
+
+	it("rejects a self-proving test and accepts a real product reference", () => {
+		const selfProving = draft({
+			files: [
+				{
+					path: "test/fake.test.ts",
+					content:
+						'import test from "node:test";\nimport assert from "node:assert/strict";\nconst read = () => { throw new Error("ENOENT"); };\ntest("fake", () => assert.throws(read));\n',
+				},
+			],
+		});
+		expect(assessRegressionDraftQuality(selfProving)).toMatchObject({
+			passed: false,
+			issues: ["missing_product_reference"],
+		});
+		expect(assessRegressionDraftQuality(draft())).toMatchObject({
+			passed: true,
+			evidence: { framework: "vitest", productReferences: ["../../src/read-recovery.ts"] },
+		});
+	});
+
+	it("recognizes Python and Go product references", () => {
+		const python = draft({
+			files: [
+				{
+					path: "tests/test_recovery.py",
+					content: "from app.recovery import recover\n\ndef test_recovery():\n    assert recover() == 'ok'\n",
+				},
+			],
+		});
+		const go = draft({
+			files: [
+				{
+					path: "recovery/recovery_test.go",
+					content:
+						'package recovery\n\nimport "testing"\n\nfunc TestRecovery(t *testing.T) {\n\tif Recover() != "ok" {\n\t\tt.Fatal("not recovered")\n\t}\n}\n',
+				},
+			],
+		});
+		expect(assessRegressionDraftQuality(python)).toMatchObject({
+			passed: true,
+			evidence: { framework: "pytest", productReferences: ["app.recovery"] },
+		});
+		expect(assessRegressionDraftQuality(go)).toMatchObject({
+			passed: true,
+			evidence: { framework: "go test", productReferences: ["Recover"] },
+		});
 	});
 
 	it.each([
@@ -140,6 +213,17 @@ describe("approved regression writer", () => {
 			"fallback",
 		);
 		expect(await store.listApproved()).toEqual([result]);
+		expect(result.quality).toMatchObject({ framework: "vitest", assertionCount: 1 });
+		await writeFile(
+			path.join(agentDirectory, "cases", "tampered.json"),
+			'{"version":1,"quality":{"version":1,"framework":"fake"}}\n',
+			"utf8",
+		);
+		const legacy: ApprovedRegressionCase = { ...result, id: "legacy-case", quality: undefined };
+		await writeFile(path.join(agentDirectory, "cases", "legacy-case.json"), `${JSON.stringify(legacy)}\n`, "utf8");
+		const stored = await store.listApproved();
+		expect(stored).toHaveLength(2);
+		expect(stored.find((testCase) => testCase.id === "legacy-case")?.quality).toBeUndefined();
 	});
 
 	it("rejects overwrite and rolls back files when metadata persistence fails", async () => {
@@ -160,7 +244,7 @@ describe("approved regression writer", () => {
 		await expect(
 			writer.write(
 				workspace,
-				draft({ files: [{ path: "test/regressions/existing.test.ts", content: "new" }] }),
+				draft({ files: [{ path: "test/regressions/existing.test.ts", content: draft().files[0]?.content ?? "" }] }),
 				signal(),
 			),
 		).rejects.toThrow("已经存在");
@@ -168,7 +252,7 @@ describe("approved regression writer", () => {
 		await expect(
 			writer.write(
 				workspace,
-				draft({ files: [{ path: "test/regressions/rollback.test.ts", content: "test" }] }),
+				draft({ files: [{ path: "test/regressions/rollback.test.ts", content: draft().files[0]?.content ?? "" }] }),
 				signal(),
 			),
 		).rejects.toThrow("metadata failed");
@@ -187,6 +271,7 @@ describe("approved regression writer", () => {
 
 interface CaptureHarness {
 	activeTools: string[];
+	confirmationMessages: string[];
 	confirmations: boolean[];
 	context: ExtensionContext;
 	handlers: Map<string, (event: unknown, ctx: ExtensionContext) => unknown>;
@@ -201,6 +286,7 @@ interface CaptureHarness {
 function createCaptureHarness(language: "zh-CN" | "en" = "zh-CN"): CaptureHarness {
 	setLanguageSetting(language);
 	const activeTools = ["read", "eval_case"];
+	const confirmationMessages: string[] = [];
 	const confirmations: boolean[] = [];
 	const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
 	const notifications: string[] = [];
@@ -235,7 +321,10 @@ function createCaptureHarness(language: "zh-CN" | "en" = "zh-CN"): CaptureHarnes
 		cwd: "C:/repo",
 		ui: {
 			select: async () => selections.shift(),
-			confirm: async () => confirmations.shift() ?? false,
+			confirm: async (_title: string, message: string) => {
+				confirmationMessages.push(message);
+				return confirmations.shift() ?? false;
+			},
 			notify: (message: string) => notifications.push(message),
 		},
 	} as unknown as ExtensionContext;
@@ -271,6 +360,7 @@ function createCaptureHarness(language: "zh-CN" | "en" = "zh-CN"): CaptureHarnes
 	if (!toolDefinition) throw new Error("eval_case tool was not registered");
 	return {
 		activeTools,
+		confirmationMessages,
 		confirmations,
 		context,
 		handlers,
@@ -287,6 +377,14 @@ async function emitRecoveredReadFailure(harness: CaptureHarness): Promise<void> 
 	await harness.handlers.get("agent_start")?.({ type: "agent_start" }, harness.context);
 	await harness.handlers.get("tool_result")?.(
 		{ type: "tool_result", toolName: "read", input: { path: "private.ts" }, details: {}, isError: true },
+		harness.context,
+	);
+	await harness.handlers.get("tool_result")?.(
+		{ type: "tool_result", toolName: "edit", input: { path: "src/recovery.ts" }, details: {}, isError: false },
+		harness.context,
+	);
+	await harness.handlers.get("tool_result")?.(
+		{ type: "tool_result", toolName: "verify", input: {}, details: { passed: true }, isError: false },
 		harness.context,
 	);
 	await harness.handlers.get("turn_end")?.(
@@ -332,6 +430,7 @@ describe("agent regression capture approvals", () => {
 			expect.objectContaining({ type: "text", text: expect.stringContaining("approved-case") }),
 		);
 		expect(harness.writer.write).toHaveBeenCalledOnce();
+		expect(harness.confirmationMessages.join("\n")).toContain("真实代码触达");
 		expect(harness.activeTools).toEqual(["read"]);
 	});
 
@@ -345,6 +444,29 @@ describe("agent regression capture approvals", () => {
 		await harness.tool.execute("case-1", { grantId, ...draft() }, undefined, undefined, harness.context);
 		expect(harness.writer.write).not.toHaveBeenCalled();
 		expect(harness.activeTools).toEqual(["read"]);
+	});
+
+	it("rejects a self-proving candidate before the second approval", async () => {
+		const harness = createCaptureHarness();
+		harness.selections.push("允许制作");
+		await emitRecoveredReadFailure(harness);
+		const grantId = harness.sentMessages[0]?.match(/grantId：([^\s]+)/)?.[1];
+		if (!grantId) throw new Error("grant id missing");
+		const value = draft({
+			files: [
+				{
+					path: "test/fake.test.ts",
+					content:
+						'import test from "node:test";\nimport assert from "node:assert/strict";\nconst read = () => { throw new Error("ENOENT"); };\ntest("fake", () => assert.throws(read));\n',
+				},
+			],
+		});
+		const result = await harness.tool.execute("case-1", { grantId, ...value }, undefined, undefined, harness.context);
+		expect(result.content).toContainEqual(
+			expect.objectContaining({ type: "text", text: expect.stringContaining("没有证据") }),
+		);
+		expect(harness.writer.write).not.toHaveBeenCalled();
+		expect(harness.confirmationMessages).toHaveLength(0);
 	});
 
 	it("persists suppression without generating a model turn", async () => {

@@ -12,6 +12,7 @@ import {
 	RegressionCaseWriter,
 	validateRegressionDraft,
 } from "./regression-cases.ts";
+import { assessRegressionDraftQuality } from "./regression-quality.ts";
 import { runApprovedRegressionCase, selectApprovedRegressionCase } from "./regression-runner.ts";
 import { formatEvalComparison, formatEvalFailures, formatEvalReport } from "./report.ts";
 import { compareEvalReports } from "./scorer.ts";
@@ -21,6 +22,7 @@ import type {
 	RecoveredFailureSignal,
 	RegressionCaseStoreLike,
 	RegressionCaseWriterLike,
+	RegressionDraftQuality,
 } from "./types.ts";
 
 const HELP = "用法：/evals 或 /evals test [case-id] | run | latest | baseline | compare | failures";
@@ -79,6 +81,22 @@ function formatRegressionRunResult(result: Awaited<ReturnType<typeof runApproved
 		t("evalCase.duration", { duration: result.durationMs }),
 		...(result.killed ? [t("evalCase.timeout")] : []),
 		result.output || t("evalCase.noOutput"),
+	].join("\n");
+}
+
+function qualityIssueText(issue: RegressionDraftQuality["issues"][number]): string {
+	if (issue === "missing_framework") return t("evalQuality.missingFramework");
+	if (issue === "missing_assertion") return t("evalQuality.missingAssertion");
+	return t("evalQuality.missingProductReference");
+}
+
+function formatQualityEvidence(quality: RegressionDraftQuality): string {
+	if (!quality.evidence) return quality.issues.map((issue) => `- ${qualityIssueText(issue)}`).join("\n");
+	return [
+		t("evalQuality.passed"),
+		t("evalQuality.framework", { framework: quality.evidence.framework }),
+		t("evalQuality.assertions", { count: quality.evidence.assertionCount }),
+		t("evalQuality.references", { references: quality.evidence.productReferences.join(", ") }),
 	].join("\n");
 }
 
@@ -142,7 +160,10 @@ export function createEvalsExtension(
 					ctx.ui.notify(t("evalCase.none"), "warning");
 					return undefined;
 				}
-				const choices = cases.map((testCase) => `${testCase.id.slice(0, 8)} · ${testCase.title.slice(0, 32)}`);
+				const choices = cases.map(
+					(testCase) =>
+						`${testCase.quality ? t("evalQuality.verifiedMarker") : t("evalQuality.legacyMarker")} ${testCase.id.slice(0, 8)} · ${testCase.title.slice(0, 28)}`,
+				);
 				const selected = await ctx.ui.select(t("evalMenu.historyTitle"), choices);
 				const index = selected === undefined ? -1 : choices.indexOf(selected);
 				return index < 0 ? undefined : `test ${cases[index]?.id}`;
@@ -191,6 +212,18 @@ export function createEvalsExtension(
 						expectedSuccess: params.expectedSuccess,
 						files: params.files.map((file) => ({ ...file })),
 					});
+					const quality = assessRegressionDraftQuality(draft);
+					if (!quality.passed) {
+						return {
+							content: [
+								{
+									type: "text",
+									text: `${t("evalQuality.rejected")}\n${formatQualityEvidence(quality)}`,
+								},
+							],
+							details: { status: "denied" },
+						};
+					}
 					if (!ctx.hasUI) {
 						return {
 							content: [{ type: "text", text: t("evalCapture.noSecondApproval") }],
@@ -199,7 +232,7 @@ export function createEvalsExtension(
 					}
 					const approved = await ctx.ui.confirm(
 						t("evalCapture.reviewTitle"),
-						formatRegressionDraftPreview(
+						`${formatRegressionDraftPreview(
 							draft,
 							activeGrant.source,
 							{
@@ -212,7 +245,7 @@ export function createEvalsExtension(
 								file: t("evalCapture.previewFile"),
 							},
 							localizedFailureSummary(activeGrant.source),
-						),
+						)}\n\n${formatQualityEvidence(quality)}`,
 					);
 					if (!approved) {
 						return {

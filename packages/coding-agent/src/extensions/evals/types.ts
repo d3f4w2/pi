@@ -125,6 +125,22 @@ export interface RegressionTestDraft {
 	files: RegressionTestFileDraft[];
 }
 
+export type RegressionTestFramework = "node:test" | "vitest" | "pytest" | "go test";
+export type RegressionQualityIssue = "missing_framework" | "missing_assertion" | "missing_product_reference";
+
+export interface RegressionCaseQualityEvidence {
+	version: 1;
+	framework: RegressionTestFramework;
+	assertionCount: number;
+	productReferences: string[];
+}
+
+export interface RegressionDraftQuality {
+	passed: boolean;
+	issues: RegressionQualityIssue[];
+	evidence?: RegressionCaseQualityEvidence;
+}
+
 export interface ApprovedRegressionCase {
 	version: 1;
 	id: string;
@@ -135,6 +151,7 @@ export interface ApprovedRegressionCase {
 	reproduction: string[];
 	expectedFailure: string;
 	expectedSuccess: string;
+	quality?: RegressionCaseQualityEvidence;
 	files: Array<{
 		path: string;
 		bytes: number;

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import type { StopReason } from "@earendil-works/pi-ai";
-import { type ObservedToolResult, verificationOutcome } from "../execution-controller/policy.ts";
+import { mutationPaths, type ObservedToolResult, verificationOutcome } from "../execution-controller/policy.ts";
 import type { RecoveredFailureKind, RecoveredFailureSignal } from "./types.ts";
 
 const UNRESOLVED_TTL_MS = 10 * 60 * 1000;
@@ -9,6 +9,8 @@ interface FailureObservation {
 	kind: RecoveredFailureKind;
 	toolName?: string;
 	detectedAt: number;
+	mutationObserved: boolean;
+	verificationPassed: boolean;
 }
 
 function summary(observation: FailureObservation): string {
@@ -33,10 +35,29 @@ export class RecoveredFailureTracker {
 		if (!this.active || event.toolName === "eval_case") return;
 		const verification = verificationOutcome(event);
 		if (verification === "failed") {
-			this.currentFailure ??= { kind: "verification_failure", toolName: event.toolName, detectedAt: now };
+			this.currentFailure ??= {
+				kind: "verification_failure",
+				toolName: event.toolName,
+				detectedAt: now,
+				mutationObserved: false,
+				verificationPassed: false,
+			};
 			return;
 		}
-		if (event.isError) this.currentFailure ??= { kind: "tool_error", toolName: event.toolName, detectedAt: now };
+		if (event.isError) {
+			this.currentFailure ??= {
+				kind: "tool_error",
+				toolName: event.toolName,
+				detectedAt: now,
+				mutationObserved: false,
+				verificationPassed: false,
+			};
+			return;
+		}
+		const recovering = this.currentFailure ?? this.unresolvedFailure;
+		if (!recovering) return;
+		if (mutationPaths(event).length > 0) recovering.mutationObserved = true;
+		if (verification === "passed" && recovering.mutationObserved) recovering.verificationPassed = true;
 	}
 
 	recordTurn(stopReason: StopReason): void {
@@ -54,13 +75,22 @@ export class RecoveredFailureTracker {
 			return undefined;
 		}
 		if (this.lastStopReason !== "stop" && this.lastStopReason !== "length") {
-			this.unresolvedFailure = this.currentFailure ?? { kind: "agent_error", detectedAt: now };
+			this.unresolvedFailure = this.currentFailure ?? {
+				kind: "agent_error",
+				detectedAt: now,
+				mutationObserved: false,
+				verificationPassed: false,
+			};
 			this.currentFailure = undefined;
 			return undefined;
 		}
 		const recovered = this.currentFailure ?? this.unresolvedFailure;
 		this.currentFailure = undefined;
 		if (!recovered) return undefined;
+		if (!recovered.mutationObserved || !recovered.verificationPassed) {
+			this.unresolvedFailure = recovered.mutationObserved ? recovered : undefined;
+			return undefined;
+		}
 		this.unresolvedFailure = undefined;
 		const source = `${recovered.kind}:${recovered.toolName ?? "agent"}`;
 		return {
