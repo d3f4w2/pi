@@ -1,14 +1,21 @@
-import { appendFile, mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { appendFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionAPI, ExtensionCommandContext } from "../src/core/extensions/types.ts";
 import { INFRASTRUCTURE_SMOKE_CASES, runInfrastructureSmoke } from "../src/extensions/evals/cases.ts";
 import { createEvalsExtension } from "../src/extensions/evals/index.ts";
 import { compareEvalReports, scoreEvalCase } from "../src/extensions/evals/scorer.ts";
 import { EvalReportStore } from "../src/extensions/evals/store.ts";
-import type { EvalCase, EvalReport } from "../src/extensions/evals/types.ts";
+import type {
+	ApprovedRegressionCase,
+	EvalCase,
+	EvalReport,
+	RegressionCaseStoreLike,
+} from "../src/extensions/evals/types.ts";
 import type { RunRecord } from "../src/extensions/run-metrics/types.ts";
+import { setLanguageSetting } from "../src/modes/interactive/i18n/index.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -172,5 +179,85 @@ describe("evaluation command", () => {
 		expect(reports).toHaveLength(1);
 		expect(notifications.join("\n")).toContain("10/10");
 		expect(notifications.join("\n")).toContain("不代表代理能力提升");
+	});
+
+	it("opens one menu and runs the latest approved case", async () => {
+		setLanguageSetting("zh-CN");
+		const root = await mkdtemp(path.join(tmpdir(), "pi-evals-menu-"));
+		temporaryDirectories.push(root);
+		const relativePath = "test/latest.test.ts";
+		const content = 'import test from "node:test";\ntest("latest", () => {});\n';
+		await mkdir(path.join(root, "test"), { recursive: true });
+		await writeFile(path.join(root, "package.json"), '{"type":"module"}\n', "utf8");
+		await writeFile(path.join(root, relativePath), content, "utf8");
+		const approved: ApprovedRegressionCase = {
+			version: 1,
+			id: "latest-case-id",
+			title: "latest case",
+			category: "testing",
+			approvedAt: "2026-08-09T00:00:00.000Z",
+			source: {
+				fingerprint: "failure",
+				kind: "tool_error",
+				summary: "recovered",
+				detectedAt: "2026-08-09T00:00:00.000Z",
+				recoveredAt: "2026-08-09T00:00:01.000Z",
+			},
+			reproduction: ["fail once"],
+			expectedFailure: "fails",
+			expectedSuccess: "passes",
+			files: [
+				{
+					path: relativePath,
+					bytes: Buffer.byteLength(content, "utf8"),
+					digest: createHash("sha256").update(content).digest("hex"),
+				},
+			],
+		};
+		const regressionStore: RegressionCaseStoreLike = {
+			isSuppressed: async () => false,
+			suppress: async () => {},
+			saveApproved: async () => {},
+			listApproved: async () => [approved],
+		};
+		let command: ((args: string, ctx: ExtensionCommandContext) => Promise<void>) | undefined;
+		const execute = vi.fn(async () => ({ stdout: "ok", stderr: "", code: 0, killed: false }));
+		createEvalsExtension(
+			{
+				append: async () => {},
+				read: async () => [],
+				saveBaseline: async () => {},
+				readBaseline: async () => undefined,
+			},
+			() => new Date("2026-08-09T00:00:00.000Z"),
+			regressionStore,
+		)({
+			registerCommand: (
+				_name: string,
+				options: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> },
+			) => {
+				command = options.handler;
+			},
+			registerTool: () => {},
+			on: () => {},
+			getActiveTools: () => [],
+			setActiveTools: () => {},
+			sendUserMessage: () => {},
+			exec: execute,
+		} as unknown as ExtensionAPI);
+		if (!command) throw new Error("evals command was not registered");
+		const notifications: string[] = [];
+		await command("", {
+			hasUI: true,
+			cwd: root,
+			signal: undefined,
+			ui: {
+				select: async () => "测试最近案例",
+				notify: (message: string) => notifications.push(message),
+				setStatus: () => {},
+			},
+		} as unknown as ExtensionCommandContext);
+		expect(execute).toHaveBeenCalledOnce();
+		expect(notifications.join("\n")).toContain("回归案例通过：latest-case-id");
 	});
 });

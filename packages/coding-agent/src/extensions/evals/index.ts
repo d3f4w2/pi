@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { Type } from "typebox";
 import { getAgentDir } from "../../config.ts";
-import type { ExtensionAPI } from "../../core/extensions/types.ts";
+import type { ExtensionAPI, ExtensionCommandContext } from "../../core/extensions/types.ts";
 import { t } from "../../modes/interactive/i18n/index.ts";
 import { runInfrastructureSmoke } from "./cases.ts";
 import { RecoveredFailureTracker } from "./failure-tracker.ts";
@@ -12,6 +12,7 @@ import {
 	RegressionCaseWriter,
 	validateRegressionDraft,
 } from "./regression-cases.ts";
+import { runApprovedRegressionCase, selectApprovedRegressionCase } from "./regression-runner.ts";
 import { formatEvalComparison, formatEvalFailures, formatEvalReport } from "./report.ts";
 import { compareEvalReports } from "./scorer.ts";
 import { EvalReportStore } from "./store.ts";
@@ -22,7 +23,7 @@ import type {
 	RegressionCaseWriterLike,
 } from "./types.ts";
 
-const HELP = "用法：/evals run | latest | baseline | compare | failures";
+const HELP = "用法：/evals 或 /evals test [case-id] | run | latest | baseline | compare | failures";
 const GRANT_TTL_MS = 5 * 60 * 1000;
 const INTERNAL_TOOL = "eval_case";
 
@@ -71,6 +72,16 @@ function localizedFailureSummary(signal: RecoveredFailureSignal): string {
 	return t("evalCapture.summaryTool", { tool: signal.toolName ?? "unknown" });
 }
 
+function formatRegressionRunResult(result: Awaited<ReturnType<typeof runApprovedRegressionCase>>): string {
+	return [
+		result.passed ? t("evalCase.passed", { id: result.caseId }) : t("evalCase.failed", { id: result.caseId }),
+		t("evalCase.runner", { runner: result.runner }),
+		t("evalCase.duration", { duration: result.durationMs }),
+		...(result.killed ? [t("evalCase.timeout")] : []),
+		result.output || t("evalCase.noOutput"),
+	].join("\n");
+}
+
 export function createEvalsExtension(
 	store: EvalReportStoreLike,
 	now: () => Date = () => new Date(),
@@ -83,6 +94,69 @@ export function createEvalsExtension(
 		let grant: GenerationGrant | undefined;
 		let generationRun = false;
 		let unusedGrant = false;
+
+		const runRegressionCase = async (selector: string | undefined, ctx: ExtensionCommandContext): Promise<void> => {
+			const cases = await regressionStore.listApproved();
+			if (cases.length === 0) {
+				ctx.ui.notify(t("evalCase.none"), "warning");
+				return;
+			}
+			const testCase = selectApprovedRegressionCase(cases, selector);
+			if (!testCase) {
+				ctx.ui.notify(t("evalCase.notFound", { id: selector ?? "" }), "warning");
+				return;
+			}
+			ctx.ui.setStatus("eval-case", t("evalCase.running", { id: testCase.id.slice(0, 8) }));
+			try {
+				const result = await runApprovedRegressionCase(
+					ctx.cwd,
+					testCase,
+					(command, commandArgs, options) => pi.exec(command, commandArgs, options),
+					ctx.signal,
+				);
+				ctx.ui.notify(formatRegressionRunResult(result), result.passed ? "info" : "warning");
+			} finally {
+				ctx.ui.setStatus("eval-case", undefined);
+			}
+		};
+
+		const chooseOperation = async (ctx: ExtensionCommandContext): Promise<string | undefined> => {
+			if (!ctx.hasUI) return undefined;
+			const recentChoice = t("evalMenu.recent");
+			const historyChoice = t("evalMenu.history");
+			const reportChoice = t("evalMenu.report");
+			const advancedChoice = t("evalMenu.advanced");
+			const choice = await ctx.ui.select(t("evalMenu.title"), [
+				recentChoice,
+				historyChoice,
+				reportChoice,
+				advancedChoice,
+			]);
+			if (choice === recentChoice) return "test";
+			if (choice === reportChoice) return "latest";
+			if (choice === historyChoice) {
+				const cases = [...(await regressionStore.listApproved())].sort((a, b) =>
+					b.approvedAt.localeCompare(a.approvedAt),
+				);
+				if (cases.length === 0) {
+					ctx.ui.notify(t("evalCase.none"), "warning");
+					return undefined;
+				}
+				const choices = cases.map((testCase) => `${testCase.id.slice(0, 8)} · ${testCase.title.slice(0, 32)}`);
+				const selected = await ctx.ui.select(t("evalMenu.historyTitle"), choices);
+				const index = selected === undefined ? -1 : choices.indexOf(selected);
+				return index < 0 ? undefined : `test ${cases[index]?.id}`;
+			}
+			if (choice !== advancedChoice) return undefined;
+			const advancedOperations = new Map([
+				[t("evalMenu.runSmoke"), "run"],
+				[t("evalMenu.saveBaseline"), "baseline"],
+				[t("evalMenu.compare"), "compare"],
+				[t("evalMenu.failures"), "failures"],
+			]);
+			const advanced = await ctx.ui.select(t("evalMenu.advancedTitle"), [...advancedOperations.keys()]);
+			return advanced === undefined ? undefined : advancedOperations.get(advanced);
+		};
 
 		const deactivateInternalTool = (): void => {
 			const active = pi.getActiveTools();
@@ -164,7 +238,8 @@ export function createEvalsExtension(
 				}
 			},
 		});
-		deactivateInternalTool();
+
+		pi.on("session_start", () => deactivateInternalTool());
 
 		pi.on("agent_start", () => {
 			if (grant) {
@@ -245,10 +320,23 @@ export function createEvalsExtension(
 		});
 
 		pi.registerCommand("evals", {
-			description: "运行本地评测并与基线比较",
+			description: "打开评测中心",
 			handler: async (args, ctx) => {
-				const operation = args.trim().toLowerCase() || "latest";
+				let requested = args.trim();
 				try {
+					if (!requested) {
+						requested = (await chooseOperation(ctx)) ?? "";
+						if (!requested) return;
+					}
+					const [operation = "", selector, ...extra] = requested.toLowerCase().split(/\s+/);
+					if (operation === "test") {
+						if (extra.length > 0) {
+							ctx.ui.notify(HELP, "warning");
+							return;
+						}
+						await runRegressionCase(selector, ctx);
+						return;
+					}
 					if (operation === "run") {
 						const report = runInfrastructureSmoke(now());
 						await store.append(report);

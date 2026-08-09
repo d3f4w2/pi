@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added a single `/evals` evaluation-center menu for running the latest or a selected approved regression case with hash verification, bounded direct `node:test`, Vitest, pytest, or Go test execution, and compact in-TUI results.
 - Added user-approved regression-test capture from recovered real failures, with generation-time tool isolation, two explicit review gates, persistent prompt suppression, bounded secret-scanned drafts, new-file-only atomic writes, rollback, source metadata, and Chinese/English approval UI.
 - Added a local deterministic evaluation foundation with privacy-safe `RunRecord` token, cost, retry, and verification summaries; typed `EvalCase` and `EvalReport` data; ten offline infrastructure smoke cases; persistent baselines; and `/evals` run, latest, compare, and failure views without model calls.
 - Added a persistent `language` setting with automatic system-locale detection, Simplified Chinese and English interfaces, immediate runtime switching, typed message dictionaries, English fallback, and bilingual Express Track settings, model, thinking, editor, and footer surfaces.
@@ -35,6 +36,7 @@
 
 ### Changed
 
+- Changed the PowerShell development launcher to execute TypeScript source through Node's native strip-only mode, removing repeated `tsx` startup work while preserving immediate source updates and caller-directory restoration.
 - Refreshed the interactive TUI with the `pi-go` Express Track identity: responsive startup branding, ice-blue and warm-white palettes, a quiet default workspace with `Ctrl+O` detail disclosure, fixed-width forward loading motion, continuous `›`/`│` interaction rails, an input border that exposes conversation/terminal and safety modes, consistent primary overlay chrome, quieter user/tool presentation, and a stable two-row footer with explicit Git branch, cumulative token total, context, and model state.
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
 - Changed the built-in `grep` tool to be active by default and stopped disabled exact-search capability from being silently replaced with shell `rg` or `grep` commands.
@@ -44,6 +46,7 @@
 
 ### Fixed
 
+- Fixed the regression-capture extension calling runtime tool actions before extension initialization completed.
 - Fixed `tool_search` filling unused budget with weakly related tools, added explicit companion-tool loading, made empty-search budgets safe under parallel calls, isolated response-stream cleanup errors that could crash Pi, and prevented unrelated tasks from probing `PI_*` environment variables.
 - Fixed automatic LSP diagnostics missing first-turn errors while a cold language server was still starting or publishing diagnostics.
 

@@ -206,6 +206,7 @@ function createCaptureHarness(language: "zh-CN" | "en" = "zh-CN"): CaptureHarnes
 	const notifications: string[] = [];
 	const selections: Array<string | undefined> = [];
 	const sentMessages: string[] = [];
+	let runtimeReady = false;
 	let toolDefinition: ToolDefinition | undefined;
 	const store: RegressionCaseStoreLike = {
 		isSuppressed: vi.fn(async () => false),
@@ -244,8 +245,12 @@ function createCaptureHarness(language: "zh-CN" | "en" = "zh-CN"): CaptureHarnes
 			toolDefinition = tool;
 		},
 		on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => handlers.set(event, handler),
-		getActiveTools: () => [...activeTools],
+		getActiveTools: () => {
+			if (!runtimeReady) throw new Error("runtime is not initialized");
+			return [...activeTools];
+		},
 		setActiveTools: (names: string[]) => {
+			if (!runtimeReady) throw new Error("runtime is not initialized");
 			activeTools.splice(0, activeTools.length, ...names);
 		},
 		sendUserMessage: (message: string) => sentMessages.push(message),
@@ -261,6 +266,8 @@ function createCaptureHarness(language: "zh-CN" | "en" = "zh-CN"): CaptureHarnes
 		store,
 		writer,
 	)(api);
+	runtimeReady = true;
+	void handlers.get("session_start")?.({ type: "session_start", reason: "startup" }, context);
 	if (!toolDefinition) throw new Error("eval_case tool was not registered");
 	return {
 		activeTools,
