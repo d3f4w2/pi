@@ -17,6 +17,7 @@
 - Added a built-in `lsp` tool with bundled TypeScript/JavaScript intelligence, extensible Python and Go language-server adapters, definitions, references, implementations, hover information, symbols, single-file and bounded project diagnostics, safe project-boundary rename edits, compact results, lazy process reuse, failure circuit breaking, and bounded automatic diagnostics after code edits.
 - Added a built-in read-only `ast_grep` tool for bounded structural code search across JavaScript, TypeScript, TSX, HTML, and CSS, with automatic language detection, adaptive grouped output, project-boundary protection, and compact results.
 - Added a built-in `verify` tool for bounded TypeScript/JavaScript, Python, and Go type checks, related tests, and lint, with direct process execution, safe auto-scoping, non-executing standalone Python syntax checks, explicit modification-check routing, source-execution guards, compact failures, and local logs.
+- Added a built-in `todo` task ledger with stable IDs, revision-safe updates, completion evidence, deterministic progression, branch-local session recovery, bounded context reminders, a compact TUI widget, and `/tasks` inspection.
 
 ### Changed
 

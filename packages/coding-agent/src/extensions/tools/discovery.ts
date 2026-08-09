@@ -14,6 +14,7 @@ const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
 	ast_grep: "按代码结构精确搜索",
 	code_search: "按意思快速找到相关代码",
 	lsp: "准确查询代码关系和错误",
+	todo: "维护任务计划和进度",
 	verify: "运行相关检查和测试",
 	find: "按名称查找文件",
 	ls: "查看文件夹内容",
