@@ -217,6 +217,24 @@ describe("SettingsManager", () => {
 		});
 	});
 
+	describe("language setting", () => {
+		it("defaults invalid and missing values to auto", () => {
+			expect(SettingsManager.create(projectDir, agentDir).getLanguage()).toBe("auto");
+
+			writeFileSync(join(agentDir, "settings.json"), JSON.stringify({ language: "fr" }));
+			expect(SettingsManager.create(projectDir, agentDir).getLanguage()).toBe("auto");
+		});
+
+		it("persists a global language preference", async () => {
+			const manager = SettingsManager.create(projectDir, agentDir);
+			manager.setLanguage("zh-CN");
+			await manager.flush();
+
+			expect(manager.getLanguage()).toBe("zh-CN");
+			expect(JSON.parse(readFileSync(join(agentDir, "settings.json"), "utf-8")).language).toBe("zh-CN");
+		});
+	});
+
 	describe("error tracking", () => {
 		it("should collect and clear load errors via drainErrors", () => {
 			const globalSettingsPath = join(agentDir, "settings.json");

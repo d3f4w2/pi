@@ -10,10 +10,12 @@ import {
 	type TUI,
 } from "@earendil-works/pi-tui";
 import type { ModelRuntime } from "../../../core/model-runtime.ts";
+import { t } from "../i18n/index.ts";
 import { getModelSelectorSearchText } from "../model-search.ts";
 import { theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
 import { keyHint } from "./keybinding-hints.ts";
+import { PanelHeaderComponent, PanelHintComponent } from "./panel-chrome.ts";
 
 interface ModelItem {
 	provider: string;
@@ -54,7 +56,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	private onSelectCallback: (model: Model<any>) => void;
 	private onCancelCallback: () => void;
 	private errorMessage?: string;
-	private refreshStatusMessage = "Refreshing model catalogs…";
+	private refreshStatusMessage = t("model.refreshing");
 	private refreshStatusSuccess = false;
 	private tui: TUI;
 	private scopedModels: ReadonlyArray<ScopedModelItem>;
@@ -84,8 +86,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.onSelectCallback = onSelect;
 		this.onCancelCallback = onCancel;
 
-		// Add top border
-		this.addChild(new DynamicBorder());
+		this.addChild(new PanelHeaderComponent(t("model.title")));
 		this.addChild(new Spacer(1));
 
 		// Add hint about model filtering
@@ -95,8 +96,7 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			this.scopeHintText = new Text(this.getScopeHintText(), 0, 0);
 			this.addChild(this.scopeHintText);
 		} else {
-			const hintText = "Only showing models from configured providers. Use /login to add providers.";
-			this.addChild(new Text(theme.fg("warning", hintText), 0, 0));
+			this.addChild(new Text(theme.fg("muted", t("model.configuredProviders")), 0, 0));
 		}
 		this.addChild(new Spacer(1));
 
@@ -120,9 +120,17 @@ export class ModelSelectorComponent extends Container implements Focusable {
 		this.addChild(this.listContainer);
 
 		this.addChild(new Spacer(1));
+		this.addChild(
+			new PanelHintComponent([
+				`↑/↓ ${t("common.select")}`,
+				`Enter ${t("common.confirm")}`,
+				...(scopedModels.length > 0 ? [`Tab ${t("common.scope")}`] : []),
+				`Esc ${t("common.back")}`,
+			]),
+		);
 
 		// Add bottom border
-		this.addChild(new DynamicBorder());
+		this.addChild(new DynamicBorder((text) => theme.fg("borderMuted", text)));
 
 		// Render the current snapshot immediately, then refresh in the background.
 		this.loadModelsFromSnapshot();
@@ -167,15 +175,18 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			if (this.closed) return;
 			this.refreshStatusMessage = "";
 			if (result.aborted && timedOut) {
-				this.errorMessage = "Model refresh timed out; showing cached models.";
+				this.errorMessage = t("model.refresh.timeout");
 			} else if (result.errors.size === 1) {
-				this.errorMessage = `Could not refresh ${result.errors.keys().next().value}; showing cached models.`;
+				this.errorMessage = t("model.refresh.oneError", { provider: result.errors.keys().next().value ?? "" });
 			} else if (result.errors.size > 1) {
-				this.errorMessage = `Could not refresh ${result.errors.size} model catalogs (${[...result.errors.keys()].join(", ")}); showing cached models.`;
+				this.errorMessage = t("model.refresh.manyErrors", {
+					count: result.errors.size,
+					providers: [...result.errors.keys()].join(", "),
+				});
 			} else {
 				this.errorMessage = this.modelRuntime.getError();
 				if (!this.errorMessage) {
-					this.refreshStatusMessage = "Model catalogs refreshed.";
+					this.refreshStatusMessage = t("model.refresh.done");
 					this.refreshStatusSuccess = true;
 				}
 			}
@@ -186,8 +197,8 @@ export class ModelSelectorComponent extends Container implements Focusable {
 			if (this.closed) return;
 			this.refreshStatusMessage = "";
 			this.errorMessage = timedOut
-				? "Model refresh timed out; showing cached models."
-				: `Could not refresh model catalogs: ${error instanceof Error ? error.message : String(error)}`;
+				? t("model.refresh.timeout")
+				: t("model.refresh.failed", { error: error instanceof Error ? error.message : String(error) });
 			this.updateList();
 			this.tui.requestRender();
 		} finally {
@@ -216,13 +227,15 @@ export class ModelSelectorComponent extends Container implements Focusable {
 	}
 
 	private getScopeText(): string {
-		const allText = this.scope === "all" ? theme.fg("accent", "all") : theme.fg("muted", "all");
-		const scopedText = this.scope === "scoped" ? theme.fg("accent", "scoped") : theme.fg("muted", "scoped");
-		return `${theme.fg("muted", "Scope: ")}${allText}${theme.fg("muted", " | ")}${scopedText}`;
+		const allLabel = t("model.scope.all");
+		const scopedLabel = t("model.scope.scoped");
+		const allText = this.scope === "all" ? theme.fg("accent", allLabel) : theme.fg("muted", allLabel);
+		const scopedText = this.scope === "scoped" ? theme.fg("accent", scopedLabel) : theme.fg("muted", scopedLabel);
+		return `${theme.fg("dim", `${t("common.scope")}  `)}${allText}${theme.fg("dim", " · ")}${scopedText}`;
 	}
 
 	private getScopeHintText(): string {
-		return keyHint("tui.input.tab", "scope") + theme.fg("muted", " (all/scoped)");
+		return keyHint("tui.input.tab", t("model.scope.toggle"));
 	}
 
 	private setScope(scope: ModelScope): void {
@@ -270,14 +283,14 @@ export class ModelSelectorComponent extends Container implements Focusable {
 
 			let line = "";
 			if (isSelected) {
-				const prefix = theme.fg("accent", "→ ");
+				const prefix = theme.fg("accent", "› ");
 				const modelText = `${item.id}`;
-				const providerBadge = theme.fg("muted", `[${item.provider}]`);
+				const providerBadge = theme.fg("dim", `· ${item.provider}`);
 				const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
-				line = `${prefix + theme.fg("accent", modelText)} ${providerBadge}${checkmark}`;
+				line = `${prefix + theme.bold(theme.fg("accent", modelText))} ${providerBadge}${checkmark}`;
 			} else {
 				const modelText = `  ${item.id}`;
-				const providerBadge = theme.fg("muted", `[${item.provider}]`);
+				const providerBadge = theme.fg("dim", `· ${item.provider}`);
 				const checkmark = isCurrent ? theme.fg("success", " ✓") : "";
 				line = `${modelText} ${providerBadge}${checkmark}`;
 			}
@@ -299,11 +312,13 @@ export class ModelSelectorComponent extends Container implements Focusable {
 				this.listContainer.addChild(new Text(theme.fg("error", line), 0, 0));
 			}
 		} else if (this.filteredModels.length === 0) {
-			this.listContainer.addChild(new Text(theme.fg("muted", "  No matching models"), 0, 0));
+			this.listContainer.addChild(new Text(theme.fg("muted", `  ${t("model.noResults")}`), 0, 0));
 		} else {
 			const selected = this.filteredModels[this.selectedIndex];
 			this.listContainer.addChild(new Spacer(1));
-			this.listContainer.addChild(new Text(theme.fg("muted", `  Model Name: ${selected.model.name}`), 0, 0));
+			this.listContainer.addChild(
+				new Text(theme.fg("muted", `  ${t("model.name", { name: selected.model.name })}`), 0, 0),
+			);
 		}
 		if (this.refreshStatusMessage) {
 			this.listContainer.addChild(new Spacer(1));

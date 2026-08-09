@@ -29,7 +29,22 @@ export interface SettingsListTheme {
 
 export interface SettingsListOptions {
 	enableSearch?: boolean;
+	text?: Partial<SettingsListText>;
 }
+
+export interface SettingsListText {
+	empty: string;
+	noMatch: string;
+	searchHint: string;
+	changeHint: string;
+}
+
+const DEFAULT_TEXT: SettingsListText = {
+	empty: "No settings available",
+	noMatch: "No matching settings",
+	searchHint: "Type to search · Enter/Space to change · Esc to cancel",
+	changeHint: "Enter/Space to change · Esc to cancel",
+};
 
 export class SettingsList implements Component {
 	private items: SettingItem[];
@@ -41,6 +56,7 @@ export class SettingsList implements Component {
 	private onCancel: () => void;
 	private searchInput?: Input;
 	private searchEnabled: boolean;
+	private text: SettingsListText;
 
 	// Submenu state
 	private submenuComponent: Component | null = null;
@@ -61,6 +77,7 @@ export class SettingsList implements Component {
 		this.onChange = onChange;
 		this.onCancel = onCancel;
 		this.searchEnabled = options.enableSearch ?? false;
+		this.text = { ...DEFAULT_TEXT, ...options.text };
 		if (this.searchEnabled) {
 			this.searchInput = new Input();
 		}
@@ -96,7 +113,7 @@ export class SettingsList implements Component {
 		}
 
 		if (this.items.length === 0) {
-			lines.push(this.theme.hint("  No settings available"));
+			lines.push(this.theme.hint(`  ${this.text.empty}`));
 			if (this.searchEnabled) {
 				this.addHintLine(lines, width);
 			}
@@ -105,7 +122,7 @@ export class SettingsList implements Component {
 
 		const displayItems = this.searchEnabled ? this.filteredItems : this.items;
 		if (displayItems.length === 0) {
-			lines.push(truncateToWidth(this.theme.hint("  No matching settings"), width));
+			lines.push(truncateToWidth(this.theme.hint(`  ${this.text.noMatch}`), width));
 			this.addHintLine(lines, width);
 			return lines;
 		}
@@ -237,11 +254,7 @@ export class SettingsList implements Component {
 		lines.push("");
 		lines.push(
 			truncateToWidth(
-				this.theme.hint(
-					this.searchEnabled
-						? "  Type to search · Enter/Space to change · Esc to cancel"
-						: "  Enter/Space to change · Esc to cancel",
-				),
+				this.theme.hint(this.searchEnabled ? `  ${this.text.searchHint}` : `  ${this.text.changeHint}`),
 				width,
 			),
 		);

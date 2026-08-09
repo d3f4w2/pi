@@ -1,5 +1,6 @@
 import { Box, Container, Markdown, type MarkdownTheme } from "@earendil-works/pi-tui";
 import type { MarkdownTransformer } from "../../../core/extensions/types.ts";
+import { stripAnsi } from "../../../utils/ansi.ts";
 import { getMarkdownTheme, theme } from "../theme/theme.ts";
 import { createMarkdownTransform } from "./markdown-transform.ts";
 
@@ -58,9 +59,15 @@ export class UserMessageComponent extends Container {
 	}
 
 	override render(width: number): string[] {
-		const rail = width > this.outputPad + 1 ? theme.fg("accent", "│") + " ".repeat(this.outputPad) : "";
-		const contentWidth = Math.max(1, width - this.outputPad - (rail ? 1 : 0));
-		const lines = super.render(contentWidth).map((line) => rail + line);
+		const hasRail = width > this.outputPad + 1;
+		const contentWidth = Math.max(1, width - this.outputPad - (hasRail ? 1 : 0));
+		const contentLines = super.render(contentWidth);
+		const firstContentIndex = contentLines.findIndex((line) => stripAnsi(line).trim().length > 0);
+		const lines = contentLines.map((line, index) => {
+			if (!hasRail) return line;
+			const marker = index === firstContentIndex ? "›" : "│";
+			return theme.fg("accent", marker) + " ".repeat(this.outputPad) + line;
+		});
 		if (lines.length === 0) {
 			return lines;
 		}

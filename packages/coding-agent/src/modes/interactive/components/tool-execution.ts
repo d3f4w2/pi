@@ -34,11 +34,11 @@ class ToolStateFrame implements Component {
 		if (lines.length === 0) return [];
 		const firstMarker =
 			this.state === "pending"
-				? theme.fg("accent", "● ")
+				? theme.fg("accent", "› ")
 				: this.state === "success"
 					? theme.fg("success", "✓ ")
 					: theme.fg("error", "× ");
-		const continuation = "  ";
+		const continuation = theme.fg("dim", "│ ");
 		return lines.map((line, index) => (index === 0 ? firstMarker : continuation) + line);
 	}
 }

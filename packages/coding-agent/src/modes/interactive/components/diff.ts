@@ -1,5 +1,6 @@
 import * as Diff from "diff";
 import type { FileDiff } from "../../../core/tools/edit-diff.ts";
+import { type MessageKey, t } from "../i18n/index.ts";
 import { theme } from "../theme/theme.ts";
 
 /**
@@ -76,11 +77,11 @@ export interface RenderFileDiffOptions {
 	maxLines?: number;
 }
 
-const FILE_STATUS_LABELS = {
-	created: "新建",
-	modified: "修改",
-	deleted: "删除",
-} as const;
+const FILE_STATUS_KEYS: Record<FileDiff["status"], MessageKey> = {
+	created: "diff.created",
+	modified: "diff.modified",
+	deleted: "diff.deleted",
+};
 
 /**
  * Render a diff string with colored lines and intra-line change highlighting.
@@ -164,7 +165,7 @@ function compactDiffLines(lines: string[], maxLines: number): { lines: string[];
 	const leading = Math.ceil((maxLines - 1) / 2);
 	const trailing = Math.floor((maxLines - 1) / 2);
 	return {
-		lines: [...lines.slice(0, leading), `     … ${hidden} 行未显示 …`, ...lines.slice(lines.length - trailing)],
+		lines: [...lines.slice(0, leading), t("diff.hidden", { count: hidden }), ...lines.slice(lines.length - trailing)],
 		hidden,
 	};
 }
@@ -174,15 +175,12 @@ export function renderFileDiff(fileDiff: FileDiff, options: RenderFileDiffOption
 	const rawLines = fileDiff.diff ? fileDiff.diff.split("\n") : [];
 	const maxLines = options.expanded ? Number.POSITIVE_INFINITY : (options.maxLines ?? 80);
 	const compacted = compactDiffLines(rawLines, maxLines);
-	const status = theme.fg("accent", FILE_STATUS_LABELS[fileDiff.status]);
+	const status = theme.fg("accent", t(FILE_STATUS_KEYS[fileDiff.status]));
 	const path = theme.bold(fileDiff.path);
 	const additions = theme.fg("toolDiffAdded", `+${fileDiff.additions}`);
 	const deletions = theme.fg("toolDiffRemoved", `-${fileDiff.deletions}`);
 	const header = `${theme.fg("borderMuted", "──")} ${status} ${path}  ${additions} ${deletions}`;
 	const body = renderDiff(compacted.lines.join("\n"));
-	const folded =
-		compacted.hidden > 0
-			? `\n${theme.fg("muted", `   … 已折叠 ${compacted.hidden} 行，展开工具输出可查看全部`)}`
-			: "";
+	const folded = compacted.hidden > 0 ? `\n${theme.fg("muted", t("diff.folded", { count: compacted.hidden }))}` : "";
 	return body ? `${header}\n${body}${folded}` : header;
 }

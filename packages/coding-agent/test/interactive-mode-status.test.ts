@@ -120,7 +120,7 @@ describe("InteractiveMode.showStatus", () => {
 });
 
 describe("InteractiveMode.cycleToolApprovalMode", () => {
-	test("persists the next mode and explains it in Chinese", () => {
+	test("persists the next mode and explains it in the active language", () => {
 		type ApprovalMode = "yolo" | "write" | "always-ask";
 		type FakeInteractiveMode = {
 			settingsManager: { cycleToolApprovalMode: () => ApprovalMode };
@@ -132,9 +132,9 @@ describe("InteractiveMode.cycleToolApprovalMode", () => {
 			}
 		).prototype.cycleToolApprovalMode;
 		const cases = [
-			["yolo", "安全模式：便捷（普通操作直接执行，危险操作确认）"],
-			["write", "安全模式：标准（读取直接执行，修改和命令确认）"],
-			["always-ask", "安全模式：严格（所有工具均确认）"],
+			["yolo", "Safety: Fast (routine work runs directly; risky work asks)"],
+			["write", "Safety: Standard (reads run directly; writes and commands ask)"],
+			["always-ask", "Safety: Strict (every tool asks)"],
 		] as const satisfies ReadonlyArray<readonly [ApprovalMode, string]>;
 
 		for (const [mode, message] of cases) {
@@ -179,7 +179,7 @@ describe("InteractiveMode model thinking selection", () => {
 
 		showModelThinkingSelector.call(fakeThis, model);
 		expect(selector).toBeDefined();
-		expect(selector ? renderAll(selector) : "").toContain("思考等级 · reasoning");
+		expect(selector ? renderAll(selector) : "").toContain("Thinking level · reasoning");
 		selector?.getSelectList().handleInput("\r");
 
 		expect(done).toHaveBeenCalledOnce();

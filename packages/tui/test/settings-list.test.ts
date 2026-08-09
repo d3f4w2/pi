@@ -77,4 +77,26 @@ describe("SettingsList", () => {
 
 		assert.deepStrictEqual(changes, [{ id: "tui-mode", value: "fullscreen" }]);
 	});
+
+	it("uses caller-provided interface copy", () => {
+		const list = new SettingsList(
+			items,
+			10,
+			testTheme,
+			() => {},
+			() => {},
+			{
+				enableSearch: true,
+				text: {
+					noMatch: "没有匹配的设置",
+					searchHint: "输入文字搜索 · Enter/Space 修改 · Esc 返回",
+				},
+			},
+		);
+
+		list.handleInput("not-found");
+		const rendered = list.render(80).join("\n");
+		assert.match(rendered, /没有匹配的设置/);
+		assert.match(rendered, /输入文字搜索/);
+	});
 });

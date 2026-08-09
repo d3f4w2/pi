@@ -25,12 +25,38 @@ Use the "restrained professional" style:
 - Give every list the same hierarchy: cursor, primary label, secondary description or value, then contextual hint.
 - Show tool calls as state plus operation. Keep detailed output available without making it visually compete with the conversation.
 - Treat footer fields as prioritized segments. Preserve project, model, mode, and context state before optional token statistics.
+- Use a stable two-row workbench footer. The first row is location (`project · git:branch · session`); the second is runtime (`total · token details · context`) with the active model aligned right.
+- Define `total` as all billed token traffic recorded in the session: input, output, cache reads, and cache writes, including compaction, branch-summary, and tool-result usage.
+- Keep branch and total visible at normal working widths. Below 64 columns, switch to compact labels before removing optional cache and cost details.
 - Degrade by terminal width: remove descriptions and optional metrics before truncating primary labels.
 - Measure every rendered line with `visibleWidth()` and truncate with `truncateToWidth()`.
 
 Existing theme colors remain the source of truth. This change does not hardcode a new palette and does not require custom themes to add tokens.
 
 Brand color is not state color. The wordmark uses the normal text and accent colors; green, yellow, and red remain reserved for success, warning, and error states.
+
+Transient status messages update in place and use one accent marker. They do not create animated notifications, popups, or additional timers.
+
+## Work surface and overlays
+
+- Put the current input mode and safety level inside the editor's existing top border. Do not add another permanent status row.
+- Switch the editor label immediately between conversation and terminal modes when the leading `!` changes. Preserve the editor's native scroll indicators for long input.
+- Give primary overlays one shared visual grammar: accent lead marker, short title, muted rail, content, then a compact key-hint footer.
+- Use `›` consistently for the active row. Use `✓` only for the currently applied value, not merely the focused value.
+- Keep overlay navigation synchronous. Selection changes redraw existing components and never start animation timers or delay confirmation.
+
+## Brand identity: Express Track
+
+`pi-go` uses the Express Track identity:
+
+- `›` means focus, forward movement, or work in progress.
+- `│` connects continuation lines that belong to the same message or tool call.
+- `✓` and `×` are terminal states only. They never replace the focus cursor.
+- Ice blue is the single brand accent. Warm white carries primary text. Soft green, amber, and red are reserved for success, warning, and failure.
+- Rails are thin and open. Do not add filled cards, double-line boxes, gradients, or decorative animation.
+- Copy is short and direct. Occasional dry humor is allowed in empty or recoverable error states, but never in destructive confirmations, credential errors, or data-loss warnings.
+
+The identity must survive monochrome terminals: symbol and spacing communicate the hierarchy before color does.
 
 ## Motion
 

@@ -154,6 +154,7 @@ import { TrustSelectorComponent } from "./components/trust-selector.ts";
 import { UserMessageComponent } from "./components/user-message.ts";
 import { UserMessageSelectorComponent } from "./components/user-message-selector.ts";
 import { editInExternalEditor } from "./external-editor.ts";
+import { setLanguageSetting, t } from "./i18n/index.ts";
 import { getModelSearchText } from "./model-search.ts";
 import {
 	getAvailableThemes,
@@ -529,6 +530,7 @@ export class InteractiveMode {
 
 	constructor(runtimeHost: AgentSessionRuntime, options: InteractiveModeOptions = {}) {
 		this.runtimeHost = runtimeHost;
+		setLanguageSetting(this.settingsManager.getLanguage());
 		const tuiMode = options.tuiMode ?? this.settingsManager.getTuiMode();
 		this.options = { ...options, tuiMode };
 		this.autoTrustOnReloadCwd = options.autoTrustOnReloadCwd;
@@ -565,6 +567,19 @@ export class InteractiveMode {
 		this.defaultEditor = new CustomEditor(this.ui, getEditorTheme(), this.keybindings, {
 			paddingX: editorPaddingX,
 			autocompleteMaxVisible,
+		});
+		this.defaultEditor.setTopBorderLabel(() => {
+			const approvalMode = this.settingsManager.getToolApprovalSettings().mode;
+			const safetyLabel =
+				approvalMode === "yolo"
+					? t("editor.safety.yolo")
+					: approvalMode === "write"
+						? t("editor.safety.write")
+						: t("editor.safety.alwaysAsk");
+			const workLabel = this.isBashMode
+				? theme.fg("bashMode", t("editor.mode.terminal"))
+				: theme.fg("accent", t("editor.mode.chat"));
+			return `${theme.fg("accent", "›")} ${theme.bold(workLabel)}${theme.fg("dim", ` · ${safetyLabel}`)}`;
 		});
 		this.editor = this.defaultEditor;
 		this.editorContainer = new Container();
@@ -933,10 +948,11 @@ export class InteractiveMode {
 				hint("app.clipboard.pasteImage", "to paste image (with text fallback)"),
 				rawKeyHint("drop files", "to attach"),
 			].join("\n");
-			const compactInstructions = [rawKeyHint("/", "命令"), hint("app.tools.expand", "详情")].join(
-				theme.fg("dim", "  ·  "),
-			);
-			const onboarding = theme.fg("dim", `直接描述要做的事；${PI_GO_NAME} 会自己选择合适的工具。`);
+			const compactInstructions = [
+				rawKeyHint("/", t("startup.commands")),
+				hint("app.tools.expand", t("startup.details")),
+			].join(theme.fg("dim", "  ·  "));
+			const onboarding = theme.fg("dim", t("startup.onboarding", { name: PI_GO_NAME }));
 			this.builtInHeader = new BrandHeaderComponent({
 				version: this.version,
 				collapsedText: () => compactInstructions,
@@ -3412,15 +3428,16 @@ export class InteractiveMode {
 		const children = this.chatContainer.children;
 		const last = children.length > 0 ? children[children.length - 1] : undefined;
 		const secondLast = children.length > 1 ? children[children.length - 2] : undefined;
+		const styledMessage = `${theme.fg("accent", "›")} ${theme.fg("dim", message)}`;
 
 		if (last && secondLast && last === this.lastStatusText && secondLast === this.lastStatusSpacer) {
-			this.lastStatusText.setText(theme.fg("dim", message));
+			this.lastStatusText.setText(styledMessage);
 			this.ui.requestRender();
 			return;
 		}
 
 		const spacer = new Spacer(1);
-		const text = new Text(theme.fg("dim", message), 1, 0);
+		const text = new Text(styledMessage, 1, 0);
 		this.chatContainer.addChild(spacer);
 		this.chatContainer.addChild(text);
 		this.lastStatusSpacer = spacer;
@@ -3999,10 +4016,10 @@ export class InteractiveMode {
 		const mode = this.settingsManager.cycleToolApprovalMode();
 		const message =
 			mode === "yolo"
-				? "安全模式：便捷（普通操作直接执行，危险操作确认）"
+				? t("approval.yoloStatus")
 				: mode === "write"
-					? "安全模式：标准（读取直接执行，修改和命令确认）"
-					: "安全模式：严格（所有工具均确认）";
+					? t("approval.writeStatus")
+					: t("approval.strictStatus");
 		this.showStatus(message);
 	}
 
@@ -4386,6 +4403,7 @@ export class InteractiveMode {
 			let selector: SettingsSelectorComponent | undefined;
 			selector = new SettingsSelectorComponent(
 				{
+					language: this.settingsManager.getLanguage(),
 					autoCompact: this.session.autoCompactionEnabled,
 					showImages: this.settingsManager.getShowImages(),
 					imageWidthCells: this.settingsManager.getImageWidthCells(),
@@ -4422,6 +4440,13 @@ export class InteractiveMode {
 					warnings: this.settingsManager.getWarnings(),
 				},
 				{
+					onLanguageChange: (language) => {
+						this.settingsManager.setLanguage(language);
+						setLanguageSetting(language);
+						this.defaultEditor.invalidate();
+						this.footer.invalidate();
+						this.ui.requestRender();
+					},
 					onAutoCompactChange: (enabled) => {
 						this.session.setAutoCompactionEnabled(enabled);
 						this.footer.setAutoCompactEnabled(enabled);
@@ -4780,7 +4805,7 @@ export class InteractiveMode {
 					done();
 					this.ui.requestRender();
 				},
-				`思考等级 · ${model.id}`,
+				t("thinking.modelTitle", { model: model.id }),
 			);
 			return { component: selector, focus: selector.getSelectList() };
 		});
@@ -4792,8 +4817,11 @@ export class InteractiveMode {
 			this.session.setThinkingLevel(thinkingLevel);
 			this.footer.invalidate();
 			this.updateEditorBorderColor();
-			const thinkingText = model.reasoning ? ` · 思考：${this.session.thinkingLevel}` : " · 不支持思考";
-			this.showStatus(`模型：${model.id}${thinkingText}`);
+			this.showStatus(
+				model.reasoning
+					? t("model.selectedThinking", { model: model.id, level: this.session.thinkingLevel })
+					: t("model.selectedNoThinking", { model: model.id }),
+			);
 			void this.maybeWarnAboutAnthropicSubscriptionAuth(model);
 			this.checkDaxnutsEasterEgg(model);
 		} catch (error) {

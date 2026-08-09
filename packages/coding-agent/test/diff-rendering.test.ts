@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "vitest";
 import { createFileDiff } from "../src/core/tools/edit-diff.ts";
 import { renderFileDiff } from "../src/modes/interactive/components/diff.ts";
+import { setLanguageSetting } from "../src/modes/interactive/i18n/index.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
 
 describe("shared file diff", () => {
@@ -41,13 +42,22 @@ describe("shared file diff", () => {
 		expect(rendered).toContain("large.ts");
 		expect(rendered).toContain("+120");
 		expect(rendered).toContain("-120");
-		expect(rendered).toContain("已折叠");
+		expect(rendered).toContain("folded");
 		expect(rendered.split("\n").length).toBeLessThanOrEqual(23);
 	});
 
 	test("labels a newly created file", () => {
 		const rendered = renderFileDiff(createFileDiff("new.ts", null, "export {};\n"), { expanded: true });
-		expect(rendered).toContain("新建");
+		expect(rendered).toContain("Created");
 		expect(rendered).toContain("+1");
+	});
+
+	test("renders file status in Chinese when selected", () => {
+		setLanguageSetting("zh-CN");
+		try {
+			expect(renderFileDiff(createFileDiff("new.ts", null, "export {};\n"), { expanded: true })).toContain("新建");
+		} finally {
+			setLanguageSetting("en");
+		}
 	});
 });

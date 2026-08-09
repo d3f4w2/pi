@@ -1,4 +1,11 @@
-import { Editor, type EditorOptions, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import {
+	Editor,
+	type EditorOptions,
+	type EditorTheme,
+	type TUI,
+	truncateToWidth,
+	visibleWidth,
+} from "@earendil-works/pi-tui";
 import type { AppKeybinding, KeybindingsManager } from "../../../core/keybindings.ts";
 
 /**
@@ -6,6 +13,7 @@ import type { AppKeybinding, KeybindingsManager } from "../../../core/keybinding
  */
 export class CustomEditor extends Editor {
 	private keybindings: KeybindingsManager;
+	private topBorderLabel: (() => string) | undefined;
 	public actionHandlers: Map<AppKeybinding, () => void> = new Map();
 
 	// Special handlers that can be dynamically replaced
@@ -25,6 +33,23 @@ export class CustomEditor extends Editor {
 	 */
 	onAction(action: AppKeybinding, handler: () => void): void {
 		this.actionHandlers.set(action, handler);
+	}
+
+	setTopBorderLabel(label: (() => string) | undefined): void {
+		this.topBorderLabel = label;
+	}
+
+	override render(width: number): string[] {
+		const lines = super.render(width);
+		const label = this.topBorderLabel?.();
+		const topBorder = lines[0];
+		if (!label || !topBorder || topBorder.includes("↑") || width < 8) return lines;
+
+		const fittedLabel = truncateToWidth(label, Math.max(1, width - 4), "");
+		const labelBlock = ` ${fittedLabel} `;
+		const remainingWidth = Math.max(0, width - 1 - visibleWidth(labelBlock));
+		lines[0] = this.borderColor("─") + labelBlock + this.borderColor("─".repeat(remainingWidth));
+		return lines;
 	}
 
 	handleInput(data: string): void {

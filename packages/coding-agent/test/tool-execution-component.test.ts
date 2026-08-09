@@ -46,13 +46,33 @@ describe("ToolExecutionComponent parity", () => {
 			process.cwd(),
 		);
 
-		expect(stripAnsi(component.render(40).join("\n"))).toContain("● custom_tool");
+		expect(stripAnsi(component.render(40).join("\n"))).toContain("› custom_tool");
 
 		component.updateResult({ content: [{ type: "text", text: "done" }], details: {}, isError: false }, false);
 		expect(stripAnsi(component.render(40).join("\n"))).toContain("✓ custom_tool");
 
 		component.updateResult({ content: [{ type: "text", text: "failed" }], details: {}, isError: true }, false);
 		expect(stripAnsi(component.render(40).join("\n"))).toContain("× custom_tool");
+	});
+
+	test("continues multi-line tool output on a muted track", () => {
+		const toolDefinition: ToolDefinition = {
+			...createBaseToolDefinition(),
+			renderCall: () => new Text("custom call\nsecond line", 0, 0),
+		};
+		const component = new ToolExecutionComponent(
+			"custom_tool",
+			"tool-track",
+			{},
+			{},
+			toolDefinition,
+			createFakeTui(),
+			process.cwd(),
+		);
+
+		const rendered = stripAnsi(component.render(40).join("\n"));
+		expect(rendered).toContain("› custom call");
+		expect(rendered).toContain("│ second line");
 	});
 
 	test("stacks custom call and result renderers like the old implementation", () => {
@@ -205,8 +225,8 @@ describe("ToolExecutionComponent parity", () => {
 
 		const rendered = stripAnsi(component.render(200).join("\n"));
 		expect(rendered.match(/Full output:/g)?.length ?? 0).toBe(1);
-		expect(rendered).toMatch(/line-4000[^\n]*\n[^\S\n]*\n[^\S\n]*\[Full output:/);
-		expect(rendered).not.toMatch(/line-4000[^\n]*\n[^\S\n]*\n[^\S\n]*\n[^\S\n]*\[Full output:/);
+		expect(rendered).toMatch(/line-4000[^\n]*\n│[^\S\n]*\n│[^\S\n]*\[Full output:/);
+		expect(rendered).not.toMatch(/line-4000[^\n]*\n│[^\S\n]*\n│[^\S\n]*\n│[^\S\n]*\[Full output:/);
 		expect(rendered).toContain("Truncated: showing 2000 of 4000 lines");
 		expect(rendered).not.toContain("[Showing lines 2001-4000 of 4000. Full output:");
 	});

@@ -4,6 +4,7 @@ import type { AgentSession } from "../../../core/agent-session.ts";
 import { areExperimentalFeaturesEnabled } from "../../../core/experimental.ts";
 import type { ReadonlyFooterDataProvider } from "../../../core/footer-data-provider.ts";
 import { addUsageToTotals, createUsageTotals } from "../../../core/usage-totals.ts";
+import { t } from "../i18n/index.ts";
 import { theme } from "../theme/theme.ts";
 
 /**
@@ -110,6 +111,8 @@ export class FooterComponent implements Component {
 		const contextPercentValue = contextUsage?.percent ?? 0;
 		const contextPercent = contextUsage?.percent !== null ? contextPercentValue.toFixed(1) : "?";
 
+		const compact = width < 64;
+		const separator = theme.fg("dim", compact ? " " : " · ");
 		const projectParts = [
 			theme.fg(
 				"muted",
@@ -117,12 +120,21 @@ export class FooterComponent implements Component {
 			),
 		];
 		const branch = this.footerData.getGitBranch();
-		if (branch) projectParts.push(theme.fg("success", `(${branch})`));
+		if (branch) projectParts.push(`${theme.fg("dim", "git:")}${theme.fg("accent", branch)}`);
 		const sessionName = this.session.sessionManager.getSessionName();
-		if (sessionName) projectParts.push(theme.fg("accent", `• ${sessionName}`));
+		if (sessionName) projectParts.push(theme.fg("text", sessionName));
 
 		type FooterSegment = { text: string; priority: number; required?: boolean };
-		const segments: FooterSegment[] = [];
+		const totalTokens = usageTotals.input + usageTotals.output + usageTotals.cacheRead + usageTotals.cacheWrite;
+		const segments: FooterSegment[] = [
+			{
+				text: compact
+					? theme.fg("text", `Σ${formatTokens(totalTokens)}`)
+					: `${theme.fg("dim", `${t("footer.total")} `)}${theme.fg("text", formatTokens(totalTokens))}`,
+				priority: 110,
+				required: true,
+			},
+		];
 		if (usageTotals.input) {
 			segments.push({ text: theme.fg("muted", `↑${formatTokens(usageTotals.input)}`), priority: 50 });
 		}
@@ -147,14 +159,14 @@ export class FooterComponent implements Component {
 			segments.push({ text: theme.fg("warning", cost), priority: 70 });
 		}
 
-		const autoIndicator = this.autoCompactEnabled ? " (auto)" : "";
+		const autoIndicator = this.autoCompactEnabled ? ` (${t("footer.auto")})` : "";
 		const contextDisplay =
 			contextPercent === "?"
 				? `?/${formatTokens(contextWindow)}${autoIndicator}`
 				: `${contextPercent}%/${formatTokens(contextWindow)}${autoIndicator}`;
 		const contextColor = contextPercentValue > 90 ? "error" : contextPercentValue > 70 ? "warning" : "success";
 		segments.push({
-			text: theme.fg(contextPercent === "?" ? "dim" : contextColor, contextDisplay),
+			text: `${compact ? "" : theme.fg("dim", `${t("footer.context")} `)}${theme.fg(contextPercent === "?" ? "dim" : contextColor, contextDisplay)}`,
 			priority: 100,
 			required: true,
 		});
@@ -162,11 +174,11 @@ export class FooterComponent implements Component {
 			segments.push({ text: theme.bold(theme.fg("warning", "xp")), priority: 40 });
 		}
 
-		const modelName = state.model?.id || "no-model";
+		const modelName = state.model?.id || t("footer.noModel");
 		let modelDisplay = theme.fg("accent", modelName);
 		if (state.model?.reasoning) {
 			const thinkingLevel = state.thinkingLevel || "off";
-			const thinkingText = thinkingLevel === "off" ? "thinking off" : thinkingLevel;
+			const thinkingText = thinkingLevel === "off" ? t("footer.thinkingOff") : thinkingLevel;
 			modelDisplay += `${theme.fg("dim", " • ")}${theme.getThinkingBorderColor(thinkingLevel)(thinkingText)}`;
 		}
 		const modelWithoutProvider = modelDisplay;
@@ -175,7 +187,7 @@ export class FooterComponent implements Component {
 		}
 
 		const minPadding = 2;
-		const getLeft = () => segments.map((segment) => segment.text).join(" ");
+		const getLeft = () => segments.map((segment) => segment.text).join(separator);
 		while (visibleWidth(getLeft()) + minPadding + visibleWidth(modelDisplay) > width) {
 			let removableIndex = -1;
 			for (let index = 0; index < segments.length; index++) {
@@ -201,7 +213,7 @@ export class FooterComponent implements Component {
 		const padding = " ".repeat(Math.max(0, width - visibleWidth(statsLeft) - visibleWidth(fittedModel)));
 		const statsLine = statsLeft + padding + fittedModel;
 
-		const projectLine = truncateToWidth(projectParts.join(" "), width, theme.fg("dim", "..."));
+		const projectLine = truncateToWidth(projectParts.join(separator), width, theme.fg("dim", "..."));
 		const lines = [projectLine, statsLine];
 
 		// Add extension statuses on a single line, sorted by key alphabetically

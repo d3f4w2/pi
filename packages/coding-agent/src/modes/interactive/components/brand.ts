@@ -1,4 +1,5 @@
 import { type Component, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { t } from "../i18n/index.ts";
 import { theme } from "../theme/theme.ts";
 
 const FULL_PI = ["██████╗ ██╗", "██╔══██╗██║", "██████╔╝██║", "██╔═══╝ ██║", "██║     ██║", "╚═╝     ╚═╝"];
@@ -12,7 +13,7 @@ const FULL_GO = [
 ];
 
 const FULL_LOGO_LINES = FULL_PI.map((line, index) => `${line}─${FULL_GO[index]}`);
-const COMPACT_LOGO_LINES = ["pi-go  ━━━━━━━━━━━━━━━›", "       快 · 清晰 · 高效"];
+const COMPACT_LOGO_LINE = "pi-go  ━━━━━━━━━━━━━━━›";
 const WORDMARK = "pi-go ›";
 
 export const PI_GO_NAME = "pi-go";
@@ -29,7 +30,8 @@ export function shouldShowStartupDetails(options: StartupDetailOptions): boolean
 
 export function getBrandLogoLines(width: number): string[] {
 	if (width >= 60) return FULL_LOGO_LINES.map((line) => truncateToWidth(line, width, ""));
-	if (width >= 32) return COMPACT_LOGO_LINES.map((line) => truncateToWidth(line, width, ""));
+	if (width >= 32)
+		return [COMPACT_LOGO_LINE, `       ${t("brand.tagline")}`].map((line) => truncateToWidth(line, width, ""));
 	return [truncateToWidth(WORDMARK, Math.max(1, width), "")];
 }
 
@@ -65,7 +67,7 @@ export class BrandLogoComponent implements Component {
 		const rawLines = getBrandLogoLines(contentWidth);
 		const padding = " ".repeat(this.paddingX);
 		const isFull = rawLines.length === FULL_LOGO_LINES.length;
-		const isCompact = rawLines.length === COMPACT_LOGO_LINES.length;
+		const isCompact = rawLines.length === 2;
 		let lines: string[];
 
 		if (isFull) {
@@ -79,7 +81,7 @@ export class BrandLogoComponent implements Component {
 					theme.fg("dim", "-") +
 					theme.bold(theme.fg("text", "go")) +
 					theme.fg("accent", "  ━━━━━━━━━━━━━━━›"),
-				theme.fg("muted", COMPACT_LOGO_LINES[1] ?? ""),
+				theme.fg("muted", `       ${t("brand.tagline")}`),
 			];
 		} else {
 			lines = [
@@ -91,7 +93,7 @@ export class BrandLogoComponent implements Component {
 		}
 
 		if (!this.showTagline && lines.length > 1 && !isFull) lines = lines.slice(0, 1);
-		if (this.showTagline && isFull) lines.push(theme.fg("muted", "快 · 清晰 · 高效"));
+		if (this.showTagline && isFull) lines.push(theme.fg("muted", t("brand.tagline")));
 		if (this.version) lines.push(theme.fg("dim", `v${this.version}`));
 
 		return lines.map((line) => padding + truncateToWidth(line, contentWidth, ""));

@@ -7,7 +7,7 @@ const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
 describe("UserMessageComponent", () => {
-	test("uses a compact accent rail while keeping closing OSC markers off line end", () => {
+	test("uses a forward marker and continuation rail while keeping closing OSC markers off line end", () => {
 		initTheme("dark");
 
 		const component = new UserMessageComponent("hello");
@@ -17,7 +17,8 @@ describe("UserMessageComponent", () => {
 		expect(lines[0]).toContain(OSC133_ZONE_START);
 		expect(stripAnsi(lines[0])).toContain("│");
 		expect(lines[0]).not.toContain(OSC133_ZONE_END);
-		expect(stripAnsi(lines[1])).toContain("│ hello");
+		expect(stripAnsi(lines[1])).toContain("› hello");
+		expect(stripAnsi(lines[2])).toContain("│");
 		expect(lines[2].startsWith(OSC133_ZONE_END + OSC133_ZONE_FINAL)).toBe(true);
 		for (const line of lines)
 			expect(stripAnsi(line).replace(/\x1b\]133;[ABC]\x07/g, "").length).toBeLessThanOrEqual(20);

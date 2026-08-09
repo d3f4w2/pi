@@ -44,7 +44,7 @@ async function renderWrite(cwd: string, filePath: string, content: string): Prom
 	for (let attempt = 0; attempt < 20; attempt++) {
 		await new Promise((resolve) => setTimeout(resolve, 5));
 		const rendered = component.render(100).join("\n");
-		if (rendered.includes("+1") || rendered.includes("新建")) return rendered;
+		if (rendered.includes("+1") || rendered.includes("Created")) return rendered;
 	}
 	return component.render(100).join("\n");
 }
@@ -62,7 +62,7 @@ describe("write tool diff preview", () => {
 		await writeFile(path.join(directory, "example.ts"), "const value = 1;\n", "utf8");
 
 		const rendered = await renderWrite(directory, "example.ts", "const value = 2;\n");
-		expect(rendered).toContain("修改");
+		expect(rendered).toContain("Modified");
 		expect(rendered).toContain("const value = 1");
 		expect(rendered).toContain("const value = 2");
 		expect(rendered).toContain("+1");
@@ -74,7 +74,7 @@ describe("write tool diff preview", () => {
 		tempDirectories.push(directory);
 
 		const rendered = await renderWrite(directory, "new.ts", "export {};\n");
-		expect(rendered).toContain("新建");
+		expect(rendered).toContain("Created");
 		expect(rendered).toContain("export {}");
 		expect(rendered).toContain("+1");
 	});

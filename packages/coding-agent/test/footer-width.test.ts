@@ -157,7 +157,8 @@ describe("FooterComponent width handling", () => {
 		const footer = new FooterComponent(session, createFooterData(1));
 		const lines = footer.render(80);
 
-		expect(lines[0]).toContain(theme.fg("success", "(main)"));
+		expect(lines[0]).toContain(theme.fg("dim", "git:"));
+		expect(lines[0]).toContain(theme.fg("accent", "main"));
 		expect(lines[1]).toContain(theme.fg("accent", "test-model"));
 	});
 
@@ -175,6 +176,7 @@ describe("FooterComponent width handling", () => {
 		const footer = new FooterComponent(session, createFooterData(1));
 		const stats = stripAnsi(footer.render(40)[1]);
 
+		expect(stats).toContain("Σ460k");
 		expect(stats).toContain("12.3%/200k");
 		expect(stats).toContain("test-model");
 	});
@@ -214,7 +216,24 @@ describe("FooterComponent width handling", () => {
 		const footer = new FooterComponent(session, createFooterData(1));
 
 		const statsLine = stripAnsi(footer.render(120)[1]);
+		expect(statsLine).toContain("total 160");
 		expect(statsLine).toContain("$1.250");
+	});
+
+	it("counts cache traffic in the cumulative total", () => {
+		const session = createSession({
+			sessionName: "",
+			usage: {
+				input: 100,
+				output: 20,
+				cacheRead: 300,
+				cacheWrite: 80,
+				cost: { total: 0.01 },
+			},
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		expect(stripAnsi(footer.render(80)[1])).toContain("total 500");
 	});
 
 	it("shows the latest cache hit rate when cache usage is present", () => {

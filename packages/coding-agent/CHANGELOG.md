@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added a persistent `language` setting with automatic system-locale detection, Simplified Chinese and English interfaces, immediate runtime switching, typed message dictionaries, English fallback, and bilingual Express Track settings, model, thinking, editor, and footer surfaces.
 - Added a fullscreen exit output setting to choose between printing the final transcript and only a session resume hint.
 - Added stale-safe anchored reads and atomic edits: ordinary text reads now return compact line hashes and a file revision, while edit validates anchored ranges and stale files before replacing local files atomically.
 - Added automatic local structural outlines for long TypeScript, JavaScript, TSX, HTML, CSS, Python, and Go reads, with exact range expansion, bounded content-revision caching, and immediate verbatim fallback.
@@ -32,7 +33,7 @@
 
 ### Changed
 
-- Refreshed the interactive TUI with responsive `pi-go` startup branding, a quiet default workspace with `Ctrl+O` detail disclosure, fixed-width forward loading motion, semantic menu and tool states, quieter user/tool presentation, and priority-aware colored footer segments that remain useful on narrow terminals.
+- Refreshed the interactive TUI with the `pi-go` Express Track identity: responsive startup branding, ice-blue and warm-white palettes, a quiet default workspace with `Ctrl+O` detail disclosure, fixed-width forward loading motion, continuous `›`/`│` interaction rails, an input border that exposes conversation/terminal and safety modes, consistent primary overlay chrome, quieter user/tool presentation, and a stable two-row footer with explicit Git branch, cumulative token total, context, and model state.
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
 - Changed the built-in `grep` tool to be active by default and stopped disabled exact-search capability from being silently replaced with shell `rg` or `grep` commands.
 - Changed Windows terminal routing to use Git Bash for portable commands, support an explicit PowerShell executor for Windows-only operations, and skip legacy WSL `bash.exe` relay paths.

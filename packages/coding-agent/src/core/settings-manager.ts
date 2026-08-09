@@ -13,6 +13,7 @@ import {
 	resolveContextPruningSettings,
 } from "./context-hygiene.ts";
 import { DEFAULT_HTTP_IDLE_TIMEOUT_MS, parseHttpIdleTimeoutMs } from "./http-dispatcher.ts";
+import { isLanguageSetting, type LanguageSetting } from "./language.ts";
 
 export interface CompactionSettings {
 	enabled?: boolean; // default: true
@@ -110,6 +111,7 @@ export type PackageSource =
 
 export interface Settings {
 	lastChangelogVersion?: string;
+	language?: LanguageSetting;
 	defaultProvider?: string;
 	defaultModel?: string;
 	defaultThinkingLevel?: ThinkingLevel;
@@ -690,6 +692,17 @@ export class SettingsManager {
 
 	getLastChangelogVersion(): string | undefined {
 		return this.settings.lastChangelogVersion;
+	}
+
+	getLanguage(): LanguageSetting {
+		const language = this.globalSettings.language;
+		return isLanguageSetting(language) ? language : "auto";
+	}
+
+	setLanguage(language: LanguageSetting): void {
+		this.globalSettings.language = language;
+		this.markModified("language");
+		this.save();
 	}
 
 	setLastChangelogVersion(version: string): void {

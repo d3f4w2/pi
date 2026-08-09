@@ -1,28 +1,13 @@
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
-import {
-	Container,
-	type SelectItem,
-	SelectList,
-	type SelectListLayoutOptions,
-	Spacer,
-	Text,
-} from "@earendil-works/pi-tui";
+import { Container, type SelectItem, SelectList, type SelectListLayoutOptions, Spacer } from "@earendil-works/pi-tui";
+import { t } from "../i18n/index.ts";
 import { getSelectListTheme, theme } from "../theme/theme.ts";
 import { DynamicBorder } from "./dynamic-border.ts";
+import { PanelHeaderComponent, PanelHintComponent } from "./panel-chrome.ts";
 
 const THINKING_SELECT_LIST_LAYOUT: SelectListLayoutOptions = {
 	minPrimaryColumnWidth: 12,
 	maxPrimaryColumnWidth: 32,
-};
-
-const LEVEL_DESCRIPTIONS: Record<ThinkingLevel, string> = {
-	off: "No reasoning",
-	minimal: "Very brief reasoning (~1k tokens)",
-	low: "Light reasoning (~2k tokens)",
-	medium: "Moderate reasoning (~8k tokens)",
-	high: "Deep reasoning (~16k tokens)",
-	xhigh: "Extra-high reasoning (~32k tokens)",
-	max: "Maximum reasoning",
 };
 
 /**
@@ -36,19 +21,17 @@ export class ThinkingSelectorComponent extends Container {
 		availableLevels: ThinkingLevel[],
 		onSelect: (level: ThinkingLevel) => void,
 		onCancel: () => void,
-		title = "Thinking level",
+		title = t("thinking.title"),
 	) {
 		super();
 
 		const thinkingLevels: SelectItem[] = availableLevels.map((level) => ({
 			value: level,
 			label: level,
-			description: LEVEL_DESCRIPTIONS[level],
+			description: t(`thinking.${level}.description`),
 		}));
 
-		// Add top border
-		this.addChild(new DynamicBorder());
-		this.addChild(new Text(theme.bold(title), 1, 0));
+		this.addChild(new PanelHeaderComponent(title));
 		this.addChild(new Spacer(1));
 
 		// Create selector
@@ -74,9 +57,17 @@ export class ThinkingSelectorComponent extends Container {
 		};
 
 		this.addChild(this.selectList);
+		this.addChild(new Spacer(1));
+		this.addChild(
+			new PanelHintComponent([
+				`↑/↓ ${t("common.select")}`,
+				`Enter ${t("common.confirm")}`,
+				`Esc ${t("common.back")}`,
+			]),
+		);
 
 		// Add bottom border
-		this.addChild(new DynamicBorder());
+		this.addChild(new DynamicBorder((text) => theme.fg("borderMuted", text)));
 	}
 
 	getSelectList(): SelectList {
