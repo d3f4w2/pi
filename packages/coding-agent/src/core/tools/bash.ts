@@ -60,9 +60,24 @@ const bashSchema = Type.Object({
 	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
 });
 
+const bashBasePromptGuidelines = [
+	"When the grep tool is available, never use bash to run rg, grep, findstr, or Select-String for file-content searches.",
+	...(process.platform === "win32"
+		? [
+				'Use executor="powershell" only for Windows-only operations such as registry, services, COM, certificates, or PowerShell cmdlets. Keep portable Git, npm, Node, or Python commands in the default bash executor.',
+			]
+		: []),
+] as const;
+
 export const bashToolSystemPromptContribution = {
-	snippet: "Execute bash commands (ls, grep, find, etc.)",
-	guidelines: ["You can inspect PI_* environment variables for current model and session details."],
+	snippet:
+		process.platform === "win32"
+			? "Run portable commands in Git Bash or Windows-only commands in PowerShell"
+			: "Execute build, test, Git, package, and system commands",
+	guidelines: [
+		...bashBasePromptGuidelines,
+		"PI_* environment variables contain current model and session details; inspect them only when the user asks for that information.",
+	],
 } as const;
 
 export type BashToolInput = Static<typeof bashSchema>;
@@ -349,23 +364,10 @@ export function createBashToolDefinition(
 		name: "bash",
 		label: "bash",
 		description: `Execute terminal commands in the current working directory. Bash is the default executor; on Windows, select the PowerShell executor only for Windows-only operations. Use the dedicated grep tool for file-content searches when it is available. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file.`,
-		promptSnippet:
-			process.platform === "win32"
-				? "Run portable commands in Git Bash or Windows-only commands in PowerShell"
-				: "Execute build, test, Git, package, and system commands",
-		promptGuidelines: [
-			"When the grep tool is available, never use bash to run rg, grep, findstr, or Select-String for file-content searches.",
-			...(process.platform === "win32"
-				? [
-						'Use executor="powershell" only for Windows-only operations such as registry, services, COM, certificates, or PowerShell cmdlets. Keep portable Git, npm, Node, or Python commands in the default bash executor.',
-					]
-				: []),
-			...(exposeSessionEnvironment
-				? [
-						"PI_* environment variables contain current model and session details; inspect them only when the user asks for that information.",
-					]
-				: []),
-		],
+		promptSnippet: bashToolSystemPromptContribution.snippet,
+		promptGuidelines: exposeSessionEnvironment
+			? [...bashToolSystemPromptContribution.guidelines]
+			: [...bashBasePromptGuidelines],
 		parameters: bashSchema,
 		async execute(
 			_toolCallId,

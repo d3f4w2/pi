@@ -31,6 +31,11 @@ describe("built-in tool system prompt contributions", () => {
 	test("keeps bash session-environment guidance conditional", () => {
 		const definition = createBashToolDefinition("/workspace", { exposeSessionEnvironment: false });
 
-		expect(definition.promptGuidelines).toBeUndefined();
+		expect(definition.promptGuidelines).not.toContain(
+			"PI_* environment variables contain current model and session details; inspect them only when the user asks for that information.",
+		);
+		expect(definition.promptGuidelines).toContain(
+			"When the grep tool is available, never use bash to run rg, grep, findstr, or Select-String for file-content searches.",
+		);
 	});
 });
