@@ -15,6 +15,83 @@ P3 closes the observed transient-gateway gap without increasing the configured t
 
 No paid provider request was sent for P3.
 
+## Consolidated P0-P3 Metrics
+
+### Current live provider observations
+
+| Metric | Cold request | Immediate warm request | Change |
+| --- | ---: | ---: | ---: |
+| Prompt tokens | 13,136 | 13,194 | +58 |
+| Provider cache-read tokens | 0 | 12,800 | +12,800 |
+| Provider cache-read rate | 0% | 97.01% | +97.01 percentage points |
+| Uncached prompt remainder | 13,136 | 394 | -97.00% |
+| Wall time | 13.4 s | 6.0 s | -55.22% observed |
+| Output throughput | 3.7 tok/s | 14.9 tok/s | 4.03x observed |
+| Output tokens | 49 | 89 | +40 |
+
+The cache-rate change is provider-reported and directly comparable. Wall time and throughput are observations from different model outputs, not a controlled latency benchmark; the table records them but does not attribute the complete speed difference to caching.
+
+The warm request left only 394 of 13,194 prompt tokens uncached, or 2.99%. This is the strongest current post-routing provider measurement.
+
+### Historical real-session baseline
+
+| Metric | Value |
+| --- | ---: |
+| Pre-routing long sessions | 8 |
+| Successful provider calls | 69 |
+| Prompt tokens | 1,880,309 |
+| Cache-read tokens | 1,410,688 |
+| Mixed cold/warm weighted rate | 75.02% |
+| First-call weighted rate | 13.69% |
+| Subsequent-call weighted rate | 78.13% |
+| Identified prefix-gap upper bound | 185,638 tokens |
+| Historical maximum recoverable rate | 84.90% |
+
+These sessions all predate shared-prefix routing. They are the comparison baseline, not the optimized result. The 84.90% value is an optimistic replay ceiling for the old trace and must not replace the live 97.01% warm measurement.
+
+### Deterministic optimization proofs
+
+| Optimization | Before | After | Measured effect |
+| --- | ---: | ---: | ---: |
+| Changed dynamic developer suffix | 0 complete reusable prefix bytes | 98,441 bytes | +98,441 bytes |
+| Official stateful Responses upload | 100,703-byte full payload | 2,197-byte delta | -97.82% upload/serialization bytes |
+| Repeated 512-block local conversion | 81.99 ms | 0.99 ms | 82.64x latest replay speedup |
+| P0-P2 conversion benchmark | uncached | memoized | 79.86x three-run median speedup |
+| Segmented stable boundary | implicit only | 22,338-byte explicit boundary | visible payload hash unchanged |
+| Transient gateway retry | failure reaches outer lifecycle | one local retry | identical body and headers |
+
+The stateful Responses result applies only to official OpenAI upload and serialization. OpenAI input billing remains unchanged. The configured third-party endpoint remains on the implicit, stateless path.
+
+### Retry, reliability, and cost limits
+
+| Metric | Optimized behavior |
+| --- | --- |
+| Default local gateway retries | 1 |
+| Default retry statuses | statusless transport failure, HTTP 502, 503, 504 |
+| Default HTTP 429 retries | 0 |
+| Request mutation across retry | 0 body changes, 0 header changes |
+| Retry diagnostic payload | attempt count plus `success` or `failed` only |
+| Default AgentSession retry budget | 3 retries after the initial attempt |
+| Maximum attempts under that budget | 4 total HTTP attempts |
+| Nested retry multiplication | prevented |
+| Explicit provider count above remaining budget | capped |
+| Paid requests used by P3 proof | 0 |
+
+The observed pre-P3 502 recovery took 9.18 seconds and returned on a cold route. P3 moves the first recovery attempt inside the original provider request lifecycle. It preserves all client-controlled cache inputs, but provider failover can still select a cold shard.
+
+### Verification coverage
+
+| Verification | Result |
+| --- | ---: |
+| AI provider tests | 56/56 passed |
+| Coding Agent tests | 67/67 passed |
+| Total focused tests | 123/123 passed |
+| Repository Biome scope | 1,287 files, no fixes |
+| Full `npm run check` | passed |
+| Segmented serializer dry run | `verdict: proven` |
+| Historical replay provider requests | 0 |
+| P3 paid provider requests | 0 |
+
 ## Live Trace That Motivated P3
 
 The trace came from the configured `rayin-gpt/gpt-5.6-terra` OpenAI-compatible Responses endpoint after shared-prefix routing was active:
