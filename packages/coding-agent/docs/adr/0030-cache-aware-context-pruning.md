@@ -45,6 +45,8 @@ The bounded live experiment sent exactly three requests to `rayin-gpt/gpt-5.6-te
 
 The [complete experiment record](../experiments/2026-08-10-context-cache-prefix-proof.md) contains commands, hashes, measurements, limits, and the distinction between client proof and provider evidence.
 
+A follow-up isolated OpenAI's `prompt_cache_breakpoint` from `prompt_cache_options`. The offline proof confirmed one breakpoint, no options object, and identical 19,269-byte stable prefixes and cache keys. The first bounded live request to the same configured model returned `502 status code (no body)`, so the run stopped after one request and explicit breakpoint support remains disabled. This is sufficient for the deployment decision but not evidence that every future proxy version will reject the field.
+
 ## Alternatives Considered
 
 ### Keep unbounded pruning and rely on minimum savings
@@ -64,3 +66,5 @@ Deferred because provider and proxy TTLs differ, cache accounting may be unavail
 - [Context Hygiene Architecture](../context-hygiene-architecture.md)
 - [ADR-0002](0002-provider-only-context-hygiene.md)
 - [Oh My Pi cache-aware pruning](https://github.com/can1357/oh-my-pi/blob/main/packages/agent/src/compaction/pruning.ts)
+- [Breakpoint-only prompt cache experiment](../experiments/2026-08-10-breakpoint-only-cache-proof.md)
+- [OpenAI prompt caching guide](https://developers.openai.com/api/docs/guides/prompt-caching)

@@ -40,7 +40,7 @@
 
 ### Changed
 
-- Changed provider-context hygiene with an opt-in cache guard that can limit routine tool-result rewrites to a configured all-message suffix, while still pruning exact tail duplicates and correctness-critical stale reads; it remains disabled by default after the target provider showed equal cache reads and higher uncached input with the guard enabled.
+- Changed provider-context hygiene with an opt-in cache guard that can limit routine tool-result rewrites to a configured all-message suffix, while still pruning exact tail duplicates and correctness-critical stale reads; it remains disabled by default after the target provider showed equal cache reads and higher uncached input with the guard enabled, and explicit prompt-cache breakpoints remain disabled after an isolated breakpoint-only request returned 502.
 - Separated direct code regression cases into `/tests` and deterministic evaluator infrastructure checks into `/evals-dev`, so neither is presented as Agent capability evaluation.
 - Changed the PowerShell development launcher to execute TypeScript source through Node's native strip-only mode, removing repeated `tsx` startup work while preserving immediate source updates and caller-directory restoration.
 - Refreshed the interactive TUI with the `pi-go` Express Track identity: responsive startup branding, ice-blue and warm-white palettes, a quiet default workspace with `Ctrl+O` detail disclosure, fixed-width forward loading motion, continuous `›`/`│` interaction rails, an input border that exposes conversation/terminal and safety modes, consistent primary overlay chrome, quieter user/tool presentation, and a stable two-row footer with explicit Git branch, cumulative token total, context, and model state.
