@@ -4,6 +4,9 @@
 
 ### Added
 
+- Added real Agent capability evaluation through `/evals`, launching fresh RPC Agent processes in isolated temporary fixtures with one initial case each for navigation, bug fixing, verification, recovery, and scope control, hidden post-run verification, two-minute case timeouts, token budgets, explicit cost confirmation, and compact local results.
+- Added durable `Ctrl+O` expandable Agent evaluation reports with bounded execution traces, tool input/result summaries, final-answer evidence, latency breakdowns, token splits, hidden-verifier results, and local-only session rendering that does not enter model context.
+- Added automatic neutral comparison against the previous run of each Agent evaluation case, showing configuration, result, latency, token, tool-error, and two-row tool-usage changes without new commands or automatic quality judgements.
 - Added a local regression-test quality gate requiring post-failure code mutation and passing verification before generation, plus supported-framework, assertion, and real product-reference evidence before second review; self-proving fake tests are rejected without model judging.
 - Added a single `/evals` evaluation-center menu for running the latest or a selected approved regression case with hash verification, bounded direct `node:test`, Vitest, pytest, or Go test execution, and compact in-TUI results.
 - Added user-approved regression-test capture from recovered real failures, with generation-time tool isolation, two explicit review gates, persistent prompt suppression, bounded secret-scanned drafts, new-file-only atomic writes, rollback, source metadata, and Chinese/English approval UI.
@@ -37,6 +40,7 @@
 
 ### Changed
 
+- Separated direct code regression cases into `/tests` and deterministic evaluator infrastructure checks into `/evals-dev`, so neither is presented as Agent capability evaluation.
 - Changed the PowerShell development launcher to execute TypeScript source through Node's native strip-only mode, removing repeated `tsx` startup work while preserving immediate source updates and caller-directory restoration.
 - Refreshed the interactive TUI with the `pi-go` Express Track identity: responsive startup branding, ice-blue and warm-white palettes, a quiet default workspace with `Ctrl+O` detail disclosure, fixed-width forward loading motion, continuous `›`/`│` interaction rails, an input border that exposes conversation/terminal and safety modes, consistent primary overlay chrome, quieter user/tool presentation, and a stable two-row footer with explicit Git branch, cumulative token total, context, and model state.
 - Replaced the inherited Mistral SDK transport with a native Chat Completions HTTP stream, eliminating its generated client and schema runtime overhead.
@@ -47,6 +51,7 @@
 
 ### Fixed
 
+- Fixed Agent capability evaluations appearing idle while the child Agent was working, and stopped unavoidable system-prompt input tokens from falsely failing otherwise successful cases by showing a live stage widget and enforcing output-token plus tool-call budgets instead.
 - Fixed the regression-capture extension calling runtime tool actions before extension initialization completed.
 - Fixed `tool_search` filling unused budget with weakly related tools, added explicit companion-tool loading, made empty-search budgets safe under parallel calls, isolated response-stream cleanup errors that could crash Pi, and prevented unrelated tasks from probing `PI_*` environment variables.
 - Fixed automatic LSP diagnostics missing first-turn errors while a cold language server was still starting or publishing diagnostics.

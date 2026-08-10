@@ -330,6 +330,7 @@ function createCaptureHarness(language: "zh-CN" | "en" = "zh-CN"): CaptureHarnes
 	} as unknown as ExtensionContext;
 	const api = {
 		registerCommand: vi.fn(),
+		registerEntryRenderer: vi.fn(),
 		registerTool: (tool: ToolDefinition) => {
 			toolDefinition = tool;
 		},

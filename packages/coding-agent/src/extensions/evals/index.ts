@@ -4,6 +4,14 @@ import { Type } from "typebox";
 import { getAgentDir } from "../../config.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../core/extensions/types.ts";
 import { t } from "../../modes/interactive/i18n/index.ts";
+import { AGENT_EVAL_CASES } from "./agent-cases.ts";
+import {
+	AGENT_EVAL_REPORT_ENTRY,
+	type AgentEvalReportEntryData,
+	createAgentEvalReportComponent,
+} from "./agent-report.ts";
+import { IsolatedAgentEvalRunner } from "./agent-runner.ts";
+import { AgentEvalResultStore } from "./agent-store.ts";
 import { runInfrastructureSmoke } from "./cases.ts";
 import { RecoveredFailureTracker } from "./failure-tracker.ts";
 import {
@@ -18,6 +26,11 @@ import { formatEvalComparison, formatEvalFailures, formatEvalReport } from "./re
 import { compareEvalReports } from "./scorer.ts";
 import { EvalReportStore } from "./store.ts";
 import type {
+	AgentEvalCase,
+	AgentEvalProgress,
+	AgentEvalResult,
+	AgentEvalResultStoreLike,
+	AgentEvalRunnerLike,
 	EvalReportStoreLike,
 	RecoveredFailureSignal,
 	RegressionCaseStoreLike,
@@ -25,7 +38,8 @@ import type {
 	RegressionDraftQuality,
 } from "./types.ts";
 
-const HELP = "用法：/evals 或 /evals test [case-id] | run | latest | baseline | compare | failures";
+const TESTS_HELP = "用法：/tests 或 /tests [case-id]";
+const EVALS_DEV_HELP = "用法：/evals-dev run | latest | baseline | compare | failures";
 const GRANT_TTL_MS = 5 * 60 * 1000;
 const INTERNAL_TOOL = "eval_case";
 
@@ -100,13 +114,24 @@ function formatQualityEvidence(quality: RegressionDraftQuality): string {
 	].join("\n");
 }
 
+function findPreviousAgentResult(history: readonly AgentEvalResult[], caseId: string): AgentEvalResult | undefined {
+	return [...history].reverse().find((result) => result.caseId === caseId);
+}
+
 export function createEvalsExtension(
 	store: EvalReportStoreLike,
 	now: () => Date = () => new Date(),
 	regressionStore: RegressionCaseStoreLike = new RegressionCaseStore(path.join(getAgentDir(), "evals")),
 	regressionWriter: RegressionCaseWriterLike = new RegressionCaseWriter(regressionStore),
+	agentEvalRunner: AgentEvalRunnerLike = new IsolatedAgentEvalRunner(),
+	agentEvalStore: AgentEvalResultStoreLike = new AgentEvalResultStore(path.join(getAgentDir(), "evals")),
 ): (pi: ExtensionAPI) => void {
 	return (pi) => {
+		pi.registerEntryRenderer<AgentEvalReportEntryData>(AGENT_EVAL_REPORT_ENTRY, (entry, { expanded }, theme) => {
+			const data = entry.data;
+			if (!data || data.version !== 1 || !Array.isArray(data.results)) return undefined;
+			return createAgentEvalReportComponent(data, expanded, theme);
+		});
 		const failureTracker = new RecoveredFailureTracker();
 		let pendingSignal: RecoveredFailureSignal | undefined;
 		let grant: GenerationGrant | undefined;
@@ -138,20 +163,12 @@ export function createEvalsExtension(
 			}
 		};
 
-		const chooseOperation = async (ctx: ExtensionCommandContext): Promise<string | undefined> => {
+		const chooseRegressionCase = async (ctx: ExtensionCommandContext): Promise<string | undefined> => {
 			if (!ctx.hasUI) return undefined;
 			const recentChoice = t("evalMenu.recent");
 			const historyChoice = t("evalMenu.history");
-			const reportChoice = t("evalMenu.report");
-			const advancedChoice = t("evalMenu.advanced");
-			const choice = await ctx.ui.select(t("evalMenu.title"), [
-				recentChoice,
-				historyChoice,
-				reportChoice,
-				advancedChoice,
-			]);
-			if (choice === recentChoice) return "test";
-			if (choice === reportChoice) return "latest";
+			const choice = await ctx.ui.select(t("evalMenu.title"), [recentChoice, historyChoice]);
+			if (choice === recentChoice) return "latest";
 			if (choice === historyChoice) {
 				const cases = [...(await regressionStore.listApproved())].sort((a, b) =>
 					b.approvedAt.localeCompare(a.approvedAt),
@@ -166,17 +183,113 @@ export function createEvalsExtension(
 				);
 				const selected = await ctx.ui.select(t("evalMenu.historyTitle"), choices);
 				const index = selected === undefined ? -1 : choices.indexOf(selected);
-				return index < 0 ? undefined : `test ${cases[index]?.id}`;
+				return index < 0 ? undefined : cases[index]?.id;
 			}
-			if (choice !== advancedChoice) return undefined;
-			const advancedOperations = new Map([
-				[t("evalMenu.runSmoke"), "run"],
-				[t("evalMenu.saveBaseline"), "baseline"],
-				[t("evalMenu.compare"), "compare"],
-				[t("evalMenu.failures"), "failures"],
-			]);
-			const advanced = await ctx.ui.select(t("evalMenu.advancedTitle"), [...advancedOperations.keys()]);
-			return advanced === undefined ? undefined : advancedOperations.get(advanced);
+			return undefined;
+		};
+
+		const runAgentCases = async (cases: readonly AgentEvalCase[], ctx: ExtensionCommandContext): Promise<void> => {
+			if (!ctx.model) {
+				ctx.ui.notify(t("agentEval.noModel"), "warning");
+				return;
+			}
+			if (!ctx.hasUI) {
+				ctx.ui.notify(t("agentEval.uiRequired"), "warning");
+				return;
+			}
+			const approved = await ctx.ui.confirm(
+				t("agentEval.confirmTitle"),
+				t("agentEval.confirmBody", { count: cases.length, minutes: cases.length * 2 }),
+			);
+			if (!approved) return;
+			const results: AgentEvalResult[] = [];
+			const previousResults: AgentEvalResult[] = [];
+			let comparisonUnavailable = false;
+			let history: AgentEvalResult[] = [];
+			try {
+				history = [...(await agentEvalStore.read())];
+			} catch (error) {
+				comparisonUnavailable = true;
+				ctx.ui.notify(
+					t("agentEval.comparisonReadFailed", { error: error instanceof Error ? error.message : String(error) }),
+					"warning",
+				);
+			}
+			for (let index = 0; index < cases.length; index++) {
+				const testCase = cases[index];
+				if (!testCase) continue;
+				const progressStartedAt = Date.now();
+				let progress: AgentEvalProgress = { stage: "preparing", toolCalls: 0 };
+				const renderProgress = (): void => {
+					const detail = progress.detail
+						? progress.detail.length <= 60
+							? progress.detail
+							: `${progress.detail.slice(0, 59)}…`
+						: undefined;
+					ctx.ui.setWidget?.(
+						"agent-eval-progress",
+						[
+							t("agentEval.progressTitle", { current: index + 1, total: cases.length }),
+							`› ${testCase.title}`,
+							`│ ${t(`agentEval.stage.${progress.stage}`, { tool: progress.toolName ?? "" })}`,
+							`│ ${t("agentEval.progressMetrics", {
+								seconds: Math.round((Date.now() - progressStartedAt) / 1000),
+								tools: progress.toolCalls,
+							})}`,
+							`│ ${t("agentEval.progressLimit", { seconds: Math.round(testCase.timeoutMs / 1000) })}`,
+							...(detail ? [`│ ${detail}`] : []),
+						],
+						{ placement: "aboveEditor" },
+					);
+				};
+				renderProgress();
+				const progressTimer = setInterval(renderProgress, 1_000);
+				ctx.ui.notify(t("agentEval.started", { title: testCase.title }), "info");
+				ctx.ui.setStatus(
+					"agent-eval",
+					t("agentEval.running", { current: index + 1, total: cases.length, title: testCase.title }),
+				);
+				try {
+					const result = await agentEvalRunner.run(
+						testCase,
+						{
+							provider: ctx.model.provider,
+							model: ctx.model.id,
+							thinkingLevel: ctx.thinkingLevel ?? "off",
+							tools: pi.getActiveTools(),
+							onProgress: (nextProgress) => {
+								progress = nextProgress;
+								renderProgress();
+							},
+						},
+						ctx.signal,
+					);
+					const previous = findPreviousAgentResult(history, result.caseId);
+					if (previous) previousResults.push(previous);
+					await agentEvalStore.append(result);
+					history.push(result);
+					results.push(result);
+				} catch (error) {
+					ctx.ui.notify(
+						t("agentEval.runError", { error: error instanceof Error ? error.message : String(error) }),
+						"error",
+					);
+					break;
+				} finally {
+					clearInterval(progressTimer);
+					ctx.ui.setWidget?.("agent-eval-progress", undefined);
+				}
+			}
+			ctx.ui.setStatus("agent-eval", undefined);
+			if (results.length > 0) {
+				pi.appendEntry<AgentEvalReportEntryData>(AGENT_EVAL_REPORT_ENTRY, {
+					version: 1,
+					createdAt: new Date().toISOString(),
+					results,
+					previousResults,
+					...(comparisonUnavailable ? { comparisonUnavailable: true } : {}),
+				});
+			}
 		};
 
 		const deactivateInternalTool = (): void => {
@@ -352,24 +465,90 @@ export function createEvalsExtension(
 			});
 		});
 
-		pi.registerCommand("evals", {
-			description: "打开评测中心",
+		pi.registerCommand("tests", {
+			description: t("evalMenu.commandDescription"),
 			handler: async (args, ctx) => {
-				let requested = args.trim();
 				try {
-					if (!requested) {
-						requested = (await chooseOperation(ctx)) ?? "";
-						if (!requested) return;
-					}
-					const [operation = "", selector, ...extra] = requested.toLowerCase().split(/\s+/);
-					if (operation === "test") {
-						if (extra.length > 0) {
-							ctx.ui.notify(HELP, "warning");
-							return;
-						}
-						await runRegressionCase(selector, ctx);
+					const requested = args.trim();
+					if (requested.includes(" ")) {
+						ctx.ui.notify(TESTS_HELP, "warning");
 						return;
 					}
+					const selected = requested || (await chooseRegressionCase(ctx));
+					if (!selected) return;
+					await runRegressionCase(selected === "latest" ? undefined : selected, ctx);
+				} catch (error) {
+					ctx.ui.notify(
+						t("evalCase.operationFailed", { error: error instanceof Error ? error.message : String(error) }),
+						"error",
+					);
+				}
+			},
+		});
+
+		pi.registerCommand("evals", {
+			description: t("agentEval.commandDescription"),
+			handler: async (args, ctx) => {
+				let requested = args.trim().toLowerCase();
+				if (!requested) {
+					if (!ctx.hasUI) {
+						ctx.ui.notify(t("agentEval.help"), "info");
+						return;
+					}
+					const runAll = t("agentEval.menuRunAll", { count: AGENT_EVAL_CASES.length });
+					const chooseOne = t("agentEval.menuChoose");
+					const latest = t("agentEval.menuLatest");
+					const choice = await ctx.ui.select(t("agentEval.menuTitle"), [runAll, chooseOne, latest]);
+					if (choice === runAll) requested = "run";
+					else if (choice === latest) requested = "latest";
+					else if (choice === chooseOne) {
+						const choices = AGENT_EVAL_CASES.map((testCase) =>
+							t("agentEval.caseChoice", {
+								category: t(`agentEval.category.${testCase.category}`),
+								title: testCase.title,
+							}),
+						);
+						const selected = await ctx.ui.select(t("agentEval.chooseTitle"), choices);
+						const index = selected === undefined ? -1 : choices.indexOf(selected);
+						if (index < 0) return;
+						requested = `case ${AGENT_EVAL_CASES[index]?.id}`;
+					} else return;
+				}
+				const [operation, selector, ...extra] = requested.split(/\s+/);
+				if (operation === "run" && !selector) {
+					await runAgentCases(AGENT_EVAL_CASES, ctx);
+					return;
+				}
+				if (operation === "case" && selector && extra.length === 0) {
+					const testCase = AGENT_EVAL_CASES.find((candidate) => candidate.id === selector);
+					if (!testCase) ctx.ui.notify(t("agentEval.notFound", { id: selector }), "warning");
+					else await runAgentCases([testCase], ctx);
+					return;
+				}
+				if (operation === "latest" && !selector) {
+					const history = await agentEvalStore.read();
+					const latest = history.at(-1);
+					if (!latest) ctx.ui.notify(t("agentEval.noResults"), "info");
+					else {
+						const previous = findPreviousAgentResult(history.slice(0, -1), latest.caseId);
+						pi.appendEntry<AgentEvalReportEntryData>(AGENT_EVAL_REPORT_ENTRY, {
+							version: 1,
+							createdAt: new Date().toISOString(),
+							results: [latest],
+							previousResults: previous ? [previous] : [],
+						});
+					}
+					return;
+				}
+				ctx.ui.notify(t("agentEval.help"), "warning");
+			},
+		});
+
+		pi.registerCommand("evals-dev", {
+			description: t("evalDev.commandDescription"),
+			handler: async (args, ctx) => {
+				const operation = args.trim().toLowerCase();
+				try {
 					if (operation === "run") {
 						const report = runInfrastructureSmoke(now());
 						await store.append(report);
@@ -379,12 +558,15 @@ export function createEvalsExtension(
 					const reports = await store.read();
 					const latest = reports.at(-1);
 					if (operation === "latest") {
-						ctx.ui.notify(latest ? formatEvalReport(latest) : `还没有评测报告。\n${HELP}`, "info");
+						ctx.ui.notify(
+							latest ? formatEvalReport(latest) : `还没有评测器自检报告。\n${EVALS_DEV_HELP}`,
+							"info",
+						);
 						return;
 					}
 					if (operation === "baseline") {
 						if (!latest) {
-							ctx.ui.notify(`还没有可保存的报告。先运行 /evals run。`, "warning");
+							ctx.ui.notify(`还没有可保存的报告。先运行 /evals-dev run。`, "warning");
 							return;
 						}
 						await store.saveBaseline(latest);
@@ -394,7 +576,10 @@ export function createEvalsExtension(
 					if (operation === "compare") {
 						const baseline = await store.readBaseline();
 						if (!baseline || !latest) {
-							ctx.ui.notify("缺少基线或候选报告。先运行 /evals run，再运行 /evals baseline。", "warning");
+							ctx.ui.notify(
+								"缺少基线或候选报告。先运行 /evals-dev run，再运行 /evals-dev baseline。",
+								"warning",
+							);
 							return;
 						}
 						const comparison = compareEvalReports(baseline, latest);
@@ -405,7 +590,7 @@ export function createEvalsExtension(
 						ctx.ui.notify(latest ? formatEvalFailures(latest) : "还没有评测报告。", "info");
 						return;
 					}
-					ctx.ui.notify(HELP, "warning");
+					ctx.ui.notify(EVALS_DEV_HELP, "warning");
 				} catch (error) {
 					ctx.ui.notify(`评测操作失败：${error instanceof Error ? error.message : String(error)}`, "error");
 				}
