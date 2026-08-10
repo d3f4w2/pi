@@ -409,14 +409,10 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 		});
 
 		it("should mark the stable system prefix for explicit GPT-5.6 caching", async () => {
-			const baseModel = getModel("openai", "gpt-5.6-sol");
-			const model = {
-				...baseModel,
-				compat: {
-					...baseModel.compat,
-					supportsPromptCacheBreakpoints: true,
-				},
-			};
+			const model = getModel("openai", "gpt-5.6-sol");
+			expect(model.compat?.supportsExplicitPromptCacheMode).toBe(true);
+			expect(model.compat?.supportsPromptCacheBreakpoints).toBe(true);
+			expect(getModel("openai", "gpt-4o-mini").compat?.supportsPromptCacheBreakpoints).not.toBe(true);
 			const stableSystemPrompt = "Stable cache experiment instruction. ".repeat(400);
 			let capturedPayload: OpenAIResponsesCachePayload | undefined;
 

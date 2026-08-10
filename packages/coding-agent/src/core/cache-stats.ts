@@ -1,4 +1,4 @@
-import type { AssistantMessage } from "@earendil-works/pi-ai";
+import type { Api, AssistantMessage, Model, OpenAIResponsesCompat } from "@earendil-works/pi-ai";
 import type { SessionEntry } from "./session-manager.ts";
 
 /**
@@ -6,6 +6,9 @@ import type { SessionEntry } from "./session-manager.ts";
  * likely cause of a miss. Anthropic's default cache TTL is 5 minutes.
  */
 export const CACHE_TTL_MS = 5 * 60 * 1000;
+
+/** GPT-5.6 explicit cache entries are configured with a 30-minute lifetime. */
+export const EXPLICIT_OPENAI_CACHE_TTL_MS = 30 * 60 * 1000;
 
 /** Per-turn misses at or below this are cache breakpoint granularity noise. */
 const NOISE_FLOOR_TOKENS = 1024;
@@ -18,6 +21,10 @@ export interface CacheMiss {
 	missedCost: number;
 	/** Milliseconds since the previous request (which last refreshed the cache). */
 	idleMs: number;
+	/** Model-aware lifetime used to classify the idle gap. */
+	cacheTtlMs: number;
+	/** Whether the idle gap exceeded the model-aware cache lifetime. */
+	expiredLikely: boolean;
 	/** True when the model changed relative to the previous request. */
 	modelChanged: boolean;
 }
@@ -31,7 +38,26 @@ export interface CacheWasteTotals {
 
 /** Minimal pricing lookup, satisfied by ModelRuntime. Cost is $/million tokens. */
 export interface ModelPriceSource {
-	getModel(provider: string, modelId: string): { cost: { cacheRead: number } } | undefined;
+	getModel(
+		provider: string,
+		modelId: string,
+	):
+		| {
+				api?: Api;
+				cost: { cacheRead: number };
+				compat?: Model<Api>["compat"];
+		  }
+		| undefined;
+}
+
+function getCacheTtlMs(message: AssistantMessage, models: ModelPriceSource): number {
+	const model = models.getModel(message.provider, message.model);
+	const compat = model?.api === "openai-responses" ? (model.compat as OpenAIResponsesCompat | undefined) : undefined;
+	return model?.api === "openai-responses" &&
+		compat?.supportsExplicitPromptCacheMode === true &&
+		compat.supportsPromptCacheBreakpoints === true
+		? EXPLICIT_OPENAI_CACHE_TTL_MS
+		: CACHE_TTL_MS;
 }
 
 /** The last request seen by the scan; everything in its prompt should be cached. */
@@ -81,10 +107,14 @@ function detectMiss(
 			? usage.cost.cacheRead / usage.cacheRead
 			: (models.getModel(message.provider, message.model)?.cost.cacheRead ?? 0) / 1_000_000;
 
+	const idleMs = Math.max(0, message.timestamp - prev.timestamp);
+	const cacheTtlMs = getCacheTtlMs(message, models);
 	return {
 		missedTokens,
 		missedCost: missedTokens * Math.max(0, paidPerToken - readPerToken),
-		idleMs: Math.max(0, message.timestamp - prev.timestamp),
+		idleMs,
+		cacheTtlMs,
+		expiredLikely: idleMs >= cacheTtlMs,
 		modelChanged: `${message.provider}/${message.model}` !== prev.modelKey,
 	};
 }

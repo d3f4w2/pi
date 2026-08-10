@@ -925,6 +925,18 @@ export class AgentSession {
 		return this.agent.state.systemPrompt;
 	}
 
+	/**
+	 * Exact cacheable base prefix for the current system prompt.
+	 * Extensions that prepend or replace the base disable segmented caching.
+	 */
+	get promptCacheStableSystemPrompt(): string | undefined {
+		const effectivePrompt = this.agent.state.systemPrompt;
+		if (this._baseSystemPrompt.length === 0 || !effectivePrompt.startsWith(this._baseSystemPrompt)) {
+			return undefined;
+		}
+		return this._baseSystemPrompt;
+	}
+
 	/** Current retry attempt (0 if not retrying) */
 	get retryAttempt(): number {
 		return this._retryAttempt;

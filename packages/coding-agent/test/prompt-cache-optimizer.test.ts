@@ -2,7 +2,9 @@ import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
 import {
 	optimizeOpenAIResponsesPromptCache,
+	PromptCacheDiagnosticTracker,
 	type PromptCacheOptimization,
+	type PromptCacheRequestDiagnostic,
 } from "../src/core/prompt-cache-optimizer.ts";
 import { createAgentSession } from "../src/core/sdk.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
@@ -31,6 +33,7 @@ function createPayload(
 		userText?: string;
 		systemText?: string;
 		toolDescription?: string;
+		toolNames?: string[];
 		textFormatName?: string;
 	} = {},
 ): Record<string, unknown> {
@@ -46,14 +49,12 @@ function createPayload(
 				content: [{ type: "input_text", text: options.userText ?? "dynamic-user-a" }],
 			},
 		],
-		tools: [
-			{
-				type: "function",
-				name: "read",
-				description: options.toolDescription ?? "Read a file",
-				parameters: { type: "object", properties: { path: { type: "string" } } },
-			},
-		],
+		tools: (options.toolNames ?? ["read"]).map((name) => ({
+			type: "function",
+			name,
+			description: options.toolDescription ?? "Read a file",
+			parameters: { type: "object", properties: { path: { type: "string" } } },
+		})),
 		text: {
 			format: {
 				type: "json_schema",
@@ -95,12 +96,89 @@ describe("shared-prefix prompt cache optimizer", () => {
 
 		const firstKey = optimizedKey(first);
 		expect(optimizedKey(second)).toBe(firstKey);
-		expect(firstKey).toMatch(/^pi-prefix-v1-[a-f0-9]{48}$/);
+		expect(firstKey).toMatch(/^pi-prefix-v2-[a-f0-9]{48}$/);
 		expect(firstKey.length).toBeLessThanOrEqual(64);
 		expect(firstKey).not.toContain("repo");
 		expect(firstKey).not.toContain("stable-system-instructions");
 		expect(first.diagnostic.stableShapeSha256).toHaveLength(64);
 		expect(first.diagnostic.stableShapeBytes).toBeGreaterThan(0);
+	});
+
+	it("keeps a stable route and moves the explicit breakpoint before dynamic system suffixes", () => {
+		const stableSystemPrompt = "stable-system-instructions";
+		const firstFullPrompt = `${stableSystemPrompt}\n\n<dynamic>task revision 1</dynamic>`;
+		const secondFullPrompt = `${stableSystemPrompt}\n\n<dynamic>task revision 2</dynamic>`;
+		const model = createModel({
+			compat: {
+				supportsExplicitPromptCacheMode: true,
+				supportsPromptCacheBreakpoints: true,
+			},
+		});
+		const first = optimizeOpenAIResponsesPromptCache(
+			createPayload({ cacheKey: "session-a", systemText: firstFullPrompt }),
+			model,
+			"/repo",
+			{ stableSystemPrompt },
+		);
+		const second = optimizeOpenAIResponsesPromptCache(
+			createPayload({ cacheKey: "session-b", systemText: secondFullPrompt }),
+			model,
+			"/repo",
+			{ stableSystemPrompt },
+		);
+
+		expect(optimizedKey(second)).toBe(optimizedKey(first));
+		expect(second.diagnostic.stableSystemPromptSha256).toBe(first.diagnostic.stableSystemPromptSha256);
+		expect(second.diagnostic.fullSystemPromptSha256).not.toBe(first.diagnostic.fullSystemPromptSha256);
+		expect(second.diagnostic.dynamicSystemPromptBytes).toBeGreaterThan(0);
+		expect(second.diagnostic.explicitBreakpoint).toBe("applied");
+
+		const payload = second.payload as Record<string, unknown>;
+		const input = payload.input as Array<Record<string, unknown>>;
+		const content = input[0].content as Array<Record<string, unknown>>;
+		expect(content).toEqual([
+			{
+				type: "input_text",
+				text: stableSystemPrompt,
+				prompt_cache_breakpoint: { mode: "explicit" },
+			},
+			{ type: "input_text", text: "\n\n<dynamic>task revision 2</dynamic>" },
+		]);
+		expect(content.map((item) => item.text).join("")).toBe(secondFullPrompt);
+		expect(payload.prompt_cache_options).toEqual({ mode: "explicit", ttl: "30m" });
+		expect(payload.prompt_cache_retention).toBeUndefined();
+	});
+
+	it("keeps unsupported and mismatched explicit breakpoints off without losing stable routing", () => {
+		const stableSystemPrompt = "stable-system-instructions";
+		const fullPrompt = `${stableSystemPrompt}\n\ndynamic`;
+		const unsupported = optimizeOpenAIResponsesPromptCache(
+			createPayload({ cacheKey: "session", systemText: fullPrompt }),
+			createModel(),
+			"/repo",
+			{ stableSystemPrompt },
+		);
+		expect(unsupported.diagnostic.explicitBreakpoint).toBe("unsupported");
+		expect(
+			((unsupported.payload as Record<string, unknown>).input as Array<Record<string, unknown>>)[0].content,
+		).toBe(fullPrompt);
+
+		const capableModel = createModel({
+			compat: {
+				supportsExplicitPromptCacheMode: true,
+				supportsPromptCacheBreakpoints: true,
+			},
+		});
+		const mismatch = optimizeOpenAIResponsesPromptCache(
+			createPayload({ cacheKey: "session", systemText: "different-system" }),
+			capableModel,
+			"/repo",
+			{ stableSystemPrompt },
+		);
+		expect(mismatch.diagnostic.explicitBreakpoint).toBe("prefix-mismatch");
+		expect(((mismatch.payload as Record<string, unknown>).input as Array<Record<string, unknown>>)[0].content).toBe(
+			"different-system",
+		);
 	});
 
 	it("rotates the key when a cache-relevant stable input changes", () => {
@@ -154,6 +232,60 @@ describe("shared-prefix prompt cache optimizer", () => {
 		expect(malformed.payload).toBe(malformedPayload);
 		expect(malformed.diagnostic.reason).toBe("invalid-payload");
 	});
+
+	it("classifies suffix-only changes, tool-order drift, and hot keys without exposing content", () => {
+		const model = createModel();
+		const tracker = new PromptCacheDiagnosticTracker();
+		const stableSystemPrompt = "private-stable-system";
+		const first = optimizeOpenAIResponsesPromptCache(
+			createPayload({
+				cacheKey: "a",
+				systemText: `${stableSystemPrompt}\n\nprivate-suffix-a`,
+				toolNames: ["read", "write"],
+			}),
+			model,
+			"C:/private/project",
+			{ stableSystemPrompt },
+		);
+		const suffixChanged = optimizeOpenAIResponsesPromptCache(
+			createPayload({
+				cacheKey: "b",
+				systemText: `${stableSystemPrompt}\n\nprivate-suffix-b`,
+				toolNames: ["read", "write"],
+			}),
+			model,
+			"C:/private/project",
+			{ stableSystemPrompt },
+		);
+		const orderChanged = optimizeOpenAIResponsesPromptCache(
+			createPayload({
+				cacheKey: "c",
+				systemText: `${stableSystemPrompt}\n\nprivate-suffix-b`,
+				toolNames: ["write", "read"],
+			}),
+			model,
+			"C:/private/project",
+			{ stableSystemPrompt },
+		);
+
+		tracker.record(first.diagnostic, 1_000);
+		const suffixDiagnostic = tracker.record(suffixChanged.diagnostic, 2_000);
+		const orderDiagnostic = tracker.record(orderChanged.diagnostic, 3_000);
+		expect(suffixDiagnostic.keyChanged).toBe(false);
+		expect(suffixDiagnostic.changes).toEqual(["dynamic-system-suffix"]);
+		expect(orderDiagnostic.keyChanged).toBe(true);
+		expect(orderDiagnostic.changes).toContain("tool-order");
+
+		const hotKeyTracker = new PromptCacheDiagnosticTracker();
+		let hot: PromptCacheRequestDiagnostic | undefined;
+		for (let index = 0; index < 16; index++) hot = hotKeyTracker.record(first.diagnostic, 10_000 + index);
+		expect(hot?.requestsPerMinute).toBe(16);
+		expect(hot?.hotKey).toBe(true);
+		const serialized = JSON.stringify(hot);
+		expect(serialized).not.toContain("private-stable-system");
+		expect(serialized).not.toContain("private-suffix");
+		expect(serialized).not.toContain("C:/private/project");
+	});
 });
 
 describe("SDK prompt cache payload integration", () => {
@@ -179,8 +311,58 @@ describe("SDK prompt cache payload integration", () => {
 		const transformed = await session.agent.onPayload?.(createPayload({ cacheKey: "session-a" }), model);
 		if (transformed === undefined) throw new Error("SDK payload hook returned undefined");
 
-		expect(payloadCacheKey(transformed)).toMatch(/^pi-prefix-v1-/);
+		expect(payloadCacheKey(transformed)).toMatch(/^pi-prefix-v2-/);
 		expect(session.agent.sessionId).toBe("session-a");
+	});
+
+	it("uses the AgentSession base prompt as the stable boundary and emits redacted diagnostics", async () => {
+		const diagnostics: PromptCacheRequestDiagnostic[] = [];
+		const model = createModel({
+			compat: {
+				supportsExplicitPromptCacheMode: true,
+				supportsPromptCacheBreakpoints: true,
+			},
+		});
+		const { session } = await createAgentSession({
+			cwd: "/repo",
+			model,
+			sessionManager: SessionManager.inMemory("/repo"),
+			settingsManager: SettingsManager.inMemory(),
+			resourceLoader: createTestResourceLoader(),
+			onPromptCacheDiagnostic: (diagnostic) => diagnostics.push(diagnostic),
+		});
+		sessions.push(session);
+
+		const stableSystemPrompt = session.systemPrompt;
+		const fullSystemPrompt = `${stableSystemPrompt}\n\n<dynamic>revision 2</dynamic>`;
+		session.agent.state.systemPrompt = fullSystemPrompt;
+		const transformed = await session.agent.onPayload?.(
+			createPayload({ cacheKey: "session-a", systemText: fullSystemPrompt }),
+			model,
+		);
+		if (transformed === undefined) throw new Error("SDK payload hook returned undefined");
+
+		expect(session.promptCacheStableSystemPrompt).toBe(stableSystemPrompt);
+		expect(diagnostics).toHaveLength(1);
+		expect(diagnostics[0].explicitBreakpoint).toBe("applied");
+		expect(JSON.stringify(diagnostics[0])).not.toContain("revision 2");
+	});
+
+	it("ignores a throwing diagnostics observer", async () => {
+		const model = createModel();
+		const { session } = await createAgentSession({
+			cwd: "/repo",
+			model,
+			sessionManager: SessionManager.inMemory("/repo"),
+			settingsManager: SettingsManager.inMemory(),
+			resourceLoader: createTestResourceLoader(),
+			onPromptCacheDiagnostic: () => {
+				throw new Error("observer failed");
+			},
+		});
+		sessions.push(session);
+
+		await expect(session.agent.onPayload?.(createPayload({ cacheKey: "session-a" }), model)).resolves.toBeDefined();
 	});
 
 	it("preserves a cache key explicitly replaced by an extension", async () => {

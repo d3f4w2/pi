@@ -71,6 +71,48 @@ function parseTextSignature(
 	return { id: signature };
 }
 
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? (value as Record<string, unknown>)
+		: undefined;
+}
+
+function firstTokenCount(...values: unknown[]): number {
+	for (const value of values) {
+		if (typeof value === "number" && Number.isFinite(value) && value >= 0) return Math.trunc(value);
+	}
+	return 0;
+}
+
+function normalizePromptCacheUsage(usage: unknown, inputTokens: number): { cacheRead: number; cacheWrite: number } {
+	const record = asRecord(usage);
+	const inputDetails = asRecord(record?.input_tokens_details);
+	const promptDetails = asRecord(record?.prompt_tokens_details);
+	const cacheRead = Math.min(
+		inputTokens,
+		firstTokenCount(
+			inputDetails?.cached_tokens,
+			promptDetails?.cached_tokens,
+			record?.cached_tokens,
+			record?.cache_read_input_tokens,
+			record?.cache_read_tokens,
+		),
+	);
+	const cacheWrite = Math.min(
+		inputTokens - cacheRead,
+		firstTokenCount(
+			inputDetails?.cache_write_tokens,
+			inputDetails?.cache_creation_tokens,
+			promptDetails?.cache_write_tokens,
+			promptDetails?.cache_creation_tokens,
+			record?.cache_write_tokens,
+			record?.cache_creation_tokens,
+			record?.cache_creation_input_tokens,
+		),
+	);
+	return { cacheRead, cacheWrite };
+}
+
 type ToolResultOutputContent = Array<ResponseInputText | ResponseInputImage>;
 
 function convertToolResultOutput<TApi extends Api>(
@@ -570,14 +612,14 @@ export async function processResponsesStream<TApi extends Api>(
 			output.responseId = response.id;
 		}
 		if (response?.usage) {
-			const inputDetails = response.usage.input_tokens_details as
-				| { cached_tokens?: number; cache_write_tokens?: number }
-				| undefined;
-			const cachedTokens = inputDetails?.cached_tokens || 0;
-			const cacheWriteTokens = inputDetails?.cache_write_tokens || 0;
+			const inputTokens = response.usage.input_tokens || 0;
+			const { cacheRead: cachedTokens, cacheWrite: cacheWriteTokens } = normalizePromptCacheUsage(
+				response.usage,
+				inputTokens,
+			);
 			output.usage = {
 				// OpenAI includes cached and cache-write tokens in input_tokens, so subtract both.
-				input: Math.max(0, (response.usage.input_tokens || 0) - cachedTokens - cacheWriteTokens),
+				input: Math.max(0, inputTokens - cachedTokens - cacheWriteTokens),
 				output: response.usage.output_tokens || 0,
 				cacheRead: cachedTokens,
 				cacheWrite: cacheWriteTokens,

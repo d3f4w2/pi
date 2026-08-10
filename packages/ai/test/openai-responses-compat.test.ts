@@ -469,4 +469,43 @@ describe("openai-responses provider defaults", () => {
 		expect(result.usage.cost.output).toBe(model.cost.output * multiplier * tokenScale);
 		expect(result.usage.cost.total).toBe((model.cost.input + model.cost.output) * multiplier * tokenScale);
 	});
+
+	it.each([
+		["official input details", { input_tokens_details: { cached_tokens: 600, cache_write_tokens: 100 } }],
+		[
+			"chat-completions compatible details",
+			{ prompt_tokens_details: { cached_tokens: 600, cache_creation_tokens: 100 } },
+		],
+		["anthropic-compatible top-level aliases", { cache_read_input_tokens: 600, cache_creation_input_tokens: 100 }],
+	] as const)("normalizes cache usage from %s", async (_label, usageDetails) => {
+		const sse = `data: ${JSON.stringify({
+			type: "response.completed",
+			response: {
+				status: "completed",
+				usage: {
+					input_tokens: 1_000,
+					output_tokens: 20,
+					total_tokens: 1_020,
+					...usageDetails,
+				},
+			},
+		})}\n\n`;
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }),
+		);
+
+		const result = await streamOpenAIResponses(
+			getModel("openai", "gpt-5.6-terra"),
+			{
+				systemPrompt: "sys",
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			},
+			{ apiKey: "test-key" },
+		).result();
+
+		expect(result.usage.input).toBe(300);
+		expect(result.usage.cacheRead).toBe(600);
+		expect(result.usage.cacheWrite).toBe(100);
+		expect(result.usage.input + result.usage.cacheRead + result.usage.cacheWrite).toBe(1_000);
+	});
 });

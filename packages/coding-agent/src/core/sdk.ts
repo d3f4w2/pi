@@ -11,7 +11,11 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { convertToLlm } from "./messages.ts";
 import { findInitialModel } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
-import { optimizeOpenAIResponsesPromptCache } from "./prompt-cache-optimizer.ts";
+import {
+	optimizeOpenAIResponsesPromptCache,
+	PromptCacheDiagnosticTracker,
+	type PromptCacheRequestDiagnostic,
+} from "./prompt-cache-optimizer.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
@@ -84,6 +88,8 @@ export interface CreateAgentSessionOptions {
 	settingsManager?: SettingsManager;
 	/** Session start event metadata for extension runtime startup. */
 	sessionStartEvent?: SessionStartEvent;
+	/** Privacy-safe prompt-cache request diagnostics. Observer failures are ignored. */
+	onPromptCacheDiagnostic?: (diagnostic: PromptCacheRequestDiagnostic) => void;
 }
 
 /** Result from createAgentSession */
@@ -298,6 +304,8 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 	const toolFailureGuardSettings = settingsManager.getToolFailureGuardSettings();
+	const promptCacheDiagnosticTracker = new PromptCacheDiagnosticTracker();
+	let session: AgentSession | undefined;
 
 	agent = new Agent({
 		initialState: {
@@ -345,7 +353,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			}
 			// An extension that changes or removes the key owns cache routing.
 			if (getPromptCacheKey(transformedPayload) !== providerCacheKey) return transformedPayload;
-			return optimizeOpenAIResponsesPromptCache(transformedPayload, requestModel, cwd).payload;
+			const optimization = optimizeOpenAIResponsesPromptCache(transformedPayload, requestModel, cwd, {
+				stableSystemPrompt: session?.promptCacheStableSystemPrompt,
+			});
+			if (options.onPromptCacheDiagnostic) {
+				try {
+					options.onPromptCacheDiagnostic(promptCacheDiagnosticTracker.record(optimization.diagnostic));
+				} catch {
+					// Diagnostics must never block a provider request.
+				}
+			}
+			return optimization.payload;
 		},
 		onResponse: async (response, _model) => {
 			const runner = extensionRunnerRef.current;
@@ -398,7 +416,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		sessionManager.appendThinkingLevelChange(thinkingLevel);
 	}
 
-	const session = new AgentSession({
+	session = new AgentSession({
 		agent,
 		sessionManager,
 		settingsManager,

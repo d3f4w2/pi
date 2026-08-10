@@ -787,6 +787,7 @@ function applyOpenAIExplicitPromptCacheMetadata(model: Model<Api>): void {
 	model.compat = {
 		...(model.compat as OpenAIResponsesCompat | undefined),
 		supportsExplicitPromptCacheMode: true,
+		supportsPromptCacheBreakpoints: true,
 	};
 }
 

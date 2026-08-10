@@ -15,19 +15,32 @@ const models: ModelPriceSource = {
 	getModel: () => ({ cost: { cacheRead: 0.3 } }),
 };
 
+const explicitOpenAIModels: ModelPriceSource = {
+	getModel: () => ({
+		api: "openai-responses",
+		cost: { cacheRead: 0.3 },
+		compat: {
+			supportsExplicitPromptCacheMode: true,
+			supportsPromptCacheBreakpoints: true,
+		},
+	}),
+};
+
 function assistant(options: {
 	input?: number;
 	cacheRead?: number;
 	cacheWrite?: number;
 	cost?: Partial<typeof zeroCost>;
 	model?: string;
+	provider?: string;
+	api?: AssistantMessage["api"];
 	timestamp?: number;
 }): AssistantMessage {
 	return {
 		role: "assistant",
 		content: [],
-		api: "anthropic-messages",
-		provider: "test",
+		api: options.api ?? "anthropic-messages",
+		provider: options.provider ?? "test",
 		model: options.model ?? "test-model",
 		usage: {
 			input: options.input ?? 0,
@@ -112,7 +125,38 @@ describe("detectCacheMiss", () => {
 		expect(miss?.missedCost).toBeCloseTo(0.36225, 5);
 		// 600s - 60s since the previous request
 		expect(miss?.idleMs).toBe(540_000);
+		expect(miss?.cacheTtlMs).toBe(300_000);
+		expect(miss?.expiredLikely).toBe(true);
 		expect(miss?.modelChanged).toBe(false);
+	});
+
+	it("uses the verified explicit GPT-5.6 cache lifetime in miss evidence", () => {
+		const explicitTurn1 = assistant({
+			api: "openai-responses",
+			provider: "openai",
+			cacheWrite: 100_000,
+			cost: { cacheWrite: 0.375 },
+			timestamp: 0,
+		});
+		const explicitTurn2 = assistant({
+			api: "openai-responses",
+			provider: "openai",
+			cacheRead: 100_000,
+			cacheWrite: 5_000,
+			cost: { cacheRead: 0.03, cacheWrite: 0.019 },
+			timestamp: 60_000,
+		});
+		const tenMinuteMiss = assistant({
+			api: "openai-responses",
+			provider: "openai",
+			cacheWrite: 110_000,
+			cost: { cacheWrite: 0.4125 },
+			timestamp: 660_000,
+		});
+		const miss = detectCacheMiss([entry(explicitTurn1), entry(explicitTurn2)], tenMinuteMiss, explicitOpenAIModels);
+
+		expect(miss?.cacheTtlMs).toBe(1_800_000);
+		expect(miss?.expiredLikely).toBe(false);
 	});
 
 	it("flags model switches on detected misses", () => {
