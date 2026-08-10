@@ -150,6 +150,42 @@ No cache-read lift, uncached-input reduction, or latency improvement can be clai
 
 The successful implicit control still confirms that existing execution behavior and implicit caching remain available: 3,840 of 9,689 prompt tokens were reported as cache reads.
 
+## Real Long-Task Session Audit
+
+The 39.63% control result is not representative of a long task because it measures one independent request. A follow-up audit therefore aggregated the provider-reported usage already stored in real Pi sessions without sending another paid request.
+
+Audit scope and rules:
+
+- session files under the real `C:\Users\24719\Desktop\pi` workspace only;
+- assistant responses from `rayin-gpt/gpt-5.6-terra` only;
+- prompt tokens calculated as uncached input plus cache reads plus cache writes, matching the production normalization;
+- a long task requires at least five successful model responses;
+- prompt contents, credentials, endpoints, and cache keys are neither read into the result nor recorded.
+
+Eight long tasks containing 69 successful responses matched these rules:
+
+| Metric | Value |
+| --- | ---: |
+| Total prompt | 1,880,309 tokens |
+| Cache read | 1,410,688 tokens |
+| Weighted whole-task cache-read rate | 75.02% |
+| Per-session cache-read-rate range | 54.76% to 95.29% |
+
+The longest observed task contained 14 successful responses:
+
+| Metric | Value |
+| --- | ---: |
+| Total prompt | 606,170 tokens |
+| Cache read | 561,664 tokens |
+| Whole-task cache-read rate | 92.66% |
+| First turn | 12,469 prompt tokens, 0 cache reads |
+| Warm turns after the first | 94.60% cache-read rate |
+| Final turn | 52,736 of 53,131 prompt tokens cached, 99.26% |
+
+This is the relevant operational estimate for the configured third-party provider: approximately 75% across varied long tasks, with stable long sessions exceeding 90%. The earlier 39.63% remains valid only for its isolated control request. These historical sessions use the implicit path that remains active for this provider, so the audit does not depend on unsupported explicit breakpoints.
+
+The audit consumed no provider requests. Its temporary local analysis scripts were deleted after producing the aggregate numeric results.
+
 ## Cost and Request Bound
 
 - Maximum authorized attempts: 3
