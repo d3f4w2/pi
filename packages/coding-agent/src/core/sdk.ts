@@ -11,6 +11,7 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { convertToLlm } from "./messages.ts";
 import { findInitialModel } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
+import { optimizeOpenAIResponsesPromptCache } from "./prompt-cache-optimizer.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
@@ -130,6 +131,11 @@ export {
 
 function getDefaultAgentDir(): string {
 	return getAgentDir();
+}
+
+function getPromptCacheKey(payload: unknown): unknown {
+	if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return undefined;
+	return (payload as Record<string, unknown>).prompt_cache_key;
 }
 
 /**
@@ -330,12 +336,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				},
 			});
 		},
-		onPayload: async (payload, _model) => {
+		onPayload: async (payload, requestModel) => {
+			const providerCacheKey = getPromptCacheKey(payload);
 			const runner = extensionRunnerRef.current;
-			if (!runner?.hasHandlers("before_provider_request")) {
-				return payload;
+			let transformedPayload = payload;
+			if (runner?.hasHandlers("before_provider_request")) {
+				transformedPayload = (await runner.emitBeforeProviderRequest(payload)) ?? payload;
 			}
-			return runner.emitBeforeProviderRequest(payload);
+			// An extension that changes or removes the key owns cache routing.
+			if (getPromptCacheKey(transformedPayload) !== providerCacheKey) return transformedPayload;
+			return optimizeOpenAIResponsesPromptCache(transformedPayload, requestModel, cwd).payload;
 		},
 		onResponse: async (response, _model) => {
 			const runner = extensionRunnerRef.current;
