@@ -85,11 +85,44 @@ describe("PromptCacheRuntime", () => {
 		expect(report.requests).toBe(2);
 		expect(report.responses).toBe(2);
 		expect(report.actualCacheReadRate).toBeCloseTo(0.4);
+		expect(report.firstResponseCacheReadRate).toBe(0);
+		expect(report.subsequentResponseCacheReadRate).toBeCloseTo(0.8);
 		expect(report.lastResponseCacheReadRate).toBeCloseTo(0.8);
 		expect(report.exactPrefixBytes).toBeGreaterThan(0);
 		expect(report.exactPrefixByteRate).toBeGreaterThan(0);
 		expect(report.estimatedSavingsUsd).toBeGreaterThan(0);
 		expect(report.breakpointDecisions["positive-roi"]).toBe(2);
+	});
+
+	it("records provider retry recovery and failure diagnostics without error text", () => {
+		const runtime = new PromptCacheRuntime(() => model);
+		const recovered = response(8_000, 2_000);
+		recovered.diagnostics = [
+			{
+				type: "provider_request_retry",
+				timestamp: 1_000,
+				details: { attempts: 1, status: "success" },
+			},
+		];
+		const failed = response(0, 0);
+		failed.stopReason = "error";
+		failed.errorMessage = "private gateway detail";
+		failed.diagnostics = [
+			{
+				type: "provider_request_retry",
+				timestamp: 2_000,
+				details: { attempts: 2, status: "failed" },
+			},
+		];
+
+		runtime.recordResponse(recovered);
+		runtime.recordResponse(failed);
+
+		const report = runtime.snapshot();
+		expect(report.providerRetryAttempts).toBe(3);
+		expect(report.providerRetryRecoveries).toBe(1);
+		expect(report.providerRetryFailures).toBe(1);
+		expect(JSON.stringify(report)).not.toContain("private gateway detail");
 	});
 
 	it("records drift causes and never exposes payload text", () => {

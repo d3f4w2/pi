@@ -38,6 +38,12 @@ const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"
 const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
 const openAIResponsesState = new OpenAIResponsesState();
 
+function isDefaultGatewaySetupRetry(error: unknown): boolean {
+	if (typeof error !== "object" || error === null || !("status" in error)) return false;
+	const status = error.status;
+	return status === undefined || status === 502 || status === 503 || status === 504;
+}
+
 function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean {
 	if (!headers) return false;
 	const expected = name.toLowerCase();
@@ -133,6 +139,18 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			stopReason: "pending",
 			timestamp: Date.now(),
 		};
+		let providerRetryAttempts = 0;
+		const recordProviderRetryDiagnostic = (status: "success" | "failed") => {
+			if (providerRetryAttempts === 0) return;
+			output.diagnostics = [
+				...(output.diagnostics ?? []),
+				{
+					type: "provider_request_retry",
+					timestamp: Date.now(),
+					details: { attempts: providerRetryAttempts, status },
+				},
+			];
+		};
 
 		try {
 			// Create OpenAI client
@@ -162,9 +180,11 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			const statefulPreparation = openAIResponsesState.prepare(statefulKey, params);
 			const createResponse = async (requestParams: ResponseCreateParamsStreaming) =>
 				await retryProviderRequest(() => client.responses.create(requestParams, requestOptions).withResponse(), {
-					maxRetries: options?.maxRetries,
+					maxRetries: options?.maxRetries ?? 1,
 					maxRetryDelayMs: options?.maxRetryDelayMs,
 					signal: options?.signal,
+					shouldRetry: options?.maxRetries === undefined ? isDefaultGatewaySetupRetry : undefined,
+					onRetry: () => providerRetryAttempts++,
 				});
 			let responseResult: Awaited<ReturnType<typeof createResponse>>;
 			let continuationFallback = false;
@@ -231,6 +251,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 					},
 				];
 			}
+			recordProviderRetryDiagnostic("success");
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
 			stream.end();
@@ -243,6 +264,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			}
 			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
 			output.errorMessage = formatOpenAIResponsesError(error);
+			recordProviderRetryDiagnostic("failed");
 			stream.push({ type: "error", reason: output.stopReason, error: output });
 			stream.end();
 		}

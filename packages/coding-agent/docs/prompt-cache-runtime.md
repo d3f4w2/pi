@@ -10,6 +10,7 @@ Pi's cache runtime optimizes exact request prefixes without treating cache hits 
 4. On explicitly compatible providers, select the stable system boundary and up to three recent text boundaries whose estimated reuse value exceeds their write premium.
 5. Record only hashes, byte counts, decisions, request timing, and provider usage.
 6. On opted-in official OpenAI sessions, use a response handle only when the previously covered request plus response is an exact prefix of the current input and the non-input request shape is unchanged.
+7. Before a response stream starts, retry one transient gateway setup failure with the same transformed request. That provider-layer attempt consumes the same total retry budget as outer AgentSession retries.
 
 ## Safety rules
 
@@ -20,8 +21,9 @@ Pi's cache runtime optimizes exact request prefixes without treating cache hits 
 - At most four breakpoint writes are requested in one call.
 - Automatic threshold compaction can be deferred once; overflow and manual compaction cannot.
 - Official stateful continuation is opt-in, requires `store: true`, and retries the complete stateless payload on setup failure.
+- The default gateway retry applies only to statusless transport failures and HTTP 502, 503, or 504. It does not automatically retry HTTP 429, and outer retries cannot recursively start another provider retry loop.
 - Reports never contain project paths, prompt text, tool descriptions, or credentials.
 
 ## Report fields
 
-The session report exposes request and response counts, actual provider cache-read ratio, exact-prefix continuity, cache-route and shape changes, breakpoint decisions, estimated cache savings, continuation attempts/fallbacks, compaction deferrals, and local conversion memo hits. These are separate metrics: a high byte-prefix ratio does not prove the provider served a cache hit, while `usage.cacheRead` does.
+The session report exposes request and response counts, actual provider cache-read ratio, separate first-response and subsequent-response cache-read ratios, exact-prefix continuity, cache-route and shape changes, breakpoint decisions, estimated cache savings, continuation attempts/fallbacks, provider retry attempts/recoveries/failures, compaction deferrals, and local conversion memo hits. These are separate metrics: a high byte-prefix ratio does not prove the provider served a cache hit, while `usage.cacheRead` does.

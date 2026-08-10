@@ -72,10 +72,12 @@ describe("AgentSession retry", () => {
 		failCount?: number;
 		maxRetries?: number;
 		delayAssistantMessageEndMs?: number;
+		providerRetryAttemptsOnFirstFailure?: number;
 	}) {
 		const failCount = options?.failCount ?? 1;
 		const maxRetries = options?.maxRetries ?? 3;
 		const delayAssistantMessageEndMs = options?.delayAssistantMessageEndMs ?? 0;
+		const providerRetryAttemptsOnFirstFailure = options?.providerRetryAttemptsOnFirstFailure ?? 0;
 		let callCount = 0;
 
 		const model = getModel("anthropic", "claude-sonnet-4-5")!;
@@ -90,6 +92,19 @@ describe("AgentSession retry", () => {
 						const msg = createAssistantMessage("", {
 							stopReason: "error",
 							errorMessage: "overloaded_error",
+							diagnostics:
+								callCount === 1 && providerRetryAttemptsOnFirstFailure > 0
+									? [
+											{
+												type: "provider_request_retry",
+												timestamp: Date.now(),
+												details: {
+													attempts: providerRetryAttemptsOnFirstFailure,
+													status: "failed",
+												},
+											},
+										]
+									: undefined,
 						});
 						stream.push({ type: "start", partial: msg });
 						stream.push({ type: "error", reason: "error", error: msg });
@@ -163,6 +178,43 @@ describe("AgentSession retry", () => {
 		expect(events).toContain("start:2");
 		expect(events).toContain("end:success=false");
 		expect(created.session.isRetrying).toBe(false);
+	});
+
+	it("counts provider-layer retries against the shared retry budget", async () => {
+		const created = await createSession({
+			failCount: 2,
+			maxRetries: 3,
+			providerRetryAttemptsOnFirstFailure: 1,
+		});
+		const events: string[] = [];
+		created.session.subscribe((event) => {
+			if (event.type === "auto_retry_start") events.push(`start:${event.attempt}`);
+			if (event.type === "auto_retry_end") events.push(`end:success=${event.success}`);
+		});
+
+		await created.session.prompt("Test");
+
+		// The first Agent call represents initial HTTP + one provider-layer retry.
+		// Two remaining outer calls keep the total at initial + three retries.
+		expect(created.getCallCount()).toBe(3);
+		expect(events).toEqual(["start:2", "start:3", "end:success=true"]);
+	});
+
+	it("does not advertise an outer retry when the provider layer consumed the budget", async () => {
+		const created = await createSession({
+			failCount: 99,
+			maxRetries: 1,
+			providerRetryAttemptsOnFirstFailure: 1,
+		});
+		const agentEndWillRetry: boolean[] = [];
+		created.session.subscribe((event) => {
+			if (event.type === "agent_end") agentEndWillRetry.push(event.willRetry);
+		});
+
+		await created.session.prompt("Test");
+
+		expect(created.getCallCount()).toBe(1);
+		expect(agentEndWillRetry).toEqual([false]);
 	});
 
 	it("prompt waits for retry completion even when assistant message_end handling is delayed", async () => {

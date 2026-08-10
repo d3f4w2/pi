@@ -14,6 +14,8 @@ export interface PromptCacheRuntimeSnapshot {
 	cacheReadTokens: number;
 	cacheWriteTokens: number;
 	actualCacheReadRate: number;
+	firstResponseCacheReadRate: number;
+	subsequentResponseCacheReadRate: number;
 	lastResponseCacheReadRate: number;
 	exactPrefixBytes: number;
 	comparableInputBytes: number;
@@ -25,6 +27,9 @@ export interface PromptCacheRuntimeSnapshot {
 	continuationAttempts: number;
 	continuationSuccesses: number;
 	continuationFallbacks: number;
+	providerRetryAttempts: number;
+	providerRetryRecoveries: number;
+	providerRetryFailures: number;
 	lastResponseAt?: number;
 }
 
@@ -80,6 +85,11 @@ export class PromptCacheRuntime {
 	private promptTokens = 0;
 	private cacheReadTokens = 0;
 	private cacheWriteTokens = 0;
+	private successfulPromptResponses = 0;
+	private firstResponsePromptTokens = 0;
+	private firstResponseCacheReadTokens = 0;
+	private subsequentResponsePromptTokens = 0;
+	private subsequentResponseCacheReadTokens = 0;
 	private lastResponseCacheReadRate = 0;
 	private exactPrefixBytes = 0;
 	private comparableInputBytes = 0;
@@ -90,6 +100,9 @@ export class PromptCacheRuntime {
 	private continuationAttempts = 0;
 	private continuationSuccesses = 0;
 	private continuationFallbacks = 0;
+	private providerRetryAttempts = 0;
+	private providerRetryRecoveries = 0;
+	private providerRetryFailures = 0;
 	private lastResponseAt: number | undefined;
 
 	constructor(getModel: (provider: string, modelId: string) => Model<Api> | undefined) {
@@ -122,13 +135,32 @@ export class PromptCacheRuntime {
 		this.promptTokens += promptTokens;
 		this.cacheReadTokens += usage.cacheRead;
 		this.cacheWriteTokens += usage.cacheWrite;
+		if (promptTokens > 0) {
+			if (this.successfulPromptResponses === 0) {
+				this.firstResponsePromptTokens += promptTokens;
+				this.firstResponseCacheReadTokens += usage.cacheRead;
+			} else {
+				this.subsequentResponsePromptTokens += promptTokens;
+				this.subsequentResponseCacheReadTokens += usage.cacheRead;
+			}
+			this.successfulPromptResponses++;
+		}
 		this.lastResponseCacheReadRate = promptTokens > 0 ? usage.cacheRead / promptTokens : 0;
 		this.lastResponseAt = message.timestamp;
 		for (const diagnostic of message.diagnostics ?? []) {
-			if (diagnostic.type !== "openai_stateful_continuation") continue;
-			this.continuationAttempts++;
-			if (diagnostic.details?.status === "success") this.continuationSuccesses++;
-			if (diagnostic.details?.status === "fallback") this.continuationFallbacks++;
+			if (diagnostic.type === "openai_stateful_continuation") {
+				this.continuationAttempts++;
+				if (diagnostic.details?.status === "success") this.continuationSuccesses++;
+				if (diagnostic.details?.status === "fallback") this.continuationFallbacks++;
+			}
+			if (diagnostic.type === "provider_request_retry") {
+				const attempts = diagnostic.details?.attempts;
+				if (typeof attempts === "number" && Number.isInteger(attempts) && attempts > 0) {
+					this.providerRetryAttempts += attempts;
+				}
+				if (diagnostic.details?.status === "success") this.providerRetryRecoveries++;
+				if (diagnostic.details?.status === "failed") this.providerRetryFailures++;
+			}
 		}
 
 		const model = this.getModel(message.provider, message.model);
@@ -151,6 +183,12 @@ export class PromptCacheRuntime {
 			cacheReadTokens: this.cacheReadTokens,
 			cacheWriteTokens: this.cacheWriteTokens,
 			actualCacheReadRate: this.promptTokens > 0 ? this.cacheReadTokens / this.promptTokens : 0,
+			firstResponseCacheReadRate:
+				this.firstResponsePromptTokens > 0 ? this.firstResponseCacheReadTokens / this.firstResponsePromptTokens : 0,
+			subsequentResponseCacheReadRate:
+				this.subsequentResponsePromptTokens > 0
+					? this.subsequentResponseCacheReadTokens / this.subsequentResponsePromptTokens
+					: 0,
 			lastResponseCacheReadRate: this.lastResponseCacheReadRate,
 			exactPrefixBytes: this.exactPrefixBytes,
 			comparableInputBytes: this.comparableInputBytes,
@@ -163,6 +201,9 @@ export class PromptCacheRuntime {
 			continuationAttempts: this.continuationAttempts,
 			continuationSuccesses: this.continuationSuccesses,
 			continuationFallbacks: this.continuationFallbacks,
+			providerRetryAttempts: this.providerRetryAttempts,
+			providerRetryRecoveries: this.providerRetryRecoveries,
+			providerRetryFailures: this.providerRetryFailures,
 			lastResponseAt: this.lastResponseAt,
 		};
 	}

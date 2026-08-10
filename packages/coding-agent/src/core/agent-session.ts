@@ -738,17 +738,27 @@ export class AgentSession {
 
 	private _willRetryAfterAgentEnd(event: Extract<AgentEvent, { type: "agent_end" }>): boolean {
 		const settings = this.settingsManager.getRetrySettings();
-		if (!settings.enabled || this._retryAttempt >= settings.maxRetries) {
+		if (!settings.enabled) {
 			return false;
 		}
 
 		for (let i = event.messages.length - 1; i >= 0; i--) {
 			const message = event.messages[i];
 			if (message.role === "assistant") {
-				return this._isRetryableError(message as AssistantMessage);
+				const assistantMessage = message as AssistantMessage;
+				const nextAttempt = this._retryAttempt + this._countProviderRetryAttempts(assistantMessage) + 1;
+				return nextAttempt <= settings.maxRetries && this._isRetryableError(assistantMessage);
 			}
 		}
 		return false;
+	}
+
+	private _countProviderRetryAttempts(message: AssistantMessage): number {
+		return (message.diagnostics ?? []).reduce((total, diagnostic) => {
+			if (diagnostic.type !== "provider_request_retry") return total;
+			const attempts = diagnostic.details?.attempts;
+			return typeof attempts === "number" && Number.isInteger(attempts) && attempts > 0 ? total + attempts : total;
+		}, 0);
 	}
 
 	/** Find the last assistant message in agent state (including aborted ones) */
@@ -2795,6 +2805,7 @@ export class AgentSession {
 			return false;
 		}
 
+		this._retryAttempt += this._countProviderRetryAttempts(message);
 		this._retryAttempt++;
 
 		if (this._retryAttempt > settings.maxRetries) {

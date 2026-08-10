@@ -4,6 +4,10 @@ interface ProviderRetryOptions {
 	maxRetries?: number;
 	maxRetryDelayMs?: number;
 	signal?: AbortSignal;
+	/** Optional additional gate applied after the built-in transient-error classifier. */
+	shouldRetry?: (error: unknown) => boolean;
+	/** Redacted retry-attempt observer. Observer failures never affect the request. */
+	onRetry?: (attempt: number, error: unknown) => void;
 }
 
 interface ProviderError extends Error {
@@ -115,10 +119,22 @@ export async function retryProviderRequest<T>(
 			return await request();
 		} catch (error) {
 			if (options.signal?.aborted) throw createAbortError();
-			if (retriesRemaining <= 0 || !isProviderError(error) || !isRetryableProviderError(error)) throw error;
+			if (
+				retriesRemaining <= 0 ||
+				!isProviderError(error) ||
+				!isRetryableProviderError(error) ||
+				(options.shouldRetry !== undefined && !options.shouldRetry(error))
+			) {
+				throw error;
+			}
 
 			const retryIndex = maxRetries - retriesRemaining;
 			retriesRemaining--;
+			try {
+				options.onRetry?.(retryIndex + 1, error);
+			} catch {
+				// Retry diagnostics must never alter provider request behavior.
+			}
 			await abortableSleep(getRetryDelayMs(error, retryIndex, options.maxRetryDelayMs), options.signal);
 		}
 	}

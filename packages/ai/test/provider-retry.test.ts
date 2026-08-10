@@ -29,6 +29,31 @@ describe("provider request retries", () => {
 		expect(request).toHaveBeenCalledTimes(2);
 	});
 
+	it("supports a narrowed retry predicate and reports the consumed attempt", async () => {
+		vi.useFakeTimers();
+		const attempts: number[] = [];
+		const request = vi.fn<() => Promise<string>>().mockRejectedValueOnce(providerError(502)).mockResolvedValue("ok");
+
+		const result = retryProviderRequest(request, {
+			maxRetries: 1,
+			shouldRetry: (error) =>
+				typeof error === "object" && error !== null && "status" in error && error.status === 502,
+			onRetry: (attempt) => attempts.push(attempt),
+		});
+		await vi.runAllTimersAsync();
+
+		await expect(result).resolves.toBe("ok");
+		expect(attempts).toEqual([1]);
+	});
+
+	it("does not retry when the narrowed predicate rejects an otherwise retryable error", async () => {
+		const error = providerError(429);
+		const request = vi.fn<() => Promise<string>>().mockRejectedValue(error);
+
+		await expect(retryProviderRequest(request, { maxRetries: 1, shouldRetry: () => false })).rejects.toBe(error);
+		expect(request).toHaveBeenCalledTimes(1);
+	});
+
 	it("does not retry errors the provider marks as non-retryable", async () => {
 		const error = providerError(429, { "x-should-retry": "false" });
 		const request = vi.fn<() => Promise<string>>().mockRejectedValue(error);

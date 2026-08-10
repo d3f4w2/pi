@@ -319,6 +319,18 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		convertToLlm: convertToLlmWithBlockImages,
 		streamFn: async (model, context, options) => {
 			const providerRetrySettings = settingsManager.getProviderRetrySettings();
+			const outerRetrySettings = settingsManager.getRetrySettings();
+			const outerRetryAttempt = session?.retryAttempt ?? 0;
+			const isOuterSessionRetry = outerRetryAttempt > 0;
+			const requestedProviderRetries = options?.maxRetries ?? providerRetrySettings.maxRetries;
+			const remainingRetryBudget = Math.max(0, outerRetrySettings.maxRetries - outerRetryAttempt);
+			const maxRetries = isOuterSessionRetry
+				? 0
+				: outerRetrySettings.enabled && remainingRetryBudget === 0
+					? 0
+					: requestedProviderRetries === undefined || !outerRetrySettings.enabled
+						? requestedProviderRetries
+						: Math.min(requestedProviderRetries, remainingRetryBudget);
 			const httpIdleTimeoutMs = settingsManager.getHttpIdleTimeoutMs();
 			// SDKs treat timeout=0 as 0ms (immediate timeout), not "no timeout".
 			// Use max int32 to effectively disable the timeout.
@@ -331,7 +343,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				...options,
 				timeoutMs,
 				websocketConnectTimeoutMs,
-				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
+				maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
 				statefulResponses: openAIStatefulResponses,
 				transformHeaders: async (requestHeaders) => {

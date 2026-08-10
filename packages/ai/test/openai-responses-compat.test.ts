@@ -351,6 +351,83 @@ describe("openai-responses provider defaults", () => {
 		expect(JSON.stringify(payloads[1].input)).toContain("two");
 	});
 
+	it("retries one pre-stream gateway failure with a byte-identical payload by default", async () => {
+		const bodies: string[] = [];
+		const requestHeaders: string[] = [];
+		vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+			bodies.push(String(init?.body));
+			requestHeaders.push(JSON.stringify([...new Headers(init?.headers).entries()]));
+			if (bodies.length === 1) return new Response(null, { status: 502 });
+			const sse = `data: ${JSON.stringify({
+				type: "response.completed",
+				response: {
+					id: "resp_gateway_recovery",
+					status: "completed",
+					output: [],
+					usage: { input_tokens: 10, output_tokens: 1, total_tokens: 11 },
+				},
+			})}\n\n`;
+			return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+		});
+
+		const result = await streamSimpleOpenAIResponses(
+			getModel("openai", "gpt-5.6-terra"),
+			{ systemPrompt: "sys", messages: [{ role: "user", content: "hi", timestamp: 1 }] },
+			{ apiKey: "test-key", sessionId: "gateway-retry-proof" },
+		).result();
+
+		expect(bodies).toHaveLength(2);
+		expect(bodies[1]).toBe(bodies[0]);
+		expect(requestHeaders[1]).toBe(requestHeaders[0]);
+		expect(result.stopReason).toBe("stop");
+		expect(result.diagnostics?.at(-1)).toMatchObject({
+			type: "provider_request_retry",
+			details: { attempts: 1, status: "success" },
+		});
+	});
+
+	it("does not apply the default gateway retry to rate limits", async () => {
+		let requests = 0;
+		vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+			requests++;
+			return new Response(JSON.stringify({ error: { message: "rate limit" } }), {
+				status: 429,
+				headers: { "content-type": "application/json" },
+			});
+		});
+
+		const result = await streamSimpleOpenAIResponses(
+			getModel("openai", "gpt-5.6-terra"),
+			{ systemPrompt: "sys", messages: [{ role: "user", content: "hi", timestamp: 1 }] },
+			{ apiKey: "test-key", sessionId: "gateway-retry-no-429" },
+		).result();
+
+		expect(requests).toBe(1);
+		expect(result.stopReason).toBe("error");
+	});
+
+	it("reports a failed default gateway retry without retaining the error body", async () => {
+		let requests = 0;
+		vi.spyOn(globalThis, "fetch").mockImplementation(async () => {
+			requests++;
+			return new Response("private gateway failure", { status: 502 });
+		});
+
+		const result = await streamSimpleOpenAIResponses(
+			getModel("openai", "gpt-5.6-terra"),
+			{ systemPrompt: "sys", messages: [{ role: "user", content: "hi", timestamp: 1 }] },
+			{ apiKey: "test-key", sessionId: "gateway-retry-failure" },
+		).result();
+
+		expect(requests).toBe(2);
+		expect(result.stopReason).toBe("error");
+		expect(result.diagnostics?.at(-1)).toMatchObject({
+			type: "provider_request_retry",
+			details: { attempts: 1, status: "failed" },
+		});
+		expect(JSON.stringify(result.diagnostics)).not.toContain("private gateway failure");
+	});
+
 	it("falls back to store false when official response storage is rejected", async () => {
 		const stores: boolean[] = [];
 		vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {

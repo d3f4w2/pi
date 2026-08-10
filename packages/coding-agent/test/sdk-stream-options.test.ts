@@ -79,6 +79,7 @@ describe("createAgentSession stream options", () => {
 		settings: Partial<Settings>,
 		requestOptions: SimpleStreamOptions = {},
 		extensionSource?: string,
+		sessionRetryAttempt = 0,
 	): Promise<SimpleStreamOptions | undefined> {
 		const model = createModel(api);
 		const settingsManager = SettingsManager.inMemory(settings);
@@ -112,6 +113,7 @@ describe("createAgentSession stream options", () => {
 			settingsManager,
 			sessionManager,
 		});
+		(session as unknown as { _retryAttempt: number })._retryAttempt = sessionRetryAttempt;
 
 		try {
 			const stream = await session.agent.streamFunction(model, { messages: [] }, requestOptions);
@@ -168,6 +170,32 @@ describe("createAgentSession stream options", () => {
 
 		expect(options?.maxRetries).toBe(2);
 		expect(options?.maxRetryDelayMs).toBe(3000);
+	});
+
+	it("leaves provider retries unset so the adapter can apply its narrow default", async () => {
+		const options = await captureStreamOptions("openai-responses", {});
+
+		expect(options?.maxRetries).toBeUndefined();
+	});
+
+	it("disables provider-layer retries during an outer AgentSession retry", async () => {
+		const options = await captureStreamOptions(
+			"openai-responses",
+			{ retry: { provider: { maxRetries: 2 } } },
+			{},
+			undefined,
+			1,
+		);
+
+		expect(options?.maxRetries).toBe(0);
+	});
+
+	it("caps explicit provider retries at the shared outer retry budget", async () => {
+		const options = await captureStreamOptions("openai-responses", {
+			retry: { maxRetries: 2, provider: { maxRetries: 6 } },
+		});
+
+		expect(options?.maxRetries).toBe(2);
 	});
 
 	it("runs before_provider_headers on assembled headers without forwarding the transform", async () => {

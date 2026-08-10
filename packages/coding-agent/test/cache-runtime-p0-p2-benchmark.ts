@@ -29,6 +29,11 @@ interface SessionAggregate {
 	promptTokens: number;
 	cacheReadTokens: number;
 	prefixGapUpperBoundTokens: number;
+	firstPromptTokens: number;
+	firstCacheReadTokens: number;
+	subsequentCalls: number;
+	subsequentPromptTokens: number;
+	subsequentCacheReadTokens: number;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -92,6 +97,13 @@ function auditSessions(args: Args): {
 	promptTokens: number;
 	cacheReadTokens: number;
 	actualCacheReadRate: number;
+	firstCallPromptTokens: number;
+	firstCallCacheReadTokens: number;
+	firstCallCacheReadRate: number;
+	subsequentCallCount: number;
+	subsequentPromptTokens: number;
+	subsequentCacheReadTokens: number;
+	subsequentCacheReadRate: number;
 	prefixGapUpperBoundTokens: number;
 	maximumRecoverableRate: number;
 } {
@@ -121,7 +133,19 @@ function auditSessions(args: Args): {
 			}
 			previousPromptTokens = currentPromptTokens;
 		}
-		longSessions.push({ calls: usages.length, promptTokens, cacheReadTokens, prefixGapUpperBoundTokens });
+		const first = usages[0];
+		const firstPromptTokens = first.input + first.cacheRead + first.cacheWrite;
+		longSessions.push({
+			calls: usages.length,
+			promptTokens,
+			cacheReadTokens,
+			prefixGapUpperBoundTokens,
+			firstPromptTokens,
+			firstCacheReadTokens: first.cacheRead,
+			subsequentCalls: usages.length - 1,
+			subsequentPromptTokens: promptTokens - firstPromptTokens,
+			subsequentCacheReadTokens: cacheReadTokens - first.cacheRead,
+		});
 	}
 
 	const totals = longSessions.reduce(
@@ -130,8 +154,23 @@ function auditSessions(args: Args): {
 			promptTokens: result.promptTokens + session.promptTokens,
 			cacheReadTokens: result.cacheReadTokens + session.cacheReadTokens,
 			prefixGapUpperBoundTokens: result.prefixGapUpperBoundTokens + session.prefixGapUpperBoundTokens,
+			firstPromptTokens: result.firstPromptTokens + session.firstPromptTokens,
+			firstCacheReadTokens: result.firstCacheReadTokens + session.firstCacheReadTokens,
+			subsequentCalls: result.subsequentCalls + session.subsequentCalls,
+			subsequentPromptTokens: result.subsequentPromptTokens + session.subsequentPromptTokens,
+			subsequentCacheReadTokens: result.subsequentCacheReadTokens + session.subsequentCacheReadTokens,
 		}),
-		{ calls: 0, promptTokens: 0, cacheReadTokens: 0, prefixGapUpperBoundTokens: 0 },
+		{
+			calls: 0,
+			promptTokens: 0,
+			cacheReadTokens: 0,
+			prefixGapUpperBoundTokens: 0,
+			firstPromptTokens: 0,
+			firstCacheReadTokens: 0,
+			subsequentCalls: 0,
+			subsequentPromptTokens: 0,
+			subsequentCacheReadTokens: 0,
+		},
 	);
 	return {
 		sessionCount: longSessions.length,
@@ -139,6 +178,14 @@ function auditSessions(args: Args): {
 		promptTokens: totals.promptTokens,
 		cacheReadTokens: totals.cacheReadTokens,
 		actualCacheReadRate: totals.promptTokens > 0 ? totals.cacheReadTokens / totals.promptTokens : 0,
+		firstCallPromptTokens: totals.firstPromptTokens,
+		firstCallCacheReadTokens: totals.firstCacheReadTokens,
+		firstCallCacheReadRate: totals.firstPromptTokens > 0 ? totals.firstCacheReadTokens / totals.firstPromptTokens : 0,
+		subsequentCallCount: totals.subsequentCalls,
+		subsequentPromptTokens: totals.subsequentPromptTokens,
+		subsequentCacheReadTokens: totals.subsequentCacheReadTokens,
+		subsequentCacheReadRate:
+			totals.subsequentPromptTokens > 0 ? totals.subsequentCacheReadTokens / totals.subsequentPromptTokens : 0,
 		prefixGapUpperBoundTokens: totals.prefixGapUpperBoundTokens,
 		maximumRecoverableRate:
 			totals.promptTokens > 0

@@ -10,6 +10,8 @@ function warmSnapshot(overrides: Partial<PromptCacheRuntimeSnapshot> = {}): Prom
 		cacheReadTokens: 80_000,
 		cacheWriteTokens: 0,
 		actualCacheReadRate: 0.8,
+		firstResponseCacheReadRate: 0,
+		subsequentResponseCacheReadRate: 0.9,
 		lastResponseCacheReadRate: 0.9,
 		exactPrefixBytes: 100_000,
 		comparableInputBytes: 120_000,
@@ -21,6 +23,9 @@ function warmSnapshot(overrides: Partial<PromptCacheRuntimeSnapshot> = {}): Prom
 		continuationAttempts: 0,
 		continuationSuccesses: 0,
 		continuationFallbacks: 0,
+		providerRetryAttempts: 0,
+		providerRetryRecoveries: 0,
+		providerRetryFailures: 0,
 		lastResponseAt: 1_000,
 		...overrides,
 	};
