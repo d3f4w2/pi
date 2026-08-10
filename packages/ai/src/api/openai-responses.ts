@@ -25,11 +25,18 @@ import { createGrammarToolInputProperties } from "./constrained-sampling.ts";
 import { buildCopilotDynamicHeaders, hasCopilotVisionInput } from "./github-copilot-headers.ts";
 import { clampOpenAIPromptCacheKey } from "./openai-prompt-cache.ts";
 import { convertResponsesMessages, convertResponsesTools, processResponsesStream } from "./openai-responses-shared.ts";
+import {
+	isOfficialOpenAIResponsesModel,
+	isStatefulContinuationSetupError,
+	isStatefulStorageSetupError,
+	OpenAIResponsesState,
+} from "./openai-responses-state.ts";
 import { buildBaseOptions } from "./simple-options.ts";
 
 const OPENAI_TOOL_CALL_PROVIDERS = new Set(["openai", "openai-codex", "opencode"]);
 // OpenAI Responses rejects max_output_tokens below 16: https://github.com/earendil-works/pi/issues/6265
 const OPENAI_RESPONSES_MIN_OUTPUT_TOKENS = 16;
+const openAIResponsesState = new OpenAIResponsesState();
 
 function hasHeader(headers: ProviderHeaders | undefined, name: string): boolean {
 	if (!headers) return false;
@@ -148,14 +155,44 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				...(options?.timeoutMs !== undefined ? { timeout: options.timeoutMs } : {}),
 				maxRetries: 0,
 			};
-			const { data: openaiStream, response } = await retryProviderRequest(
-				() => client.responses.create(params, requestOptions).withResponse(),
-				{
+			const statefulKey =
+				options?.statefulResponses === true && isOfficialOpenAIResponsesModel(model)
+					? options.sessionId
+					: undefined;
+			const statefulPreparation = openAIResponsesState.prepare(statefulKey, params);
+			const createResponse = async (requestParams: ResponseCreateParamsStreaming) =>
+				await retryProviderRequest(() => client.responses.create(requestParams, requestOptions).withResponse(), {
 					maxRetries: options?.maxRetries,
 					maxRetryDelayMs: options?.maxRetryDelayMs,
 					signal: options?.signal,
-				},
-			);
+				});
+			let responseResult: Awaited<ReturnType<typeof createResponse>>;
+			let continuationFallback = false;
+			let storageFallback = false;
+			const createWithoutStorage = async () => {
+				openAIResponsesState.disable(statefulKey);
+				storageFallback = true;
+				return await createResponse({ ...statefulPreparation.fullParams, store: false });
+			};
+			try {
+				responseResult = await createResponse(statefulPreparation.params);
+			} catch (error) {
+				if (statefulPreparation.chained && isStatefulContinuationSetupError(error)) {
+					openAIResponsesState.recordContinuationFailure(statefulPreparation);
+					continuationFallback = true;
+					try {
+						responseResult = await createResponse(statefulPreparation.fullParams);
+					} catch (fallbackError) {
+						if (!statefulKey || !isStatefulStorageSetupError(fallbackError)) throw fallbackError;
+						responseResult = await createWithoutStorage();
+					}
+				} else if (statefulKey && isStatefulStorageSetupError(error)) {
+					responseResult = await createWithoutStorage();
+				} else {
+					throw error;
+				}
+			}
+			const { data: openaiStream, response } = responseResult;
 			await options?.onResponse?.({ status: response.status, headers: headersToRecord(response.headers) }, model);
 			stream.push({ type: "start", partial: output });
 
@@ -174,6 +211,25 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 			}
 			if (output.stopReason === "aborted" || output.stopReason === "error") {
 				throw new Error(output.errorMessage || "An unknown error occurred");
+			}
+			const responseOutput = convertResponsesMessages(
+				model,
+				{ systemPrompt: "", messages: [output] },
+				OPENAI_TOOL_CALL_PROVIDERS,
+				{ includeSystemPrompt: false, grammarToolInputProperties },
+			);
+			if (!storageFallback) {
+				openAIResponsesState.commit(statefulPreparation, output.responseId, responseOutput, continuationFallback);
+			}
+			if (statefulPreparation.chained || storageFallback) {
+				output.diagnostics = [
+					...(output.diagnostics ?? []),
+					{
+						type: "openai_stateful_continuation",
+						timestamp: Date.now(),
+						details: { status: continuationFallback || storageFallback ? "fallback" : "success" },
+					},
+				];
 			}
 
 			stream.push({ type: "done", reason: output.stopReason, message: output });
@@ -304,7 +360,11 @@ function buildParams(
 		prompt_cache_key: cacheRetention === "none" ? undefined : clampOpenAIPromptCacheKey(options?.sessionId),
 		prompt_cache_retention: useExplicitPromptCache ? undefined : getPromptCacheRetention(compat, cacheRetention),
 		prompt_cache_options: promptCacheOptions,
-		store: false,
+		store:
+			options?.statefulResponses === true &&
+			options.sessionId !== undefined &&
+			cacheRetention !== "none" &&
+			isOfficialOpenAIResponsesModel(model),
 	};
 
 	if (options?.maxTokens) {

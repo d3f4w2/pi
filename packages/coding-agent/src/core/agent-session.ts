@@ -30,6 +30,7 @@ import type {
 	AuthResult,
 	ImageContent,
 	Model,
+	OpenAIResponsesCompat,
 	ProviderHeaders,
 	TextContent,
 	Usage,
@@ -53,6 +54,7 @@ import { sleep } from "../utils/sleep.ts";
 import { normalizeToolResultImages } from "../utils/tool-result-images.ts";
 import { formatNoApiKeyFoundMessage, formatNoModelSelectedMessage } from "./auth-guidance.ts";
 import { type BashResult, executeBashWithOperations } from "./bash-executor.ts";
+import { decideCacheAwareCompactionDeferral } from "./cache-aware-compaction.ts";
 import {
 	type CompactionResult,
 	calculateContextTokens,
@@ -94,9 +96,15 @@ import {
 	wrapRegisteredTools,
 } from "./extensions/index.ts";
 import { emitSessionShutdownEvent } from "./extensions/runner.ts";
-import type { BashExecutionMessage, CustomMessage } from "./messages.ts";
+import {
+	type BashExecutionMessage,
+	type CustomMessage,
+	findCacheDeveloperContextState,
+	planDynamicDeveloperContext,
+} from "./messages.ts";
 import { ModelRegistry } from "./model-registry.ts";
 import type { ModelRuntime } from "./model-runtime.ts";
+import type { PromptCacheRuntime, PromptCacheRuntimeSnapshot } from "./prompt-cache-runtime.ts";
 import { expandPromptTemplate, type PromptTemplate } from "./prompt-templates.ts";
 import type { ResourceExtensionPaths, ResourceLoader } from "./resource-loader.ts";
 import type { BranchSummaryEntry, CompactionEntry, SessionEntry, SessionManager } from "./session-manager.ts";
@@ -209,6 +217,8 @@ export interface AgentSessionConfig {
 	customTools?: ToolDefinition[];
 	/** Canonical model/auth runtime used by coding-agent internals. */
 	modelRuntime: ModelRuntime;
+	/** Session-local, privacy-safe prompt-cache request/usage recorder. */
+	promptCacheRuntime?: PromptCacheRuntime;
 	/** Initial active built-in tool names. Default: [read, bash, edit, write] */
 	initialActiveToolNames?: string[];
 	/** Optional allowlist of tool names. When provided, only these tool names are exposed. */
@@ -328,6 +338,7 @@ export class AgentSession {
 	private _compactionAbortController: AbortController | undefined = undefined;
 	private _autoCompactionAbortController: AbortController | undefined = undefined;
 	private _overflowRecoveryAttempted = false;
+	private _cacheAwareCompactionDeferredAtMessageTimestamp: number | undefined;
 
 	// Branch summarization state
 	private _branchSummaryAbortController: AbortController | undefined = undefined;
@@ -363,6 +374,7 @@ export class AgentSession {
 	private _extensionErrorUnsubscriber?: () => void;
 
 	private _modelRuntime: ModelRuntime;
+	private _promptCacheRuntime: PromptCacheRuntime | undefined;
 
 	// Tool registry for extension getTools/setTools
 	private _toolRegistry: Map<string, AgentTool> = new Map();
@@ -375,6 +387,7 @@ export class AgentSession {
 	private _baseSystemPrompt = "";
 	private _baseSystemPromptOptions!: BuildSystemPromptOptions;
 	private _systemPromptOverride?: string;
+	private _cacheDeveloperContextState: string | null | undefined;
 
 	constructor(config: AgentSessionConfig) {
 		this.agent = config.agent;
@@ -385,12 +398,14 @@ export class AgentSession {
 		this._customTools = config.customTools ?? [];
 		this._cwd = config.cwd;
 		this._modelRuntime = config.modelRuntime;
+		this._promptCacheRuntime = config.promptCacheRuntime;
 		this._extensionRunnerRef = config.extensionRunnerRef;
 		this._initialActiveToolNames = config.initialActiveToolNames;
 		this._allowedToolNames = config.allowedToolNames ? new Set(config.allowedToolNames) : undefined;
 		this._excludedToolNames = config.excludedToolNames ? new Set(config.excludedToolNames) : undefined;
 		this._baseToolsOverride = config.baseToolsOverride;
 		this._sessionStartEvent = config.sessionStartEvent ?? { type: "session_start", reason: "startup" };
+		this._cacheDeveloperContextState = findCacheDeveloperContextState(this.agent.state.messages);
 
 		// Always subscribe to agent events for internal handling
 		// (session persistence, extensions, auto-compaction, retry logic)
@@ -698,6 +713,11 @@ export class AgentSession {
 				this._lastAssistantMessage = event.message;
 
 				const assistantMsg = event.message as AssistantMessage;
+				try {
+					this._promptCacheRuntime?.recordResponse(assistantMsg);
+				} catch {
+					// Cache accounting must never affect session persistence or execution.
+				}
 				if (assistantMsg.stopReason !== "error" && assistantMsg.stopReason !== "length") {
 					this._overflowRecoveryAttempted = false;
 				}
@@ -935,6 +955,11 @@ export class AgentSession {
 			return undefined;
 		}
 		return this._baseSystemPrompt;
+	}
+
+	/** Privacy-safe request-shape and provider-usage cache report for this session. */
+	getPromptCacheReport(): PromptCacheRuntimeSnapshot | undefined {
+		return this._promptCacheRuntime?.snapshot();
 	}
 
 	/** Current retry attempt (0 if not retrying) */
@@ -1300,15 +1325,23 @@ export class AgentSession {
 					});
 				}
 			}
-			// Apply extension-modified system prompt, or reset to base
-			if (result?.systemPrompt !== undefined) {
-				this._systemPromptOverride = result.systemPrompt;
-				this.agent.state.systemPrompt = result.systemPrompt;
-			} else {
-				// Ensure we're using the base prompt (in case previous turn had modifications)
-				this._systemPromptOverride = undefined;
-				this.agent.state.systemPrompt = this._baseSystemPrompt;
+			// Preserve an exact appended suffix as transcript history so future turns
+			// grow by appending instead of rewriting the first request segment.
+			const effectiveSystemPrompt = result?.systemPrompt ?? this._baseSystemPrompt;
+			const compat = this.model?.compat as OpenAIResponsesCompat | undefined;
+			const dynamicContextPlan = planDynamicDeveloperContext(
+				this._baseSystemPrompt,
+				effectiveSystemPrompt,
+				this._cacheDeveloperContextState,
+				this.model?.api === "openai-responses" && compat?.supportsDeveloperRole !== false,
+			);
+			if (dynamicContextPlan.message) messages.push(dynamicContextPlan.message);
+			if (dynamicContextPlan.state !== undefined || dynamicContextPlan.message) {
+				this._cacheDeveloperContextState = dynamicContextPlan.state;
 			}
+			this._systemPromptOverride =
+				dynamicContextPlan.systemPrompt === this._baseSystemPrompt ? undefined : dynamicContextPlan.systemPrompt;
+			this.agent.state.systemPrompt = dynamicContextPlan.systemPrompt;
 		} catch (error) {
 			preflightResult?.(false);
 			throw error;
@@ -1926,6 +1959,7 @@ export class AgentSession {
 			}
 
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
+			this._cacheAwareCompactionDeferredAtMessageTimestamp = undefined;
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;
@@ -2097,8 +2131,25 @@ export class AgentSession {
 			contextTokens = directContextTokens;
 		}
 		if (shouldCompact(contextTokens, contextWindow, settings)) {
+			// The post-run and pre-prompt checks can see the same assistant. Honor
+			// the original deferral until one newer provider response completes.
+			if (this._cacheAwareCompactionDeferredAtMessageTimestamp === assistantMessage.timestamp) return false;
+			const cacheDecision = decideCacheAwareCompactionDeferral({
+				contextTokens,
+				contextWindow,
+				reserveTokens: settings.reserveTokens,
+				maxOutputTokens: this.model?.maxTokens ?? 0,
+				alreadyDeferred: this._cacheAwareCompactionDeferredAtMessageTimestamp !== undefined,
+				report: this._promptCacheRuntime?.snapshot(),
+			});
+			if (cacheDecision.defer) {
+				this._cacheAwareCompactionDeferredAtMessageTimestamp = assistantMessage.timestamp;
+				this._promptCacheRuntime?.recordCompactionDeferral();
+				return false;
+			}
 			return await this._runAutoCompaction("threshold", false);
 		}
+		this._cacheAwareCompactionDeferredAtMessageTimestamp = undefined;
 		return false;
 	}
 
@@ -2205,6 +2256,7 @@ export class AgentSession {
 			}
 
 			this.sessionManager.appendCompaction(summary, firstKeptEntryId, tokensBefore, details, fromExtension, usage);
+			this._cacheAwareCompactionDeferredAtMessageTimestamp = undefined;
 			const newEntries = this.sessionManager.getEntries();
 			const sessionContext = this.sessionManager.buildSessionContext();
 			this.agent.state.messages = sessionContext.messages;

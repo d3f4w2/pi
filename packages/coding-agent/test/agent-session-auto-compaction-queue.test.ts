@@ -7,6 +7,7 @@ import { getModel, streamSimple } from "@earendil-works/pi-ai/compat";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AgentSession } from "../src/core/agent-session.ts";
 import { AuthStorage } from "../src/core/auth-storage.ts";
+import { PromptCacheRuntime } from "../src/core/prompt-cache-runtime.ts";
 import { SessionManager } from "../src/core/session-manager.ts";
 import { SettingsManager } from "../src/core/settings-manager.ts";
 import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
@@ -16,6 +17,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 	let session: AgentSession;
 	let sessionManager: SessionManager;
 	let settingsManager: SettingsManager;
+	let promptCacheRuntime: PromptCacheRuntime;
 	let tempDir: string;
 
 	beforeEach(async () => {
@@ -37,6 +39,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 		const authStorage = AuthStorage.create(join(tempDir, "auth.json"));
 		await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
 		const modelRegistry = await createModelRegistry(authStorage, tempDir);
+		promptCacheRuntime = new PromptCacheRuntime(() => model);
 
 		session = new AgentSession({
 			agent,
@@ -44,6 +47,7 @@ describe("AgentSession auto-compaction queue resume", () => {
 			settingsManager,
 			cwd: tempDir,
 			modelRuntime: getModelRuntime(modelRegistry),
+			promptCacheRuntime,
 			resourceLoader: createTestResourceLoader(),
 		});
 	});
@@ -445,5 +449,53 @@ describe("AgentSession auto-compaction queue resume", () => {
 
 		// Should NOT compact because the only usage data is from a kept pre-compaction message
 		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
+	});
+
+	it("should defer a warm threshold crossing once, including its duplicate pre-prompt check", async () => {
+		const model = session.model!;
+		const settings = settingsManager.getCompactionSettings();
+		const contextTokens = model.contextWindow - settings.reserveTokens + 1;
+		const now = Date.now();
+		const warmMessage = (timestamp: number): AssistantMessage => ({
+			role: "assistant",
+			content: [{ type: "text", text: "warm" }],
+			api: model.api,
+			provider: model.provider,
+			model: model.id,
+			usage: {
+				input: Math.floor(contextTokens * 0.1),
+				output: 0,
+				cacheRead: contextTokens - Math.floor(contextTokens * 0.1),
+				cacheWrite: 0,
+				totalTokens: contextTokens,
+				cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+			},
+			stopReason: "stop",
+			timestamp,
+		});
+		promptCacheRuntime.recordResponse(warmMessage(now - 1_000));
+		promptCacheRuntime.recordResponse(warmMessage(now));
+
+		const runAutoCompactionSpy = vi
+			.spyOn(
+				session as unknown as {
+					_runAutoCompaction: (reason: "overflow" | "threshold", willRetry: boolean) => Promise<boolean>;
+				},
+				"_runAutoCompaction",
+			)
+			.mockResolvedValue(false);
+		const checkCompaction = (
+			session as unknown as {
+				_checkCompaction: (assistantMessage: AssistantMessage, skipAbortedCheck?: boolean) => Promise<boolean>;
+			}
+		)._checkCompaction.bind(session);
+
+		await checkCompaction(warmMessage(now));
+		await checkCompaction(warmMessage(now));
+		expect(runAutoCompactionSpy).not.toHaveBeenCalled();
+		expect(session.getPromptCacheReport()?.compactionDeferrals).toBe(1);
+
+		await checkCompaction(warmMessage(now + 1));
+		expect(runAutoCompactionSpy).toHaveBeenCalledOnce();
 	});
 });

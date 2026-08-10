@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Api, Model, OpenAIResponsesCompat } from "@earendil-works/pi-ai/compat";
+import { CACHE_DEVELOPER_CONTEXT_SENTINEL } from "./messages.ts";
 
 export type PromptCacheOptimizationReason =
 	| "optimized"
@@ -9,6 +10,11 @@ export type PromptCacheOptimizationReason =
 	| "missing-stable-prefix";
 
 export type PromptCacheBreakpointStatus = "applied" | "unsupported" | "prefix-mismatch" | "not-applicable";
+export type PromptCacheBreakpointDecision =
+	| "positive-roi"
+	| "write-cost-exceeds-reuse"
+	| "below-minimum-prefix"
+	| "not-applicable";
 
 export type PromptCacheDiagnosticChange =
 	| "project-scope"
@@ -34,6 +40,12 @@ export interface PromptCacheOptimizationDiagnostic {
 	toolSetSha256?: string;
 	outputShapeSha256?: string;
 	explicitBreakpoint?: PromptCacheBreakpointStatus;
+	breakpointsApplied?: number;
+	breakpointCandidates?: number;
+	breakpointDecision?: PromptCacheBreakpointDecision;
+	estimatedBreakpointWriteTokens?: number;
+	estimatedNextReadSavingsUsd?: number;
+	estimatedWritePremiumUsd?: number;
 }
 
 export interface PromptCacheRequestDiagnostic extends PromptCacheOptimizationDiagnostic {
@@ -57,6 +69,8 @@ const SHARED_PREFIX_KEY_PREFIX = "pi-prefix-v2-";
 const SHARED_PREFIX_KEY_DIGEST_CHARACTERS = 48;
 const HOT_KEY_REQUESTS_PER_MINUTE = 15;
 const RATE_WINDOW_MS = 60_000;
+const MAX_PROMPT_CACHE_BREAKPOINTS = 4;
+const MIN_HISTORY_BREAKPOINT_TOKENS = 1024;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -77,6 +91,25 @@ function leadingSystemMessages(input: unknown[]): Record<string, unknown>[] {
 		messages.push(item);
 	}
 	return messages;
+}
+
+function restoreCacheDeveloperContext(input: unknown[]): unknown[] {
+	let changed = false;
+	const restored = input.map((item) => {
+		if (!isRecord(item) || item.role !== "user" || !Array.isArray(item.content) || item.content.length !== 1) {
+			return item;
+		}
+		const content = item.content[0];
+		if (!isRecord(content) || content.type !== "input_text" || typeof content.text !== "string") return item;
+		if (!content.text.startsWith(CACHE_DEVELOPER_CONTEXT_SENTINEL)) return item;
+		changed = true;
+		return {
+			...item,
+			role: "developer",
+			content: [{ ...content, text: content.text.slice(CACHE_DEVELOPER_CONTEXT_SENTINEL.length) }],
+		};
+	});
+	return changed ? restored : input;
 }
 
 interface SystemMessageText {
@@ -135,6 +168,89 @@ function replaceSystemPromptWithBreakpoint(
 	};
 }
 
+interface AdaptiveBreakpointResult {
+	payload: Record<string, unknown>;
+	breakpointsApplied: number;
+	breakpointCandidates: number;
+	breakpointDecision: PromptCacheBreakpointDecision;
+	estimatedBreakpointWriteTokens: number;
+	estimatedNextReadSavingsUsd: number;
+	estimatedWritePremiumUsd: number;
+}
+
+function applyAdaptiveHistoryBreakpoints(
+	payload: Record<string, unknown>,
+	model: Model<Api>,
+): AdaptiveBreakpointResult {
+	const input = Array.isArray(payload.input) ? payload.input : [];
+	let prefixBytes = 0;
+	const candidates: Array<{ index: number; prefixTokens: number }> = [];
+	for (let index = 0; index < input.length; index++) {
+		const item = input[index];
+		prefixBytes += Buffer.byteLength(JSON.stringify(item) ?? "undefined");
+		if (index === 0 || !isRecord(item) || (item.role !== "user" && item.role !== "developer")) continue;
+		if (!Array.isArray(item.content) || item.content.length === 0) continue;
+		const textOnly = item.content.every(
+			(content) => isRecord(content) && content.type === "input_text" && typeof content.text === "string",
+		);
+		if (!textOnly) continue;
+		const prefixTokens = Math.ceil(prefixBytes / 4);
+		if (prefixTokens >= MIN_HISTORY_BREAKPOINT_TOKENS) candidates.push({ index, prefixTokens });
+	}
+
+	if (candidates.length === 0) {
+		return {
+			payload,
+			breakpointsApplied: 1,
+			breakpointCandidates: 0,
+			breakpointDecision: "below-minimum-prefix",
+			estimatedBreakpointWriteTokens: 0,
+			estimatedNextReadSavingsUsd: 0,
+			estimatedWritePremiumUsd: 0,
+		};
+	}
+
+	const inputPrice = model.cost.input;
+	const cacheReadPrice = model.cost.cacheRead;
+	const cacheWritePrice = model.cost.cacheWrite;
+	const pricingKnown = inputPrice > 0 || cacheReadPrice > 0 || cacheWritePrice > 0;
+	const readSavingPerMillion = Math.max(0, inputPrice - cacheReadPrice);
+	const writePremiumPerMillion = Math.max(0, cacheWritePrice - inputPrice);
+	if (pricingKnown && readSavingPerMillion <= writePremiumPerMillion) {
+		return {
+			payload,
+			breakpointsApplied: 1,
+			breakpointCandidates: candidates.length,
+			breakpointDecision: "write-cost-exceeds-reuse",
+			estimatedBreakpointWriteTokens: 0,
+			estimatedNextReadSavingsUsd: 0,
+			estimatedWritePremiumUsd: 0,
+		};
+	}
+
+	const selected = candidates.slice(-(MAX_PROMPT_CACHE_BREAKPOINTS - 1));
+	const nextInput = [...input];
+	for (const candidate of selected) {
+		const item = nextInput[candidate.index];
+		if (!isRecord(item) || !Array.isArray(item.content)) continue;
+		const content = [...item.content];
+		const last = content[content.length - 1];
+		if (!isRecord(last)) continue;
+		content[content.length - 1] = { ...last, prompt_cache_breakpoint: { mode: "explicit" } };
+		nextInput[candidate.index] = { ...item, content };
+	}
+	const writeTokens = selected.reduce((sum, candidate) => sum + candidate.prefixTokens, 0);
+	return {
+		payload: { ...payload, input: nextInput },
+		breakpointsApplied: 1 + selected.length,
+		breakpointCandidates: candidates.length,
+		breakpointDecision: "positive-roi",
+		estimatedBreakpointWriteTokens: writeTokens,
+		estimatedNextReadSavingsUsd: (writeTokens * readSavingPerMillion) / 1_000_000,
+		estimatedWritePremiumUsd: (writeTokens * writePremiumPerMillion) / 1_000_000,
+	};
+}
+
 function canonicalToolSet(tools: unknown[]): string[] {
 	return tools.map((tool) => JSON.stringify(tool)).sort((left, right) => left.localeCompare(right));
 }
@@ -159,14 +275,16 @@ export function optimizeOpenAIResponsesPromptCache(
 		if (!isRecord(payload) || !Array.isArray(payload.input)) {
 			return { payload, diagnostic: { reason: "invalid-payload" } };
 		}
+		const providerInput = restoreCacheDeveloperContext(payload.input);
+		const providerPayload = providerInput === payload.input ? payload : { ...payload, input: providerInput };
 		if (typeof payload.prompt_cache_key !== "string" || payload.prompt_cache_key.length === 0) {
-			return { payload, diagnostic: { reason: "cache-disabled" } };
+			return { payload: providerPayload, diagnostic: { reason: "cache-disabled" } };
 		}
 		if (payload.tools !== undefined && !Array.isArray(payload.tools)) {
-			return { payload, diagnostic: { reason: "invalid-payload" } };
+			return { payload: providerPayload, diagnostic: { reason: "invalid-payload" } };
 		}
 
-		const prefixMessages = leadingSystemMessages(payload.input);
+		const prefixMessages = leadingSystemMessages(providerInput);
 		const firstSystemMessage = systemMessageText(prefixMessages[0]);
 		const requestedStableSystemPrompt = options.stableSystemPrompt;
 		const stablePrefixMatches =
@@ -181,7 +299,7 @@ export function optimizeOpenAIResponsesPromptCache(
 			tools.length > 0 ||
 			payload.text !== undefined;
 		if (!hasStablePrefix) {
-			return { payload, diagnostic: { reason: "missing-stable-prefix" } };
+			return { payload: providerPayload, diagnostic: { reason: "missing-stable-prefix" } };
 		}
 
 		const stablePrefixMessages = prefixMessages.map((message, index) =>
@@ -209,7 +327,12 @@ export function optimizeOpenAIResponsesPromptCache(
 		const promptCacheKey = `${SHARED_PREFIX_KEY_PREFIX}${stableShapeSha256.slice(0, SHARED_PREFIX_KEY_DIGEST_CHARACTERS)}`;
 
 		let explicitBreakpoint: PromptCacheBreakpointStatus = "not-applicable";
-		let transformedPayload: Record<string, unknown> = { ...payload, prompt_cache_key: promptCacheKey };
+		let breakpointResult: AdaptiveBreakpointResult | undefined;
+		let transformedPayload: Record<string, unknown> = {
+			...providerPayload,
+			input: providerInput,
+			prompt_cache_key: promptCacheKey,
+		};
 		if (supportsExplicitBreakpoint(model)) {
 			if (
 				requestedStableSystemPrompt !== undefined &&
@@ -218,11 +341,13 @@ export function optimizeOpenAIResponsesPromptCache(
 			) {
 				transformedPayload = replaceSystemPromptWithBreakpoint(
 					transformedPayload,
-					payload.input,
+					providerInput,
 					requestedStableSystemPrompt,
 					firstSystemMessage,
 				);
 				explicitBreakpoint = "applied";
+				breakpointResult = applyAdaptiveHistoryBreakpoints(transformedPayload, model);
+				transformedPayload = breakpointResult.payload;
 			} else if (requestedStableSystemPrompt !== undefined) {
 				explicitBreakpoint = "prefix-mismatch";
 			}
@@ -252,6 +377,12 @@ export function optimizeOpenAIResponsesPromptCache(
 				toolSetSha256: hashJson(canonicalToolSet(tools)),
 				outputShapeSha256: hashJson(outputShape),
 				explicitBreakpoint,
+				breakpointsApplied: breakpointResult?.breakpointsApplied,
+				breakpointCandidates: breakpointResult?.breakpointCandidates,
+				breakpointDecision: breakpointResult?.breakpointDecision ?? "not-applicable",
+				estimatedBreakpointWriteTokens: breakpointResult?.estimatedBreakpointWriteTokens,
+				estimatedNextReadSavingsUsd: breakpointResult?.estimatedNextReadSavingsUsd,
+				estimatedWritePremiumUsd: breakpointResult?.estimatedWritePremiumUsd,
 			},
 		};
 	} catch {

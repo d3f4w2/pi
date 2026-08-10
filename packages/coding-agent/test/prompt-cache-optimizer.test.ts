@@ -1,5 +1,6 @@
 import type { Api, Model } from "@earendil-works/pi-ai/compat";
 import { afterEach, describe, expect, it } from "vitest";
+import { CACHE_DEVELOPER_CONTEXT_SENTINEL } from "../src/core/messages.ts";
 import {
 	optimizeOpenAIResponsesPromptCache,
 	PromptCacheDiagnosticTracker,
@@ -179,6 +180,102 @@ describe("shared-prefix prompt cache optimizer", () => {
 		expect(((mismatch.payload as Record<string, unknown>).input as Array<Record<string, unknown>>)[0].content).toBe(
 			"different-system",
 		);
+	});
+
+	it("restores hidden append-only context as a developer message without exposing the sentinel", () => {
+		const model = createModel();
+		const payload = createPayload({ cacheKey: "session" });
+		const input = payload.input as Array<Record<string, unknown>>;
+		input.push({
+			role: "user",
+			content: [{ type: "input_text", text: `${CACHE_DEVELOPER_CONTEXT_SENTINEL}\n\ndynamic-v2` }],
+		});
+
+		const result = optimizeOpenAIResponsesPromptCache(payload, model, "/repo", {
+			stableSystemPrompt: "stable-system-instructions",
+		});
+		const transformed = result.payload as Record<string, unknown>;
+		const transformedInput = transformed.input as Array<Record<string, unknown>>;
+
+		expect(transformedInput.at(-1)).toEqual({
+			role: "developer",
+			content: [{ type: "input_text", text: "\n\ndynamic-v2" }],
+		});
+		expect(JSON.stringify(transformed)).not.toContain("pi-cache-developer-context-v1");
+	});
+
+	it("restores hidden developer context even when prompt caching is disabled", () => {
+		const payload = createPayload();
+		(payload.input as Array<Record<string, unknown>>).push({
+			role: "user",
+			content: [{ type: "input_text", text: `${CACHE_DEVELOPER_CONTEXT_SENTINEL}\n\ndynamic` }],
+		});
+
+		const result = optimizeOpenAIResponsesPromptCache(payload, createModel(), "/repo");
+		const input = (result.payload as Record<string, unknown>).input as Array<Record<string, unknown>>;
+
+		expect(result.diagnostic.reason).toBe("cache-disabled");
+		expect(input.at(-1)).toEqual({
+			role: "developer",
+			content: [{ type: "input_text", text: "\n\ndynamic" }],
+		});
+		expect(JSON.stringify(result.payload)).not.toContain("pi-cache-developer-context-v1");
+	});
+
+	it("applies at most four positive-ROI breakpoints across a long append-only prompt", () => {
+		const model = createModel({
+			cost: { input: 1, output: 2, cacheRead: 0.1, cacheWrite: 1.25 },
+			compat: {
+				supportsExplicitPromptCacheMode: true,
+				supportsPromptCacheBreakpoints: true,
+			},
+		});
+		const payload = createPayload({ cacheKey: "session" });
+		const input = payload.input as Array<Record<string, unknown>>;
+		for (let index = 0; index < 6; index++) {
+			input.push({
+				role: "user",
+				content: [{ type: "input_text", text: `${index}-${"x".repeat(8_192)}` }],
+			});
+		}
+
+		const result = optimizeOpenAIResponsesPromptCache(payload, model, "/repo", {
+			stableSystemPrompt: "stable-system-instructions",
+		});
+		const transformed = result.payload as Record<string, unknown>;
+		const serialized = JSON.stringify(transformed.input);
+		const breakpointCount = serialized.match(/prompt_cache_breakpoint/g)?.length ?? 0;
+
+		expect(breakpointCount).toBe(4);
+		expect(result.diagnostic.breakpointsApplied).toBe(4);
+		expect(result.diagnostic.breakpointCandidates).toBe(6);
+		expect(result.diagnostic.breakpointDecision).toBe("positive-roi");
+	});
+
+	it("suppresses history breakpoints when their write premium exceeds one expected read", () => {
+		const model = createModel({
+			cost: { input: 1, output: 2, cacheRead: 0.9, cacheWrite: 5 },
+			compat: {
+				supportsExplicitPromptCacheMode: true,
+				supportsPromptCacheBreakpoints: true,
+			},
+		});
+		const payload = createPayload({ cacheKey: "session" });
+		(payload.input as Array<Record<string, unknown>>).push({
+			role: "user",
+			content: [{ type: "input_text", text: "x".repeat(16_384) }],
+		});
+
+		const result = optimizeOpenAIResponsesPromptCache(payload, model, "/repo", {
+			stableSystemPrompt: "stable-system-instructions",
+		});
+		const breakpointCount = JSON.stringify((result.payload as Record<string, unknown>).input).match(
+			/prompt_cache_breakpoint/g,
+		)?.length;
+
+		expect(breakpointCount).toBe(1);
+		expect(result.diagnostic.breakpointsApplied).toBe(1);
+		expect(result.diagnostic.breakpointDecision).toBe("write-cost-exceeds-reuse");
 	});
 
 	it("rotates the key when a cache-relevant stable input changes", () => {

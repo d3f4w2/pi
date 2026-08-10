@@ -11,11 +11,8 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { convertToLlm } from "./messages.ts";
 import { findInitialModel } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
-import {
-	optimizeOpenAIResponsesPromptCache,
-	PromptCacheDiagnosticTracker,
-	type PromptCacheRequestDiagnostic,
-} from "./prompt-cache-optimizer.ts";
+import { optimizeOpenAIResponsesPromptCache, type PromptCacheRequestDiagnostic } from "./prompt-cache-optimizer.ts";
+import { PromptCacheRuntime } from "./prompt-cache-runtime.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
 import { DefaultResourceLoader } from "./resource-loader.ts";
@@ -90,6 +87,8 @@ export interface CreateAgentSessionOptions {
 	sessionStartEvent?: SessionStartEvent;
 	/** Privacy-safe prompt-cache request diagnostics. Observer failures are ignored. */
 	onPromptCacheDiagnostic?: (diagnostic: PromptCacheRequestDiagnostic) => void;
+	/** Use exact-prefix `previous_response_id` continuation on official OpenAI Responses. Default: true. */
+	openAIStatefulResponses?: boolean;
 }
 
 /** Result from createAgentSession */
@@ -190,6 +189,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const settingsManager = options.settingsManager ?? SettingsManager.create(cwd, agentDir);
 	const sessionManager = options.sessionManager ?? SessionManager.create(cwd, getDefaultSessionDir(cwd, agentDir));
+	const openAIStatefulResponses = options.openAIStatefulResponses ?? true;
 
 	if (!resourceLoader) {
 		resourceLoader = new DefaultResourceLoader({ cwd, agentDir, settingsManager });
@@ -267,7 +267,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	// Create convertToLlm wrapper that filters images if blockImages is enabled (defense-in-depth)
 	const convertToLlmWithBlockImages = (messages: AgentMessage[]): Message[] => {
-		const converted = convertToLlm(messages);
+		const converted = convertToLlm(messages, {
+			cacheDeveloperContext: agent.state.model.api === "openai-responses" ? "sentinel" : "omit",
+		});
 		// Check setting dynamically so mid-session changes take effect
 		if (!settingsManager.getBlockImages()) {
 			return converted;
@@ -304,7 +306,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 	const extensionRunnerRef: { current?: ExtensionRunner } = {};
 	const toolFailureGuardSettings = settingsManager.getToolFailureGuardSettings();
-	const promptCacheDiagnosticTracker = new PromptCacheDiagnosticTracker();
+	const promptCacheRuntime = new PromptCacheRuntime((provider, modelId) => modelRuntime.getModel(provider, modelId));
 	let session: AgentSession | undefined;
 
 	agent = new Agent({
@@ -331,6 +333,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				websocketConnectTimeoutMs,
 				maxRetries: options?.maxRetries ?? providerRetrySettings.maxRetries,
 				maxRetryDelayMs: options?.maxRetryDelayMs ?? providerRetrySettings.maxRetryDelayMs,
+				statefulResponses: openAIStatefulResponses,
 				transformHeaders: async (requestHeaders) => {
 					const headers = mergeProviderAttributionHeaders(
 						model,
@@ -358,9 +361,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			});
 			if (options.onPromptCacheDiagnostic) {
 				try {
-					options.onPromptCacheDiagnostic(promptCacheDiagnosticTracker.record(optimization.diagnostic));
+					options.onPromptCacheDiagnostic(
+						promptCacheRuntime.recordRequest(optimization.diagnostic, optimization.payload),
+					);
 				} catch {
 					// Diagnostics must never block a provider request.
+				}
+			} else {
+				try {
+					promptCacheRuntime.recordRequest(optimization.diagnostic, optimization.payload);
+				} catch {
+					// Cache accounting must never block a provider request.
 				}
 			}
 			return optimization.payload;
@@ -425,6 +436,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		resourceLoader,
 		customTools: options.customTools,
 		modelRuntime,
+		promptCacheRuntime,
 		initialActiveToolNames,
 		allowedToolNames,
 		excludedToolNames,

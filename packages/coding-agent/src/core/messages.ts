@@ -5,6 +5,7 @@
  * and provides a transformer to convert them to LLM-compatible messages.
  */
 
+import { createHash } from "node:crypto";
 import type { AgentMessage } from "@earendil-works/pi-agent-core";
 import type { ImageContent, Message, TextContent } from "@earendil-works/pi-ai";
 
@@ -22,6 +23,106 @@ export const BRANCH_SUMMARY_PREFIX = `The following is a summary of a branch tha
 `;
 
 export const BRANCH_SUMMARY_SUFFIX = `</summary>`;
+
+export const CACHE_DEVELOPER_CONTEXT_TYPE = "pi.cache.developer-context.v1";
+export const CACHE_DEVELOPER_CONTEXT_SENTINEL = "<pi-cache-developer-context-v1>";
+export const CACHE_DEVELOPER_CONTEXT_REVOCATION =
+	"The previous dynamic developer context is no longer active. Ignore all earlier dynamic developer-context revisions.";
+
+interface CacheDeveloperContextDetails {
+	version: 1;
+	active: boolean;
+	digest?: string;
+}
+
+export interface DynamicDeveloperContextPlan {
+	systemPrompt: string;
+	/** Digest of the active suffix. Undefined when no suffix is active. */
+	digest?: string;
+	/** Internal three-state marker: undefined=no history, null=revoked, string=active digest. */
+	state?: string | null;
+	message?: CustomMessage<CacheDeveloperContextDetails>;
+}
+
+function cacheDeveloperContextMessage(
+	content: string,
+	details: CacheDeveloperContextDetails,
+): CustomMessage<CacheDeveloperContextDetails> {
+	return {
+		role: "custom",
+		customType: CACHE_DEVELOPER_CONTEXT_TYPE,
+		content,
+		display: false,
+		details,
+		timestamp: Date.now(),
+	};
+}
+
+/**
+ * Convert an exact appended system suffix into an append-only transcript item.
+ * Ambiguous, unsupported, replaced, and prepended prompts retain the original
+ * full system prompt.
+ */
+export function planDynamicDeveloperContext(
+	baseSystemPrompt: string,
+	effectiveSystemPrompt: string,
+	previousState: string | null | undefined,
+	eligible: boolean,
+): DynamicDeveloperContextPlan {
+	if (!eligible || baseSystemPrompt.length === 0) {
+		return { systemPrompt: effectiveSystemPrompt };
+	}
+	if (!effectiveSystemPrompt.startsWith(baseSystemPrompt)) {
+		if (previousState === undefined || previousState === null) return { systemPrompt: effectiveSystemPrompt };
+		return {
+			systemPrompt: effectiveSystemPrompt,
+			state: null,
+			message: cacheDeveloperContextMessage(CACHE_DEVELOPER_CONTEXT_REVOCATION, {
+				version: 1,
+				active: false,
+			}),
+		};
+	}
+
+	const suffix = effectiveSystemPrompt.slice(baseSystemPrompt.length);
+	if (suffix.length === 0) {
+		if (previousState === undefined || previousState === null) return { systemPrompt: baseSystemPrompt };
+		return {
+			systemPrompt: baseSystemPrompt,
+			state: null,
+			message: cacheDeveloperContextMessage(CACHE_DEVELOPER_CONTEXT_REVOCATION, {
+				version: 1,
+				active: false,
+			}),
+		};
+	}
+
+	const digest = createHash("sha256").update(suffix).digest("hex");
+	if (digest === previousState) {
+		return { systemPrompt: baseSystemPrompt, digest, state: digest };
+	}
+	const content = typeof previousState === "string" ? `${CACHE_DEVELOPER_CONTEXT_REVOCATION}\n\n${suffix}` : suffix;
+	return {
+		systemPrompt: baseSystemPrompt,
+		digest,
+		state: digest,
+		message: cacheDeveloperContextMessage(content, { version: 1, active: true, digest }),
+	};
+}
+
+/** Recover append-only state after resuming a persisted session. */
+export function findCacheDeveloperContextState(messages: AgentMessage[]): string | null | undefined {
+	for (let index = messages.length - 1; index >= 0; index--) {
+		const message = messages[index];
+		if (message.role !== "custom" || message.customType !== CACHE_DEVELOPER_CONTEXT_TYPE) continue;
+		const details = message.details;
+		if (typeof details !== "object" || details === null || Array.isArray(details)) return undefined;
+		const record = details as Partial<CacheDeveloperContextDetails>;
+		if (record.version !== 1) return undefined;
+		return record.active === true && typeof record.digest === "string" ? record.digest : null;
+	}
+	return undefined;
+}
 
 /**
  * Message type for bash executions via the ! command.
@@ -145,7 +246,78 @@ export function createCustomMessage(
  * - Compaction's generateSummary (for summarization)
  * - Custom extensions and tools
  */
-export function convertToLlm(messages: AgentMessage[]): Message[] {
+export interface ConvertToLlmOptions {
+	cacheDeveloperContext?: "plain" | "sentinel" | "omit";
+}
+
+interface MessageConversionMemoEntry {
+	content: CustomMessage["content"];
+	customType: string;
+	timestamp: number;
+	result: Message | undefined;
+}
+
+let messageConversionMemo = new WeakMap<CustomMessage, Map<string, MessageConversionMemoEntry>>();
+let messageConversionMemoHits = 0;
+let messageConversionMemoMisses = 0;
+
+export function getMessageConversionMemoStats(): { hits: number; misses: number } {
+	return { hits: messageConversionMemoHits, misses: messageConversionMemoMisses };
+}
+
+export function resetMessageConversionMemoForTests(): void {
+	messageConversionMemo = new WeakMap();
+	messageConversionMemoHits = 0;
+	messageConversionMemoMisses = 0;
+}
+
+function convertCustomMessage(m: CustomMessage, options: ConvertToLlmOptions): Message | undefined {
+	const mode = m.customType === CACHE_DEVELOPER_CONTEXT_TYPE ? (options.cacheDeveloperContext ?? "plain") : "plain";
+	const entries = messageConversionMemo.get(m);
+	const cached = entries?.get(mode);
+	if (
+		cached &&
+		cached.content === m.content &&
+		cached.customType === m.customType &&
+		cached.timestamp === m.timestamp
+	) {
+		messageConversionMemoHits++;
+		return cached.result;
+	}
+
+	messageConversionMemoMisses++;
+	let result: Message | undefined;
+	if (m.customType === CACHE_DEVELOPER_CONTEXT_TYPE) {
+		if (mode !== "omit") {
+			const content =
+				typeof m.content === "string"
+					? m.content
+					: m.content
+							.filter((item): item is TextContent => item.type === "text")
+							.map((item) => item.text)
+							.join("\n");
+			result = {
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: mode === "sentinel" ? `${CACHE_DEVELOPER_CONTEXT_SENTINEL}${content}` : content,
+					},
+				],
+				timestamp: m.timestamp,
+			};
+		}
+	} else {
+		const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
+		result = { role: "user", content, timestamp: m.timestamp };
+	}
+	const nextEntries = entries ?? new Map<string, MessageConversionMemoEntry>();
+	nextEntries.set(mode, { content: m.content, customType: m.customType, timestamp: m.timestamp, result });
+	if (!entries) messageConversionMemo.set(m, nextEntries);
+	return result;
+}
+
+export function convertToLlm(messages: AgentMessage[], options: ConvertToLlmOptions = {}): Message[] {
 	return messages
 		.map((m): Message | undefined => {
 			switch (m.role) {
@@ -160,12 +332,7 @@ export function convertToLlm(messages: AgentMessage[]): Message[] {
 						timestamp: m.timestamp,
 					};
 				case "custom": {
-					const content = typeof m.content === "string" ? [{ type: "text" as const, text: m.content }] : m.content;
-					return {
-						role: "user",
-						content,
-						timestamp: m.timestamp,
-					};
+					return convertCustomMessage(m, options);
 				}
 				case "branchSummary":
 					return {

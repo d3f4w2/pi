@@ -1,14 +1,20 @@
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { stream as streamOpenAIResponses } from "../src/api/openai-responses.ts";
+import {
+	stream as streamOpenAIResponses,
+	streamSimple as streamSimpleOpenAIResponses,
+} from "../src/api/openai-responses.ts";
 import { getModel } from "../src/compat.ts";
 import type { Model } from "../src/types.ts";
 
 type CapturedHeaders = Headers | string[][] | Record<string, string | readonly string[]> | undefined;
 
 interface CapturedResponsesPayload {
+	input?: unknown[];
+	previous_response_id?: string;
 	prompt_cache_key?: string;
 	session_id?: string;
+	store?: boolean;
 }
 
 function getHeader(headers: CapturedHeaders, name: string): string | null {
@@ -240,6 +246,145 @@ describe("openai-responses provider defaults", () => {
 
 		expect(captured.sessionId).toBe("session-123");
 		expect(captured.clientRequestId).toBe("session-123");
+	});
+
+	it("enables provider storage only for opted-in official OpenAI continuation", async () => {
+		let officialPayload: CapturedResponsesPayload | undefined;
+		await captureOpenAIResponseHeaders({
+			sessionId: "stateful-official",
+			statefulResponses: true,
+			onPayload: (payload) => {
+				officialPayload = payload as CapturedResponsesPayload;
+			},
+		});
+		const proxyModel: Model<"openai-responses"> = {
+			...getModel("openai", "gpt-5.4"),
+			provider: "proxy",
+			baseUrl: "https://proxy.example.com/v1",
+		};
+		let proxyPayload: CapturedResponsesPayload | undefined;
+		await captureOpenAIResponseHeaders(
+			{
+				sessionId: "stateful-proxy",
+				statefulResponses: true,
+				onPayload: (payload) => {
+					proxyPayload = payload as CapturedResponsesPayload;
+				},
+			},
+			proxyModel,
+		);
+
+		expect(officialPayload?.store).toBe(true);
+		expect(proxyPayload?.store).toBe(false);
+	});
+
+	it("preserves the stateful continuation option through streamSimple", async () => {
+		let capturedPayload: CapturedResponsesPayload | undefined;
+		vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response("data: [DONE]\n\n", {
+				status: 200,
+				headers: { "content-type": "text/event-stream" },
+			}),
+		);
+		const stream = streamSimpleOpenAIResponses(
+			getModel("openai", "gpt-5.6-terra"),
+			{
+				systemPrompt: "sys",
+				messages: [{ role: "user", content: "hi", timestamp: Date.now() }],
+			},
+			{
+				apiKey: "test-key",
+				sessionId: "stateful-simple",
+				statefulResponses: true,
+				onPayload: (payload) => {
+					capturedPayload = payload as CapturedResponsesPayload;
+				},
+			},
+		);
+		for await (const event of stream) {
+			if (event.type === "done" || event.type === "error") break;
+		}
+
+		expect(capturedPayload?.store).toBe(true);
+	});
+
+	it("sends only the uncovered input after an official response handle", async () => {
+		const payloads: CapturedResponsesPayload[] = [];
+		vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+			payloads.push(JSON.parse(String(init?.body)) as CapturedResponsesPayload);
+			const responseId = `resp_${payloads.length}`;
+			const sse = `data: ${JSON.stringify({
+				type: "response.completed",
+				response: {
+					id: responseId,
+					status: "completed",
+					output: [],
+					usage: { input_tokens: 10, output_tokens: 1, total_tokens: 11 },
+				},
+			})}\n\n`;
+			return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+		});
+
+		const model = getModel("openai", "gpt-5.6-terra");
+		const first = await streamSimpleOpenAIResponses(
+			model,
+			{ systemPrompt: "sys", messages: [{ role: "user", content: "one", timestamp: 1 }] },
+			{ apiKey: "test-key", sessionId: "stateful-delta-proof", statefulResponses: true },
+		).result();
+		await streamSimpleOpenAIResponses(
+			model,
+			{
+				systemPrompt: "sys",
+				messages: [
+					{ role: "user", content: "one", timestamp: 1 },
+					first,
+					{ role: "user", content: "two", timestamp: 2 },
+				],
+			},
+			{ apiKey: "test-key", sessionId: "stateful-delta-proof", statefulResponses: true },
+		).result();
+
+		expect(payloads).toHaveLength(2);
+		expect(payloads[0].previous_response_id).toBeUndefined();
+		expect(payloads[1].previous_response_id).toBe("resp_1");
+		expect(payloads[1].input).toHaveLength(1);
+		expect(JSON.stringify(payloads[1].input)).toContain("two");
+	});
+
+	it("falls back to store false when official response storage is rejected", async () => {
+		const stores: boolean[] = [];
+		vi.spyOn(globalThis, "fetch").mockImplementation(async (_input, init) => {
+			const payload = JSON.parse(String(init?.body)) as CapturedResponsesPayload;
+			stores.push(payload.store ?? false);
+			if (stores.length === 1) {
+				return new Response(
+					JSON.stringify({
+						error: { message: "store is unavailable under zero data retention", type: "invalid_request_error" },
+					}),
+					{ status: 400, headers: { "content-type": "application/json" } },
+				);
+			}
+			const sse = `data: ${JSON.stringify({
+				type: "response.completed",
+				response: {
+					id: "resp_fallback",
+					status: "completed",
+					output: [],
+					usage: { input_tokens: 10, output_tokens: 1, total_tokens: 11 },
+				},
+			})}\n\n`;
+			return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+		});
+
+		const result = await streamSimpleOpenAIResponses(
+			getModel("openai", "gpt-5.6-terra"),
+			{ systemPrompt: "sys", messages: [{ role: "user", content: "hi", timestamp: Date.now() }] },
+			{ apiKey: "test-key", sessionId: "stateful-zdr-fallback", statefulResponses: true, maxRetries: 0 },
+		).result();
+
+		expect(stores).toEqual([true, false]);
+		expect(result.stopReason).toBe("stop");
+		expect(result.diagnostics?.at(-1)?.details?.status).toBe("fallback");
 	});
 
 	it("clamps prompt_cache_key to OpenAI's 64-character limit", async () => {

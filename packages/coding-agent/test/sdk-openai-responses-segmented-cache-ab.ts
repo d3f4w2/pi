@@ -229,9 +229,19 @@ function breakpointOffsetBytes(payload: Record<string, unknown>): number | undef
 	return undefined;
 }
 
+function stripPromptCacheBreakpoints(value: unknown): unknown {
+	if (Array.isArray(value)) return value.map(stripPromptCacheBreakpoints);
+	if (!isRecord(value)) return value;
+	return Object.fromEntries(
+		Object.entries(value)
+			.filter(([key]) => key !== "prompt_cache_breakpoint")
+			.map(([key, item]) => [key, stripPromptCacheBreakpoints(item)]),
+	);
+}
+
 function canonicalVisiblePayload(payload: Record<string, unknown>): string {
 	if (!Array.isArray(payload.input) || !isRecord(payload.input[0])) throw new Error("Payload has no input");
-	const input = [...payload.input];
+	const input = payload.input.map(stripPromptCacheBreakpoints);
 	input[0] = { ...payload.input[0], content: systemText(payload) };
 	return JSON.stringify({
 		...payload,

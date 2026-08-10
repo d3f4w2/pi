@@ -205,6 +205,12 @@ export interface StreamOptions extends ProviderRequestOptions<Model<Api>> {
 	 */
 	sessionId?: string;
 	/**
+	 * Opt into exact-prefix `previous_response_id` continuation on the official
+	 * OpenAI Responses API. The adapter enables `store`, sends only the uncovered
+	 * delta, and falls back to the complete payload on state mismatch.
+	 */
+	statefulResponses?: boolean;
+	/**
 	 * WebSocket connect timeout in milliseconds for providers that support
 	 * WebSocket transports. This covers the connection/open handshake only;
 	 * stream idleness after connection uses timeoutMs.
