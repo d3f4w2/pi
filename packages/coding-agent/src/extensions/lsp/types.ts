@@ -1,5 +1,6 @@
 export const LSP_OPERATIONS = [
 	"definition",
+	"type_definition",
 	"references",
 	"implementation",
 	"hover",
@@ -7,6 +8,12 @@ export const LSP_OPERATIONS = [
 	"workspace_symbols",
 	"diagnostics",
 	"rename",
+	"rename_file",
+	"code_actions",
+	"status",
+	"reload",
+	"capabilities",
+	"request",
 ] as const;
 
 export type LspOperation = (typeof LSP_OPERATIONS)[number];
@@ -33,6 +40,11 @@ export interface LspToolRequest {
 	symbol?: string;
 	query?: string;
 	newName?: string;
+	newPath?: string;
+	actionKind?: string;
+	apply?: boolean;
+	method?: string;
+	payload?: string;
 	includeDeclaration?: boolean;
 	maxResults?: number;
 }
@@ -60,8 +72,17 @@ export interface LspDocument {
 export interface LspClient {
 	readonly adapter: LanguageAdapter;
 	readonly workspaceRoot: string;
+	readonly capabilities: ServerCapabilities;
+	readonly transportKind?: "shared" | "private";
+	readonly brokerPid?: number;
+	readonly languageServerPid?: number;
 	openDocument(filePath: string): Promise<LspDocument>;
 	definition(document: LspDocument, position: Position, signal?: AbortSignal): Promise<Array<Location | LocationLink>>;
+	typeDefinition(
+		document: LspDocument,
+		position: Position,
+		signal?: AbortSignal,
+	): Promise<Array<Location | LocationLink>>;
 	references(
 		document: LspDocument,
 		position: Position,
@@ -83,13 +104,38 @@ export interface LspClient {
 		newName: string,
 		signal?: AbortSignal,
 	): Promise<WorkspaceEdit | null>;
+	codeActions(
+		document: LspDocument,
+		range: Range,
+		diagnostics: Diagnostic[],
+		only: string[] | undefined,
+		signal?: AbortSignal,
+	): Promise<Array<Command | CodeAction>>;
+	resolveCodeAction(action: CodeAction, signal?: AbortSignal): Promise<CodeAction>;
+	executeCommand(
+		command: Command,
+		signal?: AbortSignal,
+		applyWorkspaceEdit?: (edit: WorkspaceEdit) => Promise<void>,
+	): Promise<unknown>;
+	willRenameFiles(oldPath: string, newPath: string, signal?: AbortSignal): Promise<WorkspaceEdit | null>;
+	didRenameFiles(oldPath: string, newPath: string): Promise<void>;
+	rawRequest(method: string, params: unknown, signal?: AbortSignal): Promise<unknown>;
 	refreshOpenDocument(filePath: string): Promise<void>;
+	reloadShared?(): Promise<void>;
 	stop(): Promise<void>;
+}
+
+export interface LspBrokerClientOptions {
+	enabled?: boolean;
+	endpoint?: string;
+	autoStart?: boolean;
+	connectTimeoutMs?: number;
 }
 
 export interface LspClientOptions {
 	startupTimeoutMs?: number;
 	requestTimeoutMs?: number;
+	broker?: LspBrokerClientOptions;
 }
 
 export type LspClientFactory = (
@@ -99,12 +145,16 @@ export type LspClientFactory = (
 ) => Promise<LspClient>;
 
 import type {
+	CodeAction,
+	Command,
 	Diagnostic,
 	DocumentSymbol,
 	Hover,
 	Location,
 	LocationLink,
 	Position,
+	Range,
+	ServerCapabilities,
 	SymbolInformation,
 	WorkspaceEdit,
 	WorkspaceSymbol,

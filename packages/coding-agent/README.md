@@ -501,7 +501,7 @@ Pi is aggressively extensible so it doesn't have to dictate your workflow. Featu
 
 **No sub-agents.** There's many ways to do this. Spawn pi instances via tmux, or build your own with [extensions](#extensions), or install a package that does it your way.
 
-**No mandatory sandbox.** Built-in [tool approval modes](docs/tool-approval.md) confirm risky operations, but strong isolation still requires a container or another sandbox suited to your environment.
+**Lightweight sandbox by default.** Built-in tools use workspace-scoped OS enforcement with no setup. See [Security](docs/security.md) for exact platform boundaries; hostile or unattended workloads still need a container, VM, or remote sandbox.
 
 **No plan mode.** Write plans to files, or build it with [extensions](#extensions), or install a package.
 

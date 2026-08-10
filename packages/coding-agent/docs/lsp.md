@@ -42,6 +42,7 @@
 ```text
 grep pattern=loadUser path=.
 lsp definition path=src/index.ts symbol=loadUser
+lsp type_definition path=src/index.ts symbol=User
 lsp references path=src/index.ts line=20 column=15
 lsp hover path=src/index.ts symbol=loadUser
 lsp symbols path=src/index.ts
@@ -49,10 +50,18 @@ lsp workspace_symbols path=src/index.ts query=Provider
 lsp diagnostics path=src/index.ts
 lsp diagnostics path="*"
 lsp rename path=src/index.ts symbol=loadUser new_name=loadCurrentUser
+lsp rename_file path=src/old-name.ts new_path=src/new-name.ts
+lsp code_actions path=src/index.ts line=20
+lsp code_actions path=src/index.ts line=20 query="Add missing import" apply=true
+lsp status
+lsp reload path=src/index.ts
+lsp capabilities path=src/index.ts
 ```
 
 行号和列号从 1 开始。可以用 `symbol` 代替列号；如果文件中同名内容出现多次，工具会返回候选行，要求调用方指定位置。
 
-`rename` 会直接修改当前项目中的文件。执行后应查看 Git diff，并运行相关检查或测试。
+`code_actions` 默认只预览候选。`rename`、`rename_file` 和 `code_actions apply=true` 会修改当前项目中的文件，并进入工具确认流程。`rename_file` 会先让语言服务器计算引用更新，再移动文件；写入失败时回滚。执行后应查看 Git diff，并运行相关检查或测试。
+
+`status` 不启动服务器。`reload` 用于服务器异常或配置变化，不应在普通查询前调用。`request` 是受执行确认保护的高级接口，用于尚未提供具名操作的标准或服务器扩展方法；生命周期方法和 `workspace/applyEdit` 不能直接调用。
 
 架构和关键决策见 [lsp-architecture.md](lsp-architecture.md)。

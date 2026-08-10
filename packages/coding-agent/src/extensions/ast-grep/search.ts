@@ -1,10 +1,14 @@
 import { readFile, realpath, stat } from "node:fs/promises";
 import path from "node:path";
-import { pattern as compilePattern, Lang, type NapiConfig, parseAsync } from "@ast-grep/napi";
+import { pattern as compilePattern, type NapiConfig, parseAsync, type SgNode } from "@ast-grep/napi";
 import { globIterate } from "glob";
+import { ALL_LANGUAGE_CONFIGS, captureNames, configForFile, type LanguageConfig } from "./languages.ts";
+import { findMarkdownMatches } from "./markdown.ts";
 import type {
+	AstGrepCapture,
 	AstGrepExplicitLanguage,
 	AstGrepLanguage,
+	AstGrepRange,
 	AstGrepSearchDetails,
 	AstGrepSearchRequest,
 	AstGrepSearchResult,
@@ -30,38 +34,19 @@ const IGNORED_PATHS = [
 	"**/vendor/**",
 ];
 
-export interface LanguageConfig {
-	id: AstGrepExplicitLanguage;
-	lang: Lang;
-	globs: string[];
-	extensions: string[];
-}
-
-const LANGUAGE_CONFIGS: Readonly<Record<AstGrepExplicitLanguage, LanguageConfig>> = {
-	javascript: {
-		id: "javascript",
-		lang: Lang.JavaScript,
-		globs: ["**/*.{js,jsx,mjs,cjs}"],
-		extensions: [".js", ".jsx", ".mjs", ".cjs"],
-	},
-	typescript: {
-		id: "typescript",
-		lang: Lang.TypeScript,
-		globs: ["**/*.{ts,mts,cts}"],
-		extensions: [".ts", ".mts", ".cts"],
-	},
-	tsx: { id: "tsx", lang: Lang.Tsx, globs: ["**/*.tsx"], extensions: [".tsx"] },
-	html: { id: "html", lang: Lang.Html, globs: ["**/*.{html,htm}"], extensions: [".html", ".htm"] },
-	css: { id: "css", lang: Lang.Css, globs: ["**/*.css"], extensions: [".css"] },
-};
-
-export const ALL_LANGUAGE_CONFIGS = Object.values(LANGUAGE_CONFIGS);
-
 interface FileMatch {
 	filePath: string;
 	line: number;
 	column: number;
 	text: string;
+	range: AstGrepRange;
+	captures: Record<string, AstGrepCapture[]>;
+}
+
+interface SearchableFile {
+	filePath: string;
+	config: LanguageConfig;
+	matcher: NapiConfig | undefined;
 }
 
 function isPathInside(root: string, candidate: string): boolean {
@@ -104,6 +89,11 @@ export async function collectFiles(
 	const targetStat = await stat(target);
 	if (targetStat.isFile()) {
 		if (targetStat.size > MAX_FILE_BYTES) return { files: [], skippedFiles: 1 };
+		if (!configForFile(target, language)) {
+			throw new Error(
+				`ast_grep 不支持文件 ${path.basename(target)} 的语言；请使用 language 显式覆盖，或选择受支持的文件。`,
+			);
+		}
 		return { files: [target], skippedFiles: 0 };
 	}
 	if (!targetStat.isDirectory()) throw new Error("ast_grep 的 path 必须是文件或文件夹。");
@@ -111,7 +101,9 @@ export async function collectFiles(
 	const files: string[] = [];
 	let skippedFiles = 0;
 	const globs =
-		language === "auto" ? ALL_LANGUAGE_CONFIGS.flatMap((config) => config.globs) : LANGUAGE_CONFIGS[language].globs;
+		language === "auto"
+			? ALL_LANGUAGE_CONFIGS.flatMap((config) => config.globs)
+			: (configForFile(target, language)?.globs ?? []);
 	for await (const relativePath of globIterate(globs, {
 		cwd: target,
 		nodir: true,
@@ -136,27 +128,70 @@ export async function collectFiles(
 	return { files, skippedFiles };
 }
 
-export function configForFile(filePath: string, language: AstGrepLanguage): LanguageConfig | undefined {
-	if (language !== "auto") return LANGUAGE_CONFIGS[language];
-	const extension = path.extname(filePath).toLowerCase();
-	return ALL_LANGUAGE_CONFIGS.find((config) => config.extensions.includes(extension));
+export { configForFile } from "./languages.ts";
+
+function matchRange(node: SgNode): AstGrepRange {
+	const range = node.range();
+	return {
+		start: { line: range.start.line + 1, column: range.start.column + 1, index: range.start.index },
+		end: { line: range.end.line + 1, column: range.end.column + 1, index: range.end.index },
+	};
 }
 
-async function searchFile(filePath: string, lang: Lang, matcher: NapiConfig): Promise<FileMatch[]> {
+function matchCaptures(node: SgNode, names: readonly string[]): Record<string, AstGrepCapture[]> {
+	return Object.fromEntries(
+		names.flatMap((name) => {
+			const multiple = node.getMultipleMatches(name);
+			const nodes = multiple.length > 0 ? multiple : [node.getMatch(name)].filter((item): item is SgNode => !!item);
+			return nodes.length === 0
+				? []
+				: [[name, nodes.map((item) => ({ text: item.text(), range: matchRange(item) }))]];
+		}),
+	);
+}
+
+async function searchFile(
+	filePath: string,
+	config: LanguageConfig,
+	pattern: string,
+	matcher?: NapiConfig,
+): Promise<FileMatch[]> {
 	const source = await readFile(filePath, "utf8");
-	const root = await parseAsync(lang, source);
+	if (config.engine === "markdown") {
+		return findMarkdownMatches(source, pattern).map((match) => ({
+			filePath,
+			line: match.range.start.line,
+			column: match.range.start.column,
+			text: compactSnippet(match.text),
+			range: match.range,
+			captures: match.captures,
+		}));
+	}
+	if (!config.lang || !matcher) throw new Error(`ast_grep 缺少 ${config.id} 解析器。`);
+	const root = await parseAsync(config.lang, source);
+	const names = captureNames(pattern);
 	return root
 		.root()
 		.findAll(matcher)
 		.map((node) => {
-			const range = node.range();
+			const range = matchRange(node);
 			return {
 				filePath,
-				line: range.start.line + 1,
-				column: range.start.column + 1,
+				line: range.start.line,
+				column: range.start.column,
 				text: compactSnippet(node.text()),
+				range,
+				captures: matchCaptures(node, names),
 			};
 		});
+}
+
+function formatCaptureSummary(captures: Readonly<Record<string, AstGrepCapture[]>>): string {
+	const entries = Object.entries(captures);
+	if (entries.length === 0) return "";
+	return ` captures: ${entries
+		.map(([name, values]) => `$${name}=${values.map((value) => compactSnippet(value.text)).join(" | ")}`)
+		.join(", ")}`;
 }
 
 function formatGroupedMatches(
@@ -234,12 +269,14 @@ export class AstGrepService implements AstGrepSearchService {
 			for (let index = 0; index < files.length; index += BATCH_SIZE) {
 				if (combinedSignal.aborted) throw combinedSignal.reason;
 				const batch = files.slice(index, index + BATCH_SIZE);
-				const searchableBatch = batch.flatMap((filePath) => {
+				const searchableBatch = batch.flatMap((filePath): SearchableFile[] => {
 					const config = configForFile(filePath, request.language);
 					if (!config) return [];
+					if (config.engine === "markdown") return [{ filePath, config, matcher: undefined }];
 					let matcher = matchers.get(config.id);
 					if (matcher === undefined) {
 						try {
+							if (!config.lang) throw new Error(`缺少 ${config.id} 解析器`);
 							matcher = compilePattern(config.lang, request.pattern);
 						} catch (error) {
 							matcher = error instanceof Error ? error : new Error(String(error));
@@ -249,7 +286,9 @@ export class AstGrepService implements AstGrepSearchService {
 					return matcher instanceof Error ? [] : [{ filePath, config, matcher }];
 				});
 				const batchMatches = await Promise.all(
-					searchableBatch.map(({ filePath, config, matcher }) => searchFile(filePath, config.lang, matcher)),
+					searchableBatch.map(({ filePath, config, matcher }) =>
+						searchFile(filePath, config, request.pattern, matcher),
+					),
 				);
 				scannedFiles += searchableBatch.length;
 				for (const fileMatches of batchMatches) {
@@ -276,7 +315,7 @@ export class AstGrepService implements AstGrepSearchService {
 					? {
 							lines: matches.map(
 								(match) =>
-									`${formatPath(projectRoot, match.filePath)}:${match.line}:${match.column} ${match.text}`,
+									`${formatPath(projectRoot, match.filePath)}:${match.line}:${match.column} ${match.text}${formatCaptureSummary(match.captures)}`,
 							),
 							outputTruncated: false,
 						}
@@ -292,6 +331,12 @@ export class AstGrepService implements AstGrepSearchService {
 				truncated,
 				outputTruncated: formatted.outputTruncated,
 				durationMs: Date.now() - startedAt,
+				matches: matches.map((match) => ({
+					file: formatPath(projectRoot, match.filePath),
+					range: match.range,
+					text: match.text,
+					captures: match.captures,
+				})),
 			};
 			return { text: lines.join("\n") || "没有找到符合该代码结构的结果。", details };
 		} catch (error) {

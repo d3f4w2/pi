@@ -8,7 +8,14 @@ import type {
 	AgentEvalTraceEntry,
 } from "./types.ts";
 
-const CATEGORIES = new Set<AgentEvalCategory>(["navigation", "bug_fix", "verification", "recovery", "scope_control"]);
+const CATEGORIES = new Set<AgentEvalCategory>([
+	"navigation",
+	"bug_fix",
+	"verification",
+	"recovery",
+	"scope_control",
+	"memory",
+]);
 const MAX_RESULTS = 100;
 
 function isRecord(value: unknown): value is Record<string, unknown> {

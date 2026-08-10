@@ -177,7 +177,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				options?.statefulResponses === true && isOfficialOpenAIResponsesModel(model)
 					? options.sessionId
 					: undefined;
-			const statefulPreparation = openAIResponsesState.prepare(statefulKey, params);
+			const statefulPreparation = await openAIResponsesState.prepare(statefulKey, params);
 			const createResponse = async (requestParams: ResponseCreateParamsStreaming) =>
 				await retryProviderRequest(() => client.responses.create(requestParams, requestOptions).withResponse(), {
 					maxRetries: options?.maxRetries ?? 1,
@@ -239,7 +239,12 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions> 
 				{ includeSystemPrompt: false, grammarToolInputProperties },
 			);
 			if (!storageFallback) {
-				openAIResponsesState.commit(statefulPreparation, output.responseId, responseOutput, continuationFallback);
+				await openAIResponsesState.commit(
+					statefulPreparation,
+					output.responseId,
+					responseOutput,
+					continuationFallback,
+				);
 			}
 			if (statefulPreparation.chained || storageFallback) {
 				output.diagnostics = [

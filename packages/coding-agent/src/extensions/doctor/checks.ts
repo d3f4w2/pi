@@ -270,6 +270,54 @@ export function runDoctorChecks(snapshot: DoctorSnapshot, probes: DoctorFileProb
 		...(missingCoreTools.length === 0 ? {} : { fix: "输入 /reload；仍缺失时检查内置扩展加载错误。" }),
 	});
 
+	if (snapshot.sandbox) {
+		const sandbox = snapshot.sandbox;
+		if (sandbox.state === "failed") {
+			add({
+				id: "sandbox",
+				area: "sandbox",
+				severity: "error",
+				label: "安全沙箱",
+				detail: sandbox.error ?? "沙箱初始化失败。",
+				fix: "修复后重启 Pi；不要用 full-access 绕过未知的初始化错误。",
+			});
+		} else if (sandbox.state !== "active") {
+			add({
+				id: "sandbox",
+				area: "sandbox",
+				severity: "info",
+				label: "安全沙箱",
+				detail: "尚未初始化；第一次使用内置文件或进程工具时会自动启动。",
+			});
+		} else if (sandbox.backend === "host") {
+			add({
+				id: "sandbox",
+				area: "sandbox",
+				severity: "warning",
+				label: "安全沙箱",
+				detail: "当前为 full-access，内置工具直接在宿主机执行。",
+				fix: "删除 PI_SANDBOX_MODE=full-access 并重启 Pi。",
+			});
+		} else if (sandbox.backend === "restricted-token") {
+			add({
+				id: "sandbox",
+				area: "sandbox",
+				severity: "warning",
+				label: "安全沙箱",
+				detail: "Windows restricted-token 已限制写入和进程树，但仍保留宿主读取和直接联网能力。",
+				fix: "运行一次 Windows 独立账户沙箱安装命令，然后重启 Pi。",
+			});
+		} else {
+			add({
+				id: "sandbox",
+				area: "sandbox",
+				severity: sandbox.enforced ? "ok" : "warning",
+				label: "安全沙箱",
+				detail: `后端 ${sandbox.backend ?? "unknown"} 已启用；模式 ${sandbox.mode ?? "unknown"}；工作区 ${sandbox.workspaceRoot ?? "unknown"}。`,
+			});
+		}
+	}
+
 	if (snapshot.toolFailureGuard) {
 		const guard = snapshot.toolFailureGuard;
 		const protectedRuntime = guard.repeatLimit > 0 || guard.consecutiveLimit > 0 || guard.timeoutMs > 0;

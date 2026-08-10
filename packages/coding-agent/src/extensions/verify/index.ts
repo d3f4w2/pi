@@ -1,6 +1,5 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
-import { VerifyService } from "./service.ts";
 import type { VerifyDetails, VerifyToolService } from "./types.ts";
 
 const VerifyParams = Type.Object(
@@ -21,7 +20,9 @@ const VerifyParams = Type.Object(
 	{ additionalProperties: false },
 );
 
-function registerVerifyExtension(pi: ExtensionAPI, service: VerifyToolService): void {
+type VerifyServiceLoader = () => Promise<VerifyToolService>;
+
+function registerVerifyExtension(pi: ExtensionAPI, loadService: VerifyServiceLoader): void {
 	pi.registerTool<typeof VerifyParams, VerifyDetails>({
 		name: "verify",
 		label: "代码验证",
@@ -45,6 +46,7 @@ function registerVerifyExtension(pi: ExtensionAPI, service: VerifyToolService): 
 		executionMode: "sequential",
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const operation = params.operation ?? "auto";
+			const service = await loadService();
 			const result = await service.verify(
 				{
 					operation,
@@ -73,9 +75,13 @@ function registerVerifyExtension(pi: ExtensionAPI, service: VerifyToolService): 
 }
 
 export function createVerifyExtension(service: VerifyToolService): (pi: ExtensionAPI) => void {
-	return (pi) => registerVerifyExtension(pi, service);
+	return (pi) => registerVerifyExtension(pi, async () => service);
 }
 
 export default function verifyExtension(pi: ExtensionAPI): void {
-	registerVerifyExtension(pi, new VerifyService());
+	let servicePromise: Promise<VerifyToolService> | undefined;
+	registerVerifyExtension(pi, () => {
+		servicePromise ??= import("./service.ts").then(({ VerifyService }) => new VerifyService());
+		return servicePromise;
+	});
 }

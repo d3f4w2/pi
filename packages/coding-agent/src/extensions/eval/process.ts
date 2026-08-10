@@ -2,6 +2,7 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { EvalCellToolBridge, type EvalToolBridgeOptions } from "./bridge.ts";
 import type { EvalExecutionResult, EvalLanguage, EvalRuntimeService, EvalWorkerResponse } from "./types.ts";
 import { BUN_WORKER, PYTHON_WORKER, WORKER_PREFIX } from "./workers.ts";
 
@@ -18,6 +19,9 @@ interface PendingRequest {
 	resolve(response: EvalWorkerResponse): void;
 	reject(error: Error): void;
 	timer: ReturnType<typeof setTimeout>;
+	controller: AbortController;
+	bridge: EvalCellToolBridge;
+	nonce: string;
 }
 
 export interface EvalWorkerLike {
@@ -115,10 +119,12 @@ class PersistentEvalWorker implements EvalWorkerLike {
 	private readyPromise: Promise<void> | undefined;
 	private readyResolve: (() => void) | undefined;
 	private readyReject: ((error: Error) => void) | undefined;
+	private readonly bridgeOptions: EvalToolBridgeOptions;
 
-	constructor(language: EvalLanguage, cwd: string) {
+	constructor(language: EvalLanguage, cwd: string, bridgeOptions: EvalToolBridgeOptions = {}) {
 		this.language = language;
 		this.cwd = cwd;
+		this.bridgeOptions = bridgeOptions;
 	}
 
 	isRunning(): boolean {
@@ -168,8 +174,13 @@ class PersistentEvalWorker implements EvalWorkerLike {
 			if (typeof record.id !== "number") continue;
 			const request = this.pending.get(record.id);
 			if (!request) continue;
+			if (record.type === "tool_call") {
+				void this.handleToolCall(record.id, record, request);
+				continue;
+			}
 			this.pending.delete(record.id);
 			clearTimeout(request.timer);
+			request.bridge.close();
 			request.resolve({
 				ok: record.ok === true,
 				stdout: typeof record.stdout === "string" ? record.stdout : "",
@@ -180,12 +191,41 @@ class PersistentEvalWorker implements EvalWorkerLike {
 		}
 	}
 
+	private async handleToolCall(
+		requestId: number,
+		record: Record<string, unknown>,
+		request: PendingRequest,
+	): Promise<void> {
+		const child = this.process;
+		if (!child || record.nonce !== request.nonce || typeof record.callId !== "number") return;
+		let response: Record<string, unknown>;
+		try {
+			const result = await request.bridge.invoke({
+				tool: typeof record.tool === "string" ? record.tool : "",
+				args: record.args,
+			});
+			response = { type: "tool_result", id: requestId, callId: record.callId, ok: true, result };
+		} catch (error) {
+			response = {
+				type: "tool_result",
+				id: requestId,
+				callId: record.callId,
+				ok: false,
+				error: error instanceof Error ? error.message : String(error),
+			};
+		}
+		if (this.process !== child || !this.pending.has(requestId)) return;
+		child.stdin.write(`${JSON.stringify(response)}\n`, "utf8");
+	}
+
 	private fail(error: Error): void {
 		this.readyReject?.(error);
 		this.readyResolve = undefined;
 		this.readyReject = undefined;
 		for (const request of this.pending.values()) {
 			clearTimeout(request.timer);
+			request.controller.abort(error);
+			request.bridge.close();
 			request.reject(error);
 		}
 		this.pending.clear();
@@ -226,37 +266,59 @@ class PersistentEvalWorker implements EvalWorkerLike {
 
 	async execute(code: string, timeoutMs: number, signal?: AbortSignal): Promise<EvalWorkerResponse> {
 		await this.start();
+		if (signal?.aborted) {
+			await this.stop();
+			throw signal.reason instanceof Error ? signal.reason : new Error("代码执行已取消。");
+		}
 		const child = this.process;
 		if (!child) throw new Error("运行环境没有成功启动。");
 		const id = this.nextId++;
+		const nonce = `${process.pid}-${id}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 		return new Promise<EvalWorkerResponse>((resolve, reject) => {
+			const controller = new AbortController();
+			const bridge = new EvalCellToolBridge(this.cwd, controller.signal, this.bridgeOptions);
 			const onAbort = (): void => {
-				void this.stop();
-				reject(signal?.reason instanceof Error ? signal.reason : new Error("代码执行已取消。"));
+				const request = this.pending.get(id);
+				if (request) {
+					this.pending.delete(id);
+					clearTimeout(request.timer);
+				}
+				controller.abort(signal?.reason);
+				bridge.close();
+				const abortError = signal?.reason instanceof Error ? signal.reason : new Error("代码执行已取消。");
+				void this.stop().then(() => reject(abortError), reject);
 			};
+			const timer = setTimeout(() => {
+				this.pending.delete(id);
+				signal?.removeEventListener("abort", onAbort);
+				controller.abort(new Error("Eval 代码单元总超时。"));
+				bridge.close();
+				const timeoutError = new Error(`代码执行超过 ${Math.ceil(timeoutMs / 1000)} 秒，运行环境已重置。`);
+				void this.stop().then(() => reject(timeoutError), reject);
+			}, timeoutMs);
+			this.pending.set(id, {
+				resolve: (response) => {
+					signal?.removeEventListener("abort", onAbort);
+					bridge.close();
+					resolve(response);
+				},
+				reject: (error) => {
+					signal?.removeEventListener("abort", onAbort);
+					controller.abort(error);
+					bridge.close();
+					reject(error);
+				},
+				timer,
+				controller,
+				bridge,
+				nonce,
+			});
 			if (signal?.aborted) {
 				onAbort();
 				return;
 			}
 			signal?.addEventListener("abort", onAbort, { once: true });
-			const timer = setTimeout(() => {
-				this.pending.delete(id);
-				signal?.removeEventListener("abort", onAbort);
-				void this.stop();
-				reject(new Error(`代码执行超过 ${Math.ceil(timeoutMs / 1000)} 秒，运行环境已重置。`));
-			}, timeoutMs);
-			this.pending.set(id, {
-				resolve: (response) => {
-					signal?.removeEventListener("abort", onAbort);
-					resolve(response);
-				},
-				reject: (error) => {
-					signal?.removeEventListener("abort", onAbort);
-					reject(error);
-				},
-				timer,
-			});
-			child.stdin.write(`${JSON.stringify({ id, code })}\n`, "utf8", (error) => {
+			child.stdin.write(`${JSON.stringify({ id, code, nonce })}\n`, "utf8", (error) => {
 				if (!error) return;
 				const request = this.pending.get(id);
 				if (!request) return;
@@ -270,8 +332,10 @@ class PersistentEvalWorker implements EvalWorkerLike {
 	async stop(): Promise<void> {
 		const child = this.process;
 		if (!child) return;
-		this.fail(new Error("运行环境已重置。"));
+		const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
 		child.kill();
+		await Promise.race([exited, new Promise<void>((resolve) => setTimeout(resolve, 1_000))]);
+		if (this.process === child) this.fail(new Error("运行环境已重置。"));
 	}
 }
 
@@ -279,8 +343,8 @@ export class PersistentEvalManager implements EvalRuntimeService {
 	private readonly factory: EvalWorkerFactory;
 	private readonly workers = new Map<EvalLanguage, { cwd: string; worker: EvalWorkerLike }>();
 
-	constructor(factory: EvalWorkerFactory = (language, cwd) => new PersistentEvalWorker(language, cwd)) {
-		this.factory = factory;
+	constructor(factory?: EvalWorkerFactory, bridgeOptions: EvalToolBridgeOptions = {}) {
+		this.factory = factory ?? ((language, cwd) => new PersistentEvalWorker(language, cwd, bridgeOptions));
 	}
 
 	async execute(

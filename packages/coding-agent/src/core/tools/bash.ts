@@ -2,13 +2,13 @@ import { constants } from "node:fs";
 import { access as fsAccess } from "node:fs/promises";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import { Container, Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { spawn } from "child_process";
 import { type Static, Type } from "typebox";
 import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts";
 import { truncateToVisualLines } from "../../modes/interactive/components/visual-truncate.ts";
 import { theme } from "../../modes/interactive/theme/theme.ts";
 import { waitForChildProcess } from "../../utils/child-process.ts";
 import {
+	getPowerShellConfig,
 	getShellConfig,
 	getShellEnv,
 	killProcessTree,
@@ -16,6 +16,10 @@ import {
 	untrackDetachedChildPid,
 } from "../../utils/shell.ts";
 import type { ExtensionContext, ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { resolveDefaultSandboxMode, withDefaultSandboxNetworkCommand } from "../sandbox/default.ts";
+import type { SandboxNetworkAccessDecision, SandboxNetworkAccessPrompt } from "../sandbox/network-permissions.ts";
+import { isSensitiveSandboxNetworkHost } from "../sandbox/network-permissions.ts";
+import { spawnSandboxedProcess } from "../sandbox/process.ts";
 import { OutputAccumulator } from "./output-accumulator.ts";
 import { getTextOutput, invalidArgText, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -31,10 +35,9 @@ export function buildBashToolCommand(
 	executor: BashToolExecutor = "bash",
 	platform: NodeJS.Platform = process.platform,
 ): string {
-	if (executor === "bash") return command;
-	if (platform !== "win32") throw new Error("The PowerShell executor is only available on Windows.");
-	const quotedCommand = `'${command.replaceAll("'", "'\"'\"'")}'`;
-	return `powershell.exe -NoProfile -NonInteractive -Command ${quotedCommand}`;
+	if (executor === "powershell" && platform !== "win32")
+		throw new Error("The PowerShell executor is only available on Windows.");
+	return command;
 }
 
 function resolveTimeoutMs(timeout: number | undefined): number | undefined {
@@ -54,7 +57,7 @@ const bashSchema = Type.Object({
 	command: Type.String({ description: "Command to execute with the selected executor" }),
 	executor: Type.Optional(
 		Type.Union([Type.Literal("bash"), Type.Literal("powershell")], {
-			description: "Use bash by default; use powershell only for Windows-only operations",
+			description: "Uses native PowerShell by default on Windows and bash on other platforms",
 		}),
 	),
 	timeout: Type.Optional(Type.Number({ description: "Timeout in seconds (optional, no default timeout)" })),
@@ -64,7 +67,7 @@ const bashBasePromptGuidelines = [
 	"When the grep tool is available, never use bash to run rg, grep, findstr, or Select-String for file-content searches.",
 	...(process.platform === "win32"
 		? [
-				'Use executor="powershell" only for Windows-only operations such as registry, services, COM, certificates, or PowerShell cmdlets. Keep portable Git, npm, Node, or Python commands in the default bash executor.',
+				'On Windows, select executor="powershell" for Git, npm, Node, Python and Windows operations so they run without Git Bash or WSL. Keep executor="bash" only for commands that require bash syntax.',
 			]
 		: []),
 ] as const;
@@ -72,7 +75,7 @@ const bashBasePromptGuidelines = [
 export const bashToolSystemPromptContribution = {
 	snippet:
 		process.platform === "win32"
-			? "Run portable commands in Git Bash or Windows-only commands in PowerShell"
+			? "Run ordinary Windows commands in native PowerShell; keep bash for bash-specific syntax"
 			: "Execute build, test, Git, package, and system commands",
 	guidelines: [
 		...bashBasePromptGuidelines,
@@ -85,6 +88,42 @@ export type BashToolInput = Static<typeof bashSchema>;
 export interface BashToolDetails {
 	truncation?: TruncationResult;
 	fullOutputPath?: string;
+}
+
+const NETWORK_ACCESS_OPTIONS = {
+	deny: "Deny",
+	command: "Allow for this command",
+	session: "Allow for this session",
+	workspace: "Always allow in this workspace",
+} as const;
+
+export function createSandboxNetworkAccessPrompt(
+	ctx: ExtensionContext | undefined,
+	signal?: AbortSignal,
+): SandboxNetworkAccessPrompt | undefined {
+	if (!ctx?.hasUI) return undefined;
+	return async (request) => {
+		const sensitiveWarning = isSensitiveSandboxNetworkHost(request.host)
+			? "\nSensitive target: this can reach a service on your machine, LAN, or cloud metadata network."
+			: "";
+		const choice = await ctx.ui.select(
+			`Sandbox network access\n${request.destination}${sensitiveWarning}\n\nAllow only if this command needs this exact host and port.`,
+			[
+				NETWORK_ACCESS_OPTIONS.deny,
+				NETWORK_ACCESS_OPTIONS.command,
+				NETWORK_ACCESS_OPTIONS.session,
+				NETWORK_ACCESS_OPTIONS.workspace,
+			],
+			signal ? { signal } : undefined,
+		);
+		const decisions: Readonly<Record<string, SandboxNetworkAccessDecision>> = {
+			[NETWORK_ACCESS_OPTIONS.deny]: "deny",
+			[NETWORK_ACCESS_OPTIONS.command]: "allow-command",
+			[NETWORK_ACCESS_OPTIONS.session]: "allow-session",
+			[NETWORK_ACCESS_OPTIONS.workspace]: "allow-workspace",
+		};
+		return choice ? decisions[choice] : "deny";
+	};
 }
 
 /**
@@ -107,6 +146,8 @@ export interface BashOperations {
 			signal?: AbortSignal;
 			timeout?: number;
 			env?: NodeJS.ProcessEnv;
+			executor?: BashToolExecutor;
+			requestNetworkAccess?: SandboxNetworkAccessPrompt;
 		},
 	) => Promise<{ exitCode: number | null }>;
 }
@@ -119,12 +160,16 @@ export interface BashOperations {
  */
 export function createLocalBashOperations(options?: { shellPath?: string }): BashOperations {
 	return {
-		exec: async (command, cwd, { onData, signal, timeout, env }) => {
+		exec: async (command, cwd, { onData, signal, timeout, env, executor, requestNetworkAccess }) => {
 			const timeoutMs = resolveTimeoutMs(timeout);
 			if (signal?.aborted) {
 				throw new Error("aborted");
 			}
-			const shellConfig = getShellConfig(options?.shellPath);
+			const sandboxMode = resolveDefaultSandboxMode();
+			const selectedExecutor =
+				executor ?? (process.platform === "win32" && sandboxMode !== "full-access" ? "powershell" : "bash");
+			const shellConfig =
+				selectedExecutor === "powershell" ? getPowerShellConfig() : getShellConfig(options?.shellPath);
 			try {
 				await fsAccess(cwd, constants.F_OK);
 			} catch {
@@ -132,55 +177,71 @@ export function createLocalBashOperations(options?: { shellPath?: string }): Bas
 			}
 
 			const commandFromStdin = shellConfig.commandTransport === "stdin";
-			const child = spawn(shellConfig.shell, commandFromStdin ? shellConfig.args : [...shellConfig.args, command], {
-				cwd,
-				detached: process.platform !== "win32",
-				env: env ?? getShellEnv(),
-				stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
-				windowsHide: true,
-			});
-			if (commandFromStdin) {
-				child.stdin?.on("error", () => {});
-				child.stdin?.end(command);
-			}
-			if (child.pid) trackDetachedChildPid(child.pid);
-			let timedOut = false;
-			let timeoutHandle: NodeJS.Timeout | undefined;
-			const onAbort = () => {
-				if (child.pid) killProcessTree(child.pid);
-			};
+			return withDefaultSandboxNetworkCommand(cwd, requestNetworkAccess, async (controller) => {
+				if (
+					process.platform === "win32" &&
+					selectedExecutor === "bash" &&
+					controller.snapshot().backend === "restricted-token"
+				) {
+					throw new Error(
+						'Git Bash and MSYS cannot run inside the Windows restricted-token sandbox. Use executor="powershell", install the separate-user sandbox, or explicitly set PI_SANDBOX_MODE=full-access.',
+					);
+				}
+				const child = await spawnSandboxedProcess(
+					shellConfig.shell,
+					commandFromStdin ? shellConfig.args : [...shellConfig.args, command],
+					{
+						cwd,
+						detached: process.platform !== "win32",
+						env: env ?? getShellEnv(),
+						stdio: [commandFromStdin ? "pipe" : "ignore", "pipe", "pipe"],
+						windowsHide: true,
+					},
+					controller,
+				);
+				if (commandFromStdin) {
+					child.stdin?.on("error", () => {});
+					child.stdin?.end(command);
+				}
+				if (child.pid) trackDetachedChildPid(child.pid);
+				let timedOut = false;
+				let timeoutHandle: NodeJS.Timeout | undefined;
+				const onAbort = () => {
+					if (child.pid) killProcessTree(child.pid);
+				};
 
-			try {
-				// Set timeout if provided.
-				if (timeoutMs !== undefined) {
-					timeoutHandle = setTimeout(() => {
-						timedOut = true;
-						if (child.pid) killProcessTree(child.pid);
-					}, timeoutMs);
+				try {
+					// Set timeout if provided.
+					if (timeoutMs !== undefined) {
+						timeoutHandle = setTimeout(() => {
+							timedOut = true;
+							if (child.pid) killProcessTree(child.pid);
+						}, timeoutMs);
+					}
+					// Stream stdout and stderr.
+					child.stdout?.on("data", onData);
+					child.stderr?.on("data", onData);
+					// Handle abort signal by killing the entire process tree.
+					if (signal) {
+						if (signal.aborted) onAbort();
+						else signal.addEventListener("abort", onAbort, { once: true });
+					}
+					// Handle shell spawn errors and wait for the process to terminate without hanging
+					// on inherited stdio handles held by detached descendants.
+					const exitCode = await waitForChildProcess(child);
+					if (signal?.aborted) {
+						throw new Error("aborted");
+					}
+					if (timedOut) {
+						throw new Error(`timeout:${timeout}`);
+					}
+					return { exitCode };
+				} finally {
+					if (child.pid) untrackDetachedChildPid(child.pid);
+					if (timeoutHandle) clearTimeout(timeoutHandle);
+					if (signal) signal.removeEventListener("abort", onAbort);
 				}
-				// Stream stdout and stderr.
-				child.stdout?.on("data", onData);
-				child.stderr?.on("data", onData);
-				// Handle abort signal by killing the entire process tree.
-				if (signal) {
-					if (signal.aborted) onAbort();
-					else signal.addEventListener("abort", onAbort, { once: true });
-				}
-				// Handle shell spawn errors and wait for the process to terminate without hanging
-				// on inherited stdio handles held by detached descendants.
-				const exitCode = await waitForChildProcess(child);
-				if (signal?.aborted) {
-					throw new Error("aborted");
-				}
-				if (timedOut) {
-					throw new Error(`timeout:${timeout}`);
-				}
-				return { exitCode };
-			} finally {
-				if (child.pid) untrackDetachedChildPid(child.pid);
-				if (timeoutHandle) clearTimeout(timeoutHandle);
-				if (signal) signal.removeEventListener("abort", onAbort);
-			}
+			});
 		},
 	};
 }
@@ -363,7 +424,7 @@ export function createBashToolDefinition(
 	return {
 		name: "bash",
 		label: "bash",
-		description: `Execute terminal commands in the current working directory. Bash is the default executor; on Windows, select the PowerShell executor only for Windows-only operations. Use the dedicated grep tool for file-content searches when it is available. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file.`,
+		description: `Execute terminal commands in the current working directory. Bash remains available for bash syntax; on Windows choose the PowerShell executor to run directly without Git Bash or WSL. Use the dedicated grep tool for file-content searches. Returns stdout and stderr. Output is truncated to last ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB (whichever is hit first). If truncated, full output is saved to a temp file.`,
 		promptSnippet: bashToolSystemPromptContribution.snippet,
 		promptGuidelines: exposeSessionEnvironment
 			? [...bashToolSystemPromptContribution.guidelines]
@@ -462,6 +523,7 @@ export function createBashToolDefinition(
 			};
 
 			const appendStatus = (text: string, status: string) => `${text ? `${text}\n\n` : ""}${status}`;
+			const networkPrompt = createSandboxNetworkAccessPrompt(ctx, signal);
 
 			try {
 				let exitCode: number | null;
@@ -471,6 +533,8 @@ export function createBashToolDefinition(
 						signal,
 						timeout,
 						env: spawnContext.env,
+						executor,
+						...(networkPrompt ? { requestNetworkAccess: networkPrompt } : {}),
 					});
 					exitCode = result.exitCode;
 				} catch (err) {

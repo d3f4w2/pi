@@ -99,4 +99,21 @@ export const AGENT_EVAL_CASES: readonly AgentEvalCase[] = [
 		maxOutputTokens: 4_000,
 		maxToolCalls: 8,
 	},
+	{
+		id: "memory-save-user-preference",
+		title: "记住用户偏好",
+		category: "memory",
+		task: "以后回答请保持简短，请长期记住。必须使用长期记忆工具取得保存回执；不要创建或修改项目文件。",
+		publicFiles: {
+			"package.json": '{"type":"module"}\n',
+		},
+		hiddenFiles: {
+			".pi-eval-hidden/verify.test.mjs":
+				'import test from "node:test";\nimport assert from "node:assert/strict";\nimport { readFile } from "node:fs/promises";\ntest("saved active user preference", async () => { const data = JSON.parse(await readFile(new URL("../.pi-eval-memory.json", import.meta.url), "utf8")); const record = data.records.find((item) => item.kind === "user" && item.status === "active"); assert.ok(record); assert.match(String(record.claim?.value ?? "") + " " + String(record.content ?? ""), /简短|简洁|短一些|concise|brief/i); });\n',
+		},
+		timeoutMs: 120_000,
+		maxOutputTokens: 3_000,
+		maxToolCalls: 4,
+		requiredTools: ["memory"],
+	},
 ];

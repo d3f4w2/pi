@@ -1,7 +1,7 @@
 import type { ChildProcessByStdio } from "node:child_process";
 import { stat } from "node:fs/promises";
 import path from "node:path";
-import type { Readable } from "node:stream";
+import type { Readable, Writable } from "node:stream";
 import { spawnProcess } from "../../utils/child-process.ts";
 import {
 	getShellEnv,
@@ -24,6 +24,7 @@ const MAX_RETAINED_LOG_BYTES = 256 * 1024;
 const MAX_RETURNED_LOG_BYTES = 24 * 1024;
 const LOG_CHUNK_CHARACTERS = 4_096;
 const STARTUP_OBSERVATION_MS = 100;
+const MAX_INPUT_BYTES = 64 * 1024;
 const URL_PATTERN = /https?:\/\/[A-Za-z0-9\-._~%:[\]]+(?::\d+)?(?:\/[A-Za-z0-9\-._~%!$&'()*+,;=:@/?#]*)?/g;
 
 interface LogEntry {
@@ -38,7 +39,7 @@ interface ManagedEntry {
 	workspaceRoot: string;
 	state: ManagedProcessState;
 	startedAt: string;
-	child?: ChildProcessByStdio<null, Readable, Readable>;
+	child?: ChildProcessByStdio<Writable, Readable, Readable>;
 	exitCode?: number;
 	exitSignal?: NodeJS.Signals;
 	error?: string;
@@ -152,13 +153,18 @@ export class BackgroundProcessManager implements BackgroundProcessService {
 		entry.error = undefined;
 		const generation = ++entry.generation;
 		this.append(entry, "system", `启动：${entry.spec.command} ${entry.spec.args.join(" ")}\n`);
-		const child = spawnProcess(entry.spec.command, [...entry.spec.args], {
+		const spawned = spawnProcess(entry.spec.command, [...entry.spec.args], {
 			cwd: entry.spec.cwd,
 			env: getShellEnv(),
-			stdio: ["ignore", "pipe", "pipe"],
+			stdio: ["pipe", "pipe", "pipe"],
 			detached: process.platform !== "win32",
 			windowsHide: true,
 		});
+		if (!spawned.stdin || !spawned.stdout || !spawned.stderr) {
+			spawned.kill();
+			throw new Error("托管进程没有提供完整的标准输入输出管道。");
+		}
+		const child = spawned as ChildProcessByStdio<Writable, Readable, Readable>;
 		entry.child = child;
 		if (child.pid !== undefined) trackDetachedChildPid(child.pid);
 		child.stdout.setEncoding("utf8");
@@ -251,6 +257,21 @@ export class BackgroundProcessManager implements BackgroundProcessService {
 			truncated,
 			state: entry.state,
 		};
+	}
+
+	async input(id: string, data: string): Promise<ManagedProcessInfo> {
+		const entry = this.entry(id);
+		if (entry.state !== "running" || !entry.child || entry.child.stdin.destroyed) {
+			throw new Error(`托管进程没有可写的标准输入：${id}`);
+		}
+		if (data.includes("\0")) throw new Error("进程输入不能包含空字符。");
+		const bytes = Buffer.byteLength(data, "utf8");
+		if (bytes > MAX_INPUT_BYTES) throw new Error(`进程输入过长，最多 ${MAX_INPUT_BYTES} 字节。`);
+		await new Promise<void>((resolve, reject) => {
+			entry.child?.stdin.write(data, "utf8", (error) => (error ? reject(error) : resolve()));
+		});
+		this.append(entry, "system", `已写入标准输入：${bytes} 字节。\n`);
+		return processInfo(entry);
 	}
 
 	async restart(id: string, signal?: AbortSignal): Promise<ManagedProcessInfo> {

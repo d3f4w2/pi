@@ -1,17 +1,19 @@
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { existsSync, readdirSync } from "node:fs";
-import { createConnection, type Socket } from "node:net";
+import { createConnection, createServer, type Socket } from "node:net";
 import { homedir } from "node:os";
 import path from "node:path";
 import type { Readable, Writable } from "node:stream";
-import type { DapTransport, DebugStartRequest } from "./types.ts";
+import type { DapTransport, DebugAdapterRequest } from "./types.ts";
 
 const ADAPTER_START_TIMEOUT_MS = 7_000;
+const PROCESS_ATTACH_TIMEOUT_MS = 15_000;
 const SENSITIVE_ENVIRONMENT = /(api.?key|token|secret|password|credential|authorization|auth$)/i;
 
 export interface LaunchedAdapter {
 	transport: DapTransport;
 	adapterId: string;
+	request: "launch" | "attach";
 	launchArguments: Record<string, unknown>;
 }
 
@@ -134,9 +136,77 @@ function pythonCandidates(cwd: string): PythonCommand[] {
 	];
 }
 
-async function launchPython(request: DebugStartRequest): Promise<LaunchedAdapter> {
+async function availableLoopbackPort(): Promise<number> {
+	return new Promise((resolve, reject) => {
+		const server = createServer();
+		server.once("error", reject);
+		server.listen(0, "127.0.0.1", () => {
+			const address = server.address();
+			if (!address || typeof address === "string") {
+				server.close();
+				reject(new Error("无法为 Python 调试分配本地端口。"));
+				return;
+			}
+			server.close((error) => {
+				if (error) reject(error);
+				else resolve(address.port);
+			});
+		});
+	});
+}
+
+async function injectPythonDebugServer(candidate: PythonCommand, cwd: string, processId: number): Promise<number> {
+	const port = await availableLoopbackPort();
+	await new Promise<void>((resolve, reject) => {
+		const child = spawn(
+			candidate.command,
+			[...candidate.prefix, "-u", "-m", "debugpy", "--listen", `127.0.0.1:${port}`, "--pid", String(processId)],
+			{
+				cwd,
+				env: sanitizedDebugEnvironment(process.env),
+				stdio: ["ignore", "pipe", "pipe"],
+				windowsHide: true,
+			},
+		);
+		let output = "";
+		let settled = false;
+		const finish = (error?: Error): void => {
+			if (settled) return;
+			settled = true;
+			clearTimeout(timer);
+			if (error) reject(error);
+			else resolve();
+		};
+		const collect = (chunk: Buffer): void => {
+			output = `${output}${chunk.toString("utf8")}`.slice(-4_000);
+		};
+		child.stdout.on("data", collect);
+		child.stderr.on("data", collect);
+		child.once("error", (error) => finish(error));
+		child.once("exit", (code) => {
+			if (code === 0) finish();
+			else
+				finish(
+					new Error(
+						`无法附加到 Python 进程 ${processId}：${output.trim() || `debugpy 退出码 ${code ?? "unknown"}`}`,
+					),
+				);
+		});
+		const timer = setTimeout(() => {
+			child.kill();
+			finish(new Error(`附加到 Python 进程 ${processId} 超时。请确认进程权限和 debugpy 安装。`));
+		}, PROCESS_ATTACH_TIMEOUT_MS);
+	});
+	return port;
+}
+
+async function launchPython(request: DebugAdapterRequest): Promise<LaunchedAdapter> {
 	for (const candidate of pythonCandidates(request.cwd)) {
 		if (!(await probe(candidate.command, [...candidate.prefix, "-c", "import debugpy"], request.cwd))) continue;
+		const injectedPort =
+			request.mode === "attach" && request.processId !== undefined
+				? await injectPythonDebugServer(candidate, request.cwd, request.processId)
+				: undefined;
 		const child = spawn(candidate.command, [...candidate.prefix, "-u", "-m", "debugpy.adapter"], {
 			cwd: request.cwd,
 			env: sanitizedDebugEnvironment(process.env),
@@ -147,16 +217,22 @@ async function launchPython(request: DebugStartRequest): Promise<LaunchedAdapter
 		return {
 			transport: processTransport(child),
 			adapterId: "debugpy",
+			request: request.mode,
 			launchArguments: {
-				name: "Pi Python Debug",
+				name: request.mode === "launch" ? "Pi Python Debug" : "Pi Python Attach",
 				type: "debugpy",
-				request: "launch",
-				program: request.path,
+				request: request.mode,
+				...(request.mode === "launch"
+					? { program: request.path, args: request.args, stopOnEntry: request.stopOnEntry }
+					: {
+							connect: {
+								host: injectedPort === undefined ? (request.host ?? "127.0.0.1") : "127.0.0.1",
+								port: injectedPort ?? request.port,
+							},
+						}),
 				cwd: request.cwd,
-				args: request.args,
 				console: "internalConsole",
 				justMyCode: false,
-				stopOnEntry: request.stopOnEntry,
 				env: sanitizedDebugEnvironment(process.env),
 			},
 		};
@@ -244,7 +320,7 @@ async function connectTcpAdapter(
 	}
 }
 
-async function launchJavascript(request: DebugStartRequest): Promise<LaunchedAdapter> {
+async function launchJavascript(request: DebugAdapterRequest): Promise<LaunchedAdapter> {
 	const adapterPath = knownJsDebugPaths()[0];
 	if (!adapterPath) {
 		throw new Error(
@@ -252,29 +328,33 @@ async function launchJavascript(request: DebugStartRequest): Promise<LaunchedAda
 		);
 	}
 	const { transport } = await connectTcpAdapter(process.execPath, [adapterPath], request.cwd, /^\s*(\d{2,5})\s*$/m);
-	const extension = path.extname(request.path).toLowerCase();
+	const extension = request.path ? path.extname(request.path).toLowerCase() : "";
 	return {
 		transport,
 		adapterId: "pwa-node",
+		request: request.mode,
 		launchArguments: {
-			name: "Pi JavaScript Debug",
+			name: request.mode === "launch" ? "Pi JavaScript Debug" : "Pi JavaScript Attach",
 			type: "pwa-node",
-			request: "launch",
-			program: request.path,
+			request: request.mode,
+			...(request.mode === "launch"
+				? { program: request.path, args: request.args }
+				: request.processId !== undefined
+					? { processId: request.processId }
+					: { address: request.host ?? "127.0.0.1", port: request.port }),
 			cwd: request.cwd,
-			args: request.args,
 			runtimeExecutable: process.execPath,
-			...(extension === ".ts" || extension === ".mts" || extension === ".cts"
+			...(request.mode === "launch" && (extension === ".ts" || extension === ".mts" || extension === ".cts")
 				? { runtimeArgs: ["--experimental-strip-types"] }
 				: {}),
 			console: "internalConsole",
-			stopOnEntry: request.stopOnEntry,
+			...(request.mode === "launch" ? { stopOnEntry: request.stopOnEntry } : {}),
 			env: sanitizedDebugEnvironment(process.env),
 		},
 	};
 }
 
-async function launchGo(request: DebugStartRequest): Promise<LaunchedAdapter> {
+async function launchGo(request: DebugAdapterRequest): Promise<LaunchedAdapter> {
 	if (!(await probe("dlv", ["version"], request.cwd))) {
 		throw new Error("Go 调试需要 Delve。请运行：go install github.com/go-delve/delve/cmd/dlv@latest");
 	}
@@ -287,21 +367,21 @@ async function launchGo(request: DebugStartRequest): Promise<LaunchedAdapter> {
 	return {
 		transport,
 		adapterId: "go",
+		request: request.mode,
 		launchArguments: {
-			name: "Pi Go Debug",
+			name: request.mode === "launch" ? "Pi Go Debug" : "Pi Go Attach",
 			type: "go",
-			request: "launch",
-			mode: "debug",
-			program: request.path,
+			request: request.mode,
+			...(request.mode === "launch"
+				? { mode: "debug", program: request.path, args: request.args, stopOnEntry: request.stopOnEntry }
+				: { mode: "local", processId: request.processId }),
 			cwd: request.cwd,
-			args: request.args,
-			stopOnEntry: request.stopOnEntry,
 			env: sanitizedDebugEnvironment(process.env),
 		},
 	};
 }
 
-export async function launchDebugAdapter(request: DebugStartRequest): Promise<LaunchedAdapter> {
+export async function launchDebugAdapter(request: DebugAdapterRequest): Promise<LaunchedAdapter> {
 	if (request.language === "python") return launchPython(request);
 	if (request.language === "go") return launchGo(request);
 	return launchJavascript(request);

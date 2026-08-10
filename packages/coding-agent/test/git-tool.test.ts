@@ -151,6 +151,9 @@ describe("git extension", () => {
 			overview: vi.fn(),
 			diff: vi.fn(),
 			log: vi.fn(),
+			validateCommitPlan: vi.fn(),
+			conflicts: vi.fn(),
+			resolveConflict: vi.fn(),
 			stage: vi.fn(),
 			unstage: vi.fn(),
 			commit: vi.fn(),
@@ -162,6 +165,19 @@ describe("git extension", () => {
 		expect(typeof definition?.approval).toBe("function");
 		if (typeof definition?.approval !== "function") throw new Error("git approval must be dynamic");
 		expect(definition.approval({ operation: "overview" })).toBe("read");
+		expect(definition.approval({ operation: "plan_commits" })).toBe("read");
+		expect(definition.approval({ operation: "resolve_conflict" })).toMatchObject({
+			tier: "write",
+			policy: "prompt",
+			override: true,
+		});
+		expect(
+			definition.formatApprovalDetails?.({
+				operation: "resolve_conflict",
+				path: "src/config.ts",
+				resolution: "ours",
+			}),
+		).toContain("文件：src/config.ts");
 		expect(definition.approval({ operation: "push" })).toMatchObject({
 			tier: "exec",
 			policy: "prompt",

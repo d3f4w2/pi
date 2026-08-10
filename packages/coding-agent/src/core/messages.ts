@@ -72,6 +72,17 @@ export function planDynamicDeveloperContext(
 	if (!eligible || baseSystemPrompt.length === 0) {
 		return { systemPrompt: effectiveSystemPrompt };
 	}
+	if (effectiveSystemPrompt === baseSystemPrompt) {
+		if (previousState === undefined || previousState === null) return { systemPrompt: baseSystemPrompt };
+		return {
+			systemPrompt: baseSystemPrompt,
+			state: null,
+			message: cacheDeveloperContextMessage(CACHE_DEVELOPER_CONTEXT_REVOCATION, {
+				version: 1,
+				active: false,
+			}),
+		};
+	}
 	if (!effectiveSystemPrompt.startsWith(baseSystemPrompt)) {
 		if (previousState === undefined || previousState === null) return { systemPrompt: effectiveSystemPrompt };
 		return {

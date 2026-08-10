@@ -1,4 +1,7 @@
 import { fetchNetworkResource } from "./network.ts";
+import { type OfficialResearchHit, officialResearchResults } from "./research.ts";
+import { isExternalResourceAddress } from "./resource-address.ts";
+import { resolveExternalResource, resolveStructuredWebUrl } from "./source-adapters.ts";
 import type { SearchFilters, SearchResultItem, WebSearchDetails } from "./types.ts";
 
 const DEFAULT_MAX_RESULTS = 8;
@@ -13,6 +16,23 @@ const EXTERNAL_CONTENT_WARNING =
 
 interface JsonObject {
 	[key: string]: unknown;
+}
+
+export interface WebSearchDependencies {
+	verifyOfficialHit(hit: OfficialResearchHit, signal?: AbortSignal): Promise<{ cached: boolean }>;
+	searchBrave(
+		query: string,
+		maxResults: number,
+		apiKey: string,
+		filters: SearchFilters,
+		signal?: AbortSignal,
+	): Promise<SearchResultItem[]>;
+	searchDuckDuckGo(
+		query: string,
+		maxResults: number,
+		filters: SearchFilters,
+		signal?: AbortSignal,
+	): Promise<SearchResultItem[]>;
 }
 
 function isObject(value: unknown): value is JsonObject {
@@ -183,6 +203,10 @@ function parseJson(body: Uint8Array): unknown {
 	}
 }
 
+export function formatSearchMetadata(details: WebSearchDetails): string {
+	return `[source=${details.sourceAddress} read_at=${details.readAt} content_type=${details.contentType} cache=miss truncated=${details.truncated} untrusted=true]`;
+}
+
 async function searchBrave(
 	query: string,
 	maxResults: number,
@@ -230,13 +254,34 @@ async function searchDuckDuckGo(
 	return filterResults(normalizeDuckDuckGoHtml(new TextDecoder().decode(response.body)), filters).slice(0, maxResults);
 }
 
-export async function searchWeb(options: {
-	query: string;
-	maxResults?: number;
-	allowedDomains?: readonly string[];
-	blockedDomains?: readonly string[];
-	signal?: AbortSignal;
-}): Promise<{ text: string; details: WebSearchDetails }> {
+async function verifyOfficialHit(hit: OfficialResearchHit, signal?: AbortSignal): Promise<{ cached: boolean }> {
+	const options = signal ? { signal } : {};
+	if (isExternalResourceAddress(hit.sourceAddress)) {
+		const result = await resolveExternalResource(hit.sourceAddress, options);
+		return { cached: result.cached };
+	}
+	const result = await resolveStructuredWebUrl(hit.sourceAddress, options);
+	if (!result) throw new Error(`No structured adapter accepted ${hit.sourceAddress}.`);
+	return { cached: result.cached };
+}
+
+const DEFAULT_DEPENDENCIES: WebSearchDependencies = {
+	verifyOfficialHit,
+	searchBrave,
+	searchDuckDuckGo,
+};
+
+export async function searchWeb(
+	options: {
+		query: string;
+		maxResults?: number;
+		allowedDomains?: readonly string[];
+		blockedDomains?: readonly string[];
+		signal?: AbortSignal;
+	},
+	overrides: Partial<WebSearchDependencies> = {},
+): Promise<{ text: string; details: WebSearchDetails }> {
+	const dependencies = { ...DEFAULT_DEPENDENCIES, ...overrides };
 	const query = options.query.trim();
 	if (query.length < 2) throw new Error("搜索内容至少需要两个字符。");
 	const requestedMaxResults = Number.isFinite(options.maxResults)
@@ -248,36 +293,85 @@ export async function searchWeb(options: {
 		...(options.blockedDomains === undefined ? {} : { blockedDomains: options.blockedDomains }),
 	};
 	const startedAt = Date.now();
+	const official = officialResearchResults(query);
+	const officialResults = official ? filterResults(official.results, filters).slice(0, maxResults) : [];
+	let fallbackReason: string | undefined;
+	if (official && officialResults.length > 0) {
+		try {
+			const verification = await dependencies.verifyOfficialHit(official.hit, options.signal);
+			const details: WebSearchDetails = {
+				provider: "official",
+				query,
+				resultCount: officialResults.length,
+				durationMs: Date.now() - startedAt,
+				officialSourceFirstHit: true,
+				officialSourceVerified: true,
+				officialVerificationCached: verification.cached,
+				sourceAddress: official.hit.sourceAddress,
+				strategy: "official-direct",
+				readAt: new Date().toISOString(),
+				contentType: "application/vnd.pi.search-results+text",
+				cached: false,
+				truncated: officialResults.length >= maxResults,
+				untrusted: true,
+			};
+			return {
+				text: `${formatSearchMetadata(details)}\n${formatSearchResults(query, officialResults, filters)}`,
+				details,
+			};
+		} catch (error) {
+			if (options.signal?.aborted) {
+				throw options.signal.reason instanceof Error
+					? options.signal.reason
+					: new Error("Internet search canceled.");
+			}
+			fallbackReason = `Official source validation failed: ${error instanceof Error ? error.message : String(error)}`;
+		}
+	}
 	const braveApiKey = process.env.BRAVE_API_KEY?.trim();
 	let provider: WebSearchDetails["provider"] = "duckduckgo";
-	let fallbackReason: string | undefined;
 	let results: SearchResultItem[];
 
 	if (braveApiKey) {
 		provider = "brave";
 		try {
-			results = await searchBrave(query, maxResults, braveApiKey, filters, options.signal);
+			results = await dependencies.searchBrave(query, maxResults, braveApiKey, filters, options.signal);
 			if (results.length === 0) throw new Error("Brave 没有返回结果。");
 		} catch (error) {
 			if (options.signal?.aborted) {
 				throw options.signal.reason instanceof Error ? options.signal.reason : new Error("联网搜索已取消。");
 			}
+			const reason = error instanceof Error ? error.message : String(error);
+			if (fallbackReason !== undefined) {
+				throw new Error(`${fallbackReason}; single generic fallback failed: ${reason}`);
+			}
 			provider = "duckduckgo";
-			fallbackReason = error instanceof Error ? error.message : String(error);
-			results = await searchDuckDuckGo(query, maxResults, filters, options.signal);
+			fallbackReason = reason;
+			results = await dependencies.searchDuckDuckGo(query, maxResults, filters, options.signal);
 		}
 	} else {
-		results = await searchDuckDuckGo(query, maxResults, filters, options.signal);
+		results = await dependencies.searchDuckDuckGo(query, maxResults, filters, options.signal);
 	}
 
+	const details: WebSearchDetails = {
+		provider,
+		query,
+		resultCount: results.length,
+		durationMs: Date.now() - startedAt,
+		officialSourceFirstHit: false,
+		officialSourceVerified: false,
+		strategy: fallbackReason === undefined ? "generic-search" : "single-fallback",
+		sourceAddress:
+			provider === "brave" ? "https://api.search.brave.com/res/v1/web/search" : "https://html.duckduckgo.com/html/",
+		readAt: new Date().toISOString(),
+		contentType: "application/vnd.pi.search-results+text",
+		cached: false,
+		truncated: results.length >= maxResults,
+		untrusted: true,
+		...(fallbackReason === undefined ? {} : { fallbackReason }),
+	};
 	return {
-		text: formatSearchResults(query, results, filters),
-		details: {
-			provider,
-			query,
-			resultCount: results.length,
-			durationMs: Date.now() - startedAt,
-			...(fallbackReason === undefined ? {} : { fallbackReason }),
-		},
+		text: `${formatSearchMetadata(details)}\n${formatSearchResults(query, results, filters)}`,
+		details,
 	};
 }

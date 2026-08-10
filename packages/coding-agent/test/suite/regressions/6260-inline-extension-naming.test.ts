@@ -96,6 +96,57 @@ describe("inline extension naming", () => {
 		expect(result.extensions[0].hidden).toBe(true);
 	});
 
+	it("loads named factories lazily and preserves their metadata", async () => {
+		const { cwd, agentDir } = fixture("lazy");
+		let loads = 0;
+		const loader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			noSkills: true,
+			noPromptTemplates: true,
+			noThemes: true,
+			extensionFactories: [
+				{
+					name: "lazy-built-in",
+					hidden: true,
+					load: async () => {
+						loads++;
+						return noop;
+					},
+				},
+			],
+		});
+
+		await loader.reload();
+
+		const result = loader.getExtensions();
+		expect(loads).toBe(1);
+		expect(result.errors).toEqual([]);
+		expect(result.extensions).toHaveLength(1);
+		expect(result.extensions[0]).toMatchObject({ path: "<inline:lazy-built-in>", hidden: true });
+	});
+
+	it("reports lazy factory import failures without dropping healthy inline extensions", async () => {
+		const { cwd, agentDir } = fixture("lazy-failure");
+		const loader = new DefaultResourceLoader({
+			cwd,
+			agentDir,
+			noSkills: true,
+			noPromptTemplates: true,
+			noThemes: true,
+			extensionFactories: [
+				{ name: "broken", load: () => Promise.reject(new Error("lazy import failed")) },
+				{ name: "healthy", factory: noop },
+			],
+		});
+
+		await loader.reload();
+
+		const result = loader.getExtensions();
+		expect(result.extensions.map((extension) => extension.path)).toEqual(["<inline:healthy>"]);
+		expect(result.errors).toEqual([{ path: "<inline:broken>", error: "lazy import failed" }]);
+	});
+
 	it("supports mixed bare and named factories", async () => {
 		const { cwd, agentDir } = fixture("mixed");
 		const loader = new DefaultResourceLoader({

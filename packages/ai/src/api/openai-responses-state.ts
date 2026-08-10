@@ -33,8 +33,13 @@ function stripPromptCacheBreakpoints(value: unknown): unknown {
 	);
 }
 
-function serializeItems(input: ResponseInput): string[] {
-	return input.map((item) => JSON.stringify(stripPromptCacheBreakpoints(item)));
+async function sha256(value: string): Promise<string> {
+	const digest = await globalThis.crypto.subtle.digest("SHA-256", new TextEncoder().encode(value));
+	return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function serializeItems(input: ResponseInput): Promise<string[]> {
+	return await Promise.all(input.map((item) => sha256(JSON.stringify(stripPromptCacheBreakpoints(item)))));
 }
 
 function exactPrefixLength(prefix: string[], input: string[]): number | undefined {
@@ -45,12 +50,12 @@ function exactPrefixLength(prefix: string[], input: string[]): number | undefine
 	return prefix.length;
 }
 
-function requestShape(params: ResponseCreateParamsStreaming): string {
+async function requestShape(params: ResponseCreateParamsStreaming): Promise<string> {
 	const shape = { ...params } as Record<string, unknown>;
 	delete shape.input;
 	delete shape.previous_response_id;
 	delete shape.stream;
-	return JSON.stringify(shape);
+	return await sha256(JSON.stringify(shape));
 }
 
 function withoutPreviousResponseId(params: ResponseCreateParamsStreaming): ResponseCreateParamsStreaming {
@@ -77,11 +82,11 @@ export class OpenAIResponsesState {
 		return this.entries.has(key);
 	}
 
-	prepare(key: string | undefined, params: ResponseCreateParamsStreaming): PreparedOpenAIResponse {
+	async prepare(key: string | undefined, params: ResponseCreateParamsStreaming): Promise<PreparedOpenAIResponse> {
 		const fullParams = withoutPreviousResponseId(params);
 		if (key && this.disabledKeys.has(key)) fullParams.store = false;
 		const fullInput = asInput(fullParams.input) ?? [];
-		const shape = requestShape(fullParams);
+		const shape = await requestShape(fullParams);
 		const base: PreparedOpenAIResponse = {
 			key,
 			params: fullParams,
@@ -94,7 +99,7 @@ export class OpenAIResponsesState {
 
 		const entry = this.entries.get(key);
 		if (!entry || entry.continuationFailures >= CONTINUATION_FAILURE_LIMIT || entry.shape !== shape) return base;
-		const serializedInput = serializeItems(fullInput);
+		const serializedInput = await serializeItems(fullInput);
 		const prefixLength = exactPrefixLength(entry.coveredInput, serializedInput);
 		if (prefixLength === undefined) return base;
 		return {
@@ -108,18 +113,18 @@ export class OpenAIResponsesState {
 		};
 	}
 
-	commit(
+	async commit(
 		prepared: PreparedOpenAIResponse,
 		responseId: string | undefined,
 		responseOutput: ResponseInput,
 		preserveContinuationFailures = false,
-	): void {
+	): Promise<void> {
 		if (!prepared.key || !responseId || prepared.fullParams.store !== true) return;
 		const previousFailures = this.entries.get(prepared.key)?.continuationFailures ?? 0;
 		this.entries.delete(prepared.key);
 		this.entries.set(prepared.key, {
 			responseId,
-			coveredInput: serializeItems([...prepared.fullInput, ...responseOutput]),
+			coveredInput: await serializeItems([...prepared.fullInput, ...responseOutput]),
 			shape: prepared.shape,
 			continuationFailures: preserveContinuationFailures ? previousFailures : 0,
 		});

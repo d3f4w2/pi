@@ -27,6 +27,32 @@ import type {
 export type AgentEventSink = (event: AgentEvent) => Promise<void> | void;
 
 const MAX_TOOL_EXECUTION_TIMEOUT_MS = 24 * 60 * 60 * 1_000;
+const lifecycleTiming =
+	process.env.PI_TIMING === "1"
+		? {
+				processStartedAt: Date.now() - process.uptime() * 1_000,
+				firstRequestAt: undefined as number | undefined,
+				firstResponseAt: undefined as number | undefined,
+				printed: false,
+			}
+		: undefined;
+
+function printLifecycleTiming(): void {
+	if (!lifecycleTiming || lifecycleTiming.printed || lifecycleTiming.firstRequestAt === undefined) return;
+	lifecycleTiming.printed = true;
+	const completedAt = Date.now();
+	console.error("\n--- Startup Timings: request ---");
+	console.error(
+		`  process to first request: ${Math.max(0, lifecycleTiming.firstRequestAt - lifecycleTiming.processStartedAt)}ms`,
+	);
+	if (lifecycleTiming.firstResponseAt !== undefined) {
+		console.error(
+			`  first response latency: ${Math.max(0, lifecycleTiming.firstResponseAt - lifecycleTiming.firstRequestAt)}ms`,
+		);
+	}
+	console.error(`  first turn complete: ${Math.max(0, completedAt - lifecycleTiming.firstRequestAt)}ms`);
+	console.error("--------------------------------\n");
+}
 
 /**
  * Start an agent loop with a new prompt message.
@@ -85,6 +111,7 @@ function createContainedAgentStream(
 	const emit = (event: AgentEvent): void => {
 		if (event.type === "message_end") completedMessages.push(event.message);
 		stream.push(event);
+		if (event.type === "agent_end") printLifecycleTiming();
 	};
 
 	const recover = (error: unknown): void => {
@@ -340,6 +367,7 @@ async function streamAssistantResponse(
 	const resolvedApiKey =
 		(config.getApiKey ? await config.getApiKey(config.model.provider) : undefined) || config.apiKey;
 
+	if (lifecycleTiming && lifecycleTiming.firstRequestAt === undefined) lifecycleTiming.firstRequestAt = Date.now();
 	const response = await streamFunction(config.model, llmContext, {
 		...config,
 		apiKey: resolvedApiKey,
@@ -350,6 +378,8 @@ async function streamAssistantResponse(
 	let addedPartial = false;
 
 	for await (const event of response) {
+		if (lifecycleTiming && lifecycleTiming.firstResponseAt === undefined)
+			lifecycleTiming.firstResponseAt = Date.now();
 		switch (event.type) {
 			case "start":
 				partialMessage = event.partial;
@@ -452,11 +482,23 @@ async function executeToolCalls(
 	repeatedFailureGuard: RepeatedToolFailureGuard,
 ): Promise<ExecutedToolCallBatch> {
 	const toolCalls = assistantMessage.content.filter((c) => c.type === "toolCall");
-	const hasSequentialToolCall = toolCalls.some(
-		(tc) => currentContext.tools?.find((t) => t.name === tc.name)?.executionMode === "sequential",
-	);
-	if (config.toolExecution === "sequential" || hasSequentialToolCall) {
+	if (config.toolExecution === "sequential") {
 		return executeToolCallsSequential(
+			currentContext,
+			assistantMessage,
+			toolCalls,
+			config,
+			signal,
+			emit,
+			repeatedFailureGuard,
+		);
+	}
+	if (
+		toolCalls.some((toolCall) =>
+			currentContext.tools?.some((tool) => tool.name === toolCall.name && tool.executionMode === "sequential"),
+		)
+	) {
+		return executeToolCallsWithBarriers(
 			currentContext,
 			assistantMessage,
 			toolCalls,
@@ -481,6 +523,62 @@ type ExecutedToolCallBatch = {
 	messages: ToolResultMessage[];
 	terminate: boolean;
 };
+
+async function executeToolCallsWithBarriers(
+	currentContext: AgentContext,
+	assistantMessage: AssistantMessage,
+	toolCalls: AgentToolCall[],
+	config: AgentLoopConfig,
+	signal: AbortSignal | undefined,
+	emit: AgentEventSink,
+	repeatedFailureGuard: RepeatedToolFailureGuard,
+): Promise<ExecutedToolCallBatch> {
+	const segments: Array<{ mode: "parallel" | "sequential"; toolCalls: AgentToolCall[] }> = [];
+	for (const toolCall of toolCalls) {
+		const exclusive = currentContext.tools?.some(
+			(tool) => tool.name === toolCall.name && tool.executionMode === "sequential",
+		);
+		if (exclusive) {
+			segments.push({ mode: "sequential", toolCalls: [toolCall] });
+			continue;
+		}
+		const previous = segments.at(-1);
+		if (previous?.mode === "parallel") previous.toolCalls.push(toolCall);
+		else segments.push({ mode: "parallel", toolCalls: [toolCall] });
+	}
+
+	const messages: ToolResultMessage[] = [];
+	const terminationResults: boolean[] = [];
+	for (const segment of segments) {
+		if (signal?.aborted) break;
+		const result =
+			segment.mode === "sequential"
+				? await executeToolCallsSequential(
+						currentContext,
+						assistantMessage,
+						segment.toolCalls,
+						config,
+						signal,
+						emit,
+						repeatedFailureGuard,
+					)
+				: await executeToolCallsParallel(
+						currentContext,
+						assistantMessage,
+						segment.toolCalls,
+						config,
+						signal,
+						emit,
+						repeatedFailureGuard,
+					);
+		messages.push(...result.messages);
+		terminationResults.push(result.terminate);
+	}
+	return {
+		messages,
+		terminate: terminationResults.length > 0 && terminationResults.every(Boolean),
+	};
+}
 
 async function executeToolCallsSequential(
 	currentContext: AgentContext,

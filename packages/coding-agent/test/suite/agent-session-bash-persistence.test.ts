@@ -116,8 +116,14 @@ describe("AgentSession bash and persistence characterization", () => {
 	it("executes bash commands and records the result", async () => {
 		const harness = await createHarness();
 		harnesses.push(harness);
+		const operations: BashOperations = {
+			exec: async (_command, _cwd, options) => {
+				options.onData(Buffer.from("hello"));
+				return { exitCode: 0 };
+			},
+		};
 
-		const result = await harness.session.executeBash("printf 'hello'");
+		const result = await harness.session.executeBash("printf 'hello'", undefined, { operations });
 
 		expect(result.output).toContain("hello");
 		expect(harness.session.messages[harness.session.messages.length - 1]?.role).toBe("bashExecution");

@@ -31,17 +31,19 @@ export interface ProcessLogResult {
 	state: ManagedProcessState;
 }
 
-export type ProcessOperation = "start" | "status" | "logs" | "restart" | "stop";
+export type ProcessOperation = "start" | "status" | "logs" | "input" | "restart" | "stop";
 
 export type ProcessToolDetails =
 	| { operation: "start" | "restart" | "stop"; process: ManagedProcessInfo }
 	| { operation: "status"; processes: ManagedProcessInfo[] }
-	| { operation: "logs"; logs: ProcessLogResult };
+	| { operation: "logs"; logs: ProcessLogResult }
+	| { operation: "input"; process: ManagedProcessInfo; bytes: number };
 
 export interface BackgroundProcessService {
 	start(spec: ManagedProcessSpec, workspaceRoot: string, signal?: AbortSignal): Promise<ManagedProcessInfo>;
 	status(id?: string): Promise<ManagedProcessInfo[]>;
 	logs(id: string, cursor?: number): Promise<ProcessLogResult>;
+	input(id: string, data: string): Promise<ManagedProcessInfo>;
 	restart(id: string, signal?: AbortSignal): Promise<ManagedProcessInfo>;
 	stop(id: string): Promise<ManagedProcessInfo>;
 	stopAll(): Promise<void>;

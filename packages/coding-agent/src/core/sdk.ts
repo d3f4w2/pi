@@ -11,7 +11,11 @@ import type { ExtensionRunner, LoadExtensionsResult, SessionStartEvent, ToolDefi
 import { convertToLlm } from "./messages.ts";
 import { findInitialModel } from "./model-resolver.ts";
 import { ModelRuntime } from "./model-runtime.ts";
-import { optimizeOpenAIResponsesPromptCache, type PromptCacheRequestDiagnostic } from "./prompt-cache-optimizer.ts";
+import {
+	normalizeOpenAIResponsesDeveloperContext,
+	optimizeOpenAIResponsesPromptCache,
+	type PromptCacheRequestDiagnostic,
+} from "./prompt-cache-optimizer.ts";
 import { PromptCacheRuntime } from "./prompt-cache-runtime.ts";
 import { mergeProviderAttributionHeaders } from "./provider-attribution.ts";
 import type { ResourceLoader } from "./resource-loader.ts";
@@ -367,7 +371,9 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				transformedPayload = (await runner.emitBeforeProviderRequest(payload)) ?? payload;
 			}
 			// An extension that changes or removes the key owns cache routing.
-			if (getPromptCacheKey(transformedPayload) !== providerCacheKey) return transformedPayload;
+			if (getPromptCacheKey(transformedPayload) !== providerCacheKey) {
+				return normalizeOpenAIResponsesDeveloperContext(transformedPayload);
+			}
 			const optimization = optimizeOpenAIResponsesPromptCache(transformedPayload, requestModel, cwd, {
 				stableSystemPrompt: session?.promptCacheStableSystemPrompt,
 			});

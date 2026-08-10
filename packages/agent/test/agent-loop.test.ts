@@ -1035,6 +1035,80 @@ describe("agentLoop with AgentMessage", () => {
 		expect(executionOrder).toContain("fast:b");
 	});
 
+	it("should use sequential tools as ordered barriers between parallel groups", async () => {
+		const toolSchema = Type.Object({ value: Type.String() });
+		const trace: string[] = [];
+		let releaseShared: (() => void) | undefined;
+		const sharedGate = new Promise<void>((resolve) => {
+			releaseShared = resolve;
+		});
+
+		const sharedTool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "shared",
+			label: "Shared",
+			description: "Shared tool",
+			parameters: toolSchema,
+			executionMode: "parallel",
+			async execute(_toolCallId, params) {
+				trace.push(`shared:start:${params.value}`);
+				if (params.value !== "third") await sharedGate;
+				trace.push(`shared:end:${params.value}`);
+				return { content: [{ type: "text", text: params.value }], details: { value: params.value } };
+			},
+		};
+		const exclusiveTool: AgentTool<typeof toolSchema, { value: string }> = {
+			name: "exclusive",
+			label: "Exclusive",
+			description: "Exclusive tool",
+			parameters: toolSchema,
+			executionMode: "sequential",
+			async execute(_toolCallId, params) {
+				trace.push("exclusive:start");
+				trace.push("exclusive:end");
+				return { content: [{ type: "text", text: params.value }], details: { value: params.value } };
+			},
+		};
+
+		let callIndex = 0;
+		const stream = agentLoop(
+			[createUserMessage("run ordered batch")],
+			{ systemPrompt: "", messages: [], tools: [sharedTool, exclusiveTool] },
+			{ model: createModel(), convertToLlm: identityConverter },
+			undefined,
+			() => {
+				const mockStream = new MockAssistantStream();
+				queueMicrotask(() => {
+					const message =
+						callIndex === 0
+							? createAssistantMessage(
+									[
+										{ type: "toolCall", id: "tool-1", name: "shared", arguments: { value: "first" } },
+										{ type: "toolCall", id: "tool-2", name: "shared", arguments: { value: "second" } },
+										{ type: "toolCall", id: "tool-3", name: "exclusive", arguments: { value: "barrier" } },
+										{ type: "toolCall", id: "tool-4", name: "shared", arguments: { value: "third" } },
+									],
+									"toolUse",
+								)
+							: createAssistantMessage([{ type: "text", text: "done" }]);
+					mockStream.push({ type: "done", reason: callIndex === 0 ? "toolUse" : "stop", message });
+					if (callIndex === 0) setTimeout(() => releaseShared?.(), 20);
+					callIndex++;
+				});
+				return mockStream;
+			},
+		);
+
+		for await (const _event of stream) {
+			// consume
+		}
+
+		expect(trace.indexOf("shared:start:first")).toBeLessThan(trace.indexOf("shared:end:second"));
+		expect(trace.indexOf("shared:start:second")).toBeLessThan(trace.indexOf("shared:end:first"));
+		expect(trace.indexOf("exclusive:start")).toBeGreaterThan(trace.indexOf("shared:end:first"));
+		expect(trace.indexOf("exclusive:start")).toBeGreaterThan(trace.indexOf("shared:end:second"));
+		expect(trace.indexOf("shared:start:third")).toBeGreaterThan(trace.indexOf("exclusive:end"));
+	});
+
 	it("should allow parallel execution when all tools have executionMode=parallel", async () => {
 		const toolSchema = Type.Object({ value: Type.String() });
 		let firstResolved = false;

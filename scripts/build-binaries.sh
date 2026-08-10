@@ -192,6 +192,16 @@ for platform in "${PLATFORMS[@]}"; do
     mkdir -p "$OUTPUT_DIR/$platform/assets"
     cp dist/modes/interactive/assets/* "$OUTPUT_DIR/$platform/assets/"
     cp -r dist/core/export-html "$OUTPUT_DIR/$platform/"
+    if [[ "$platform" == windows-* ]]; then
+        cp -r dist/core/sandbox/windows "$OUTPUT_DIR/$platform/sandbox"
+        if [[ "$platform" == "windows-arm64" ]]; then
+            srt_win_arch="arm64"
+        else
+            srt_win_arch="x64"
+        fi
+        cp "../../node_modules/@anthropic-ai/sandbox-runtime/vendor/srt-win/$srt_win_arch/srt-win.exe" \
+            "$OUTPUT_DIR/$platform/sandbox/srt-win.exe"
+    fi
     cp -r docs "$OUTPUT_DIR/$platform/"
     cp -r examples "$OUTPUT_DIR/$platform/"
 

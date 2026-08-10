@@ -10,6 +10,7 @@ const severityLabels: Readonly<Record<DoctorSeverity, string>> = {
 };
 
 const areaLabels = {
+	sandbox: "沙箱",
 	core: "核心",
 	shell: "终端",
 	lsp: "代码理解",

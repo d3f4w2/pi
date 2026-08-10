@@ -4,14 +4,37 @@ export const PYTHON_WORKER = String.raw`
 import ast, asyncio, contextlib, inspect, io, json, sys, traceback
 
 PREFIX = "\u001ePI_EVAL:"
-namespace = {"__name__": "__pi_eval__"}
 loop = asyncio.new_event_loop()
+current_request_id = None
+current_nonce = None
+next_tool_call_id = 1
 
 def safe_repr(value):
     try:
         return repr(value)
     except Exception as error:
         return "<repr failed: %s>" % error
+
+def pi_tool(name, **args):
+    global next_tool_call_id
+    if current_request_id is None or current_nonce is None:
+        raise RuntimeError("pi_tool can only run inside an Eval code cell")
+    call_id = next_tool_call_id
+    next_tool_call_id += 1
+    message = {"type": "tool_call", "id": current_request_id, "callId": call_id, "nonce": current_nonce, "tool": name, "args": args}
+    sys.__stdout__.write(PREFIX + json.dumps(message, ensure_ascii=False) + "\n")
+    sys.__stdout__.flush()
+    raw_response = sys.stdin.readline()
+    if not raw_response:
+        raise RuntimeError("pi_tool bridge closed")
+    response = json.loads(raw_response)
+    if response.get("type") != "tool_result" or response.get("callId") != call_id:
+        raise RuntimeError("pi_tool received an invalid bridge response")
+    if not response.get("ok"):
+        raise RuntimeError(response.get("error", "pi_tool failed"))
+    return response.get("result", "")
+
+namespace = {"__name__": "__pi_eval__", "pi_tool": pi_tool}
 
 sys.__stdout__.write(PREFIX + json.dumps({"type": "ready"}) + "\n")
 sys.__stdout__.flush()
@@ -20,6 +43,8 @@ for raw in sys.stdin:
     try:
         request = json.loads(raw)
         request_id = request.get("id")
+        current_request_id = request_id
+        current_nonce = request.get("nonce")
         code = request.get("code", "")
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -65,12 +90,32 @@ const sandbox = {
 };
 const context = vm.createContext(sandbox);
 const protocol = process.stdout;
+const input = readline.createInterface({ input: process.stdin, crlfDelay: Infinity })[Symbol.asyncIterator]();
+let currentRequest;
+let nextToolCallId = 1;
+
+async function piTool(name, args = {}) {
+  if (!currentRequest) throw new Error("piTool can only run inside an Eval code cell");
+  const callId = nextToolCallId++;
+  protocol.write(PREFIX + JSON.stringify({ type: "tool_call", id: currentRequest.id, callId, nonce: currentRequest.nonce, tool: name, args }) + "\n");
+  const next = await input.next();
+  if (next.done) throw new Error("piTool bridge closed");
+  const response = JSON.parse(next.value);
+  if (response.type !== "tool_result" || response.callId !== callId) throw new Error("piTool received an invalid bridge response");
+  if (!response.ok) throw new Error(response.error ?? "piTool failed");
+  return response.result ?? "";
+}
+sandbox.piTool = piTool;
 protocol.write(PREFIX + JSON.stringify({ type: "ready" }) + "\n");
 
-for await (const raw of readline.createInterface({ input: process.stdin, crlfDelay: Infinity })) {
+for (;;) {
+  const next = await input.next();
+  if (next.done) break;
+  const raw = next.value;
   let request;
   try {
     request = JSON.parse(raw);
+    currentRequest = request;
     const stdout = [];
     const stderr = [];
     context.console = {
@@ -83,13 +128,15 @@ for await (const raw of readline.createInterface({ input: process.stdin, crlfDel
     try {
       value = vm.runInContext(request.code, context, { filename: "<pi-eval>" });
     } catch (error) {
-      if (!(error instanceof SyntaxError) || !String(error.message).toLowerCase().includes("await")) throw error;
+      if (!error || typeof error !== "object" || error.name !== "SyntaxError") throw error;
       value = vm.runInContext("(async () => { " + request.code + "\n})()", context, { filename: "<pi-eval>" });
     }
     if (value && typeof value.then === "function") value = await value;
     protocol.write(PREFIX + JSON.stringify({ id: request.id, ok: true, stdout: stdout.join("\n"), stderr: stderr.join("\n"), value: util.inspect(value, { depth: 6, colors: false }) }) + "\n");
   } catch (error) {
     protocol.write(PREFIX + JSON.stringify({ id: request?.id, ok: false, stdout: "", stderr: "", error: error instanceof Error ? error.stack ?? error.message : String(error) }) + "\n");
+  } finally {
+    currentRequest = undefined;
   }
 }
 `;

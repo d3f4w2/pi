@@ -466,10 +466,12 @@ describe("SDK prompt cache payload integration", () => {
 		const model = createModel();
 		const extensionsResult = await createTestExtensionsResult([
 			(pi) => {
-				pi.on("before_provider_request", (event) => ({
-					...event,
-					prompt_cache_key: "extension-owned-key",
-				}));
+				pi.on("before_provider_request", (event) => {
+					if (typeof event.payload !== "object" || event.payload === null || Array.isArray(event.payload)) {
+						throw new Error("Expected a provider payload object");
+					}
+					return { ...event.payload, prompt_cache_key: "extension-owned-key" };
+				});
 			},
 		]);
 		const { session } = await createAgentSession({
@@ -481,11 +483,21 @@ describe("SDK prompt cache payload integration", () => {
 		});
 		sessions.push(session);
 
-		const transformed = await session.agent.onPayload?.(createPayload({ cacheKey: "session-a" }), model);
+		const payload = createPayload({ cacheKey: "session-a" });
+		(payload.input as Array<Record<string, unknown>>).push({
+			role: "user",
+			content: [{ type: "input_text", text: `${CACHE_DEVELOPER_CONTEXT_SENTINEL}\n\nextension-dynamic` }],
+		});
+		const transformed = await session.agent.onPayload?.(payload, model);
 		if (typeof transformed !== "object" || transformed === null || Array.isArray(transformed)) {
 			throw new Error("SDK payload hook returned an invalid payload");
 		}
 
 		expect((transformed as Record<string, unknown>).prompt_cache_key).toBe("extension-owned-key");
+		expect(JSON.stringify(transformed)).not.toContain(CACHE_DEVELOPER_CONTEXT_SENTINEL);
+		expect(((transformed as Record<string, unknown>).input as Array<Record<string, unknown>>).at(-1)).toEqual({
+			role: "developer",
+			content: [{ type: "input_text", text: "\n\nextension-dynamic" }],
+		});
 	});
 });

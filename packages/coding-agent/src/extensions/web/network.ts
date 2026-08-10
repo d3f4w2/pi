@@ -62,6 +62,8 @@ export interface NetworkResource {
 	status: number;
 	statusText: string;
 	contentType: string;
+	etag?: string;
+	lastModified?: string;
 	bytes: number;
 	body: Uint8Array;
 }
@@ -412,6 +414,10 @@ export async function fetchNetworkResource(
 				status: response.status,
 				statusText: response.statusText,
 				contentType,
+				...(headerValue(response.headers, "etag") ? { etag: headerValue(response.headers, "etag") } : {}),
+				...(headerValue(response.headers, "last-modified")
+					? { lastModified: headerValue(response.headers, "last-modified") }
+					: {}),
 				bytes: responseBody.length,
 				body: responseBody,
 			};

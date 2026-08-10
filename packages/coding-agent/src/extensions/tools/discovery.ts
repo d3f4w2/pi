@@ -24,6 +24,7 @@ const TOOL_DESCRIPTIONS: Readonly<Record<string, string>> = {
 	git: "安全查看、暂存、提交和推送代码",
 	process: "启动后台服务并增量查看日志",
 	browser: "打开网页并验证真实交互和截图",
+	memory: "保存、找回或忘记可靠记忆",
 };
 
 function normalizeText(value: string): string {

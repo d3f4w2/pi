@@ -1,10 +1,34 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { StopReason, Usage } from "@earendil-works/pi-ai";
 import { mutationPaths, type ObservedToolResult, verificationOutcome } from "../execution-controller/policy.ts";
 import type { RunEvidence, RunOutcome, RunRecord, RunUsage, ToolRunUsage } from "./types.ts";
 
 function boundedToolName(name: string): string {
 	return name.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 100) || "unknown";
+}
+
+function errorFingerprint(event: ObservedToolResult): string {
+	const raw = (event.content ?? [])
+		.flatMap((item) =>
+			typeof item === "object" && item !== null && "text" in item && typeof item.text === "string"
+				? [item.text]
+				: [],
+		)
+		.join(" ");
+	const normalized = raw
+		.normalize("NFKC")
+		.toLocaleLowerCase()
+		.replace(/\b(?:api[_-]?key|token|secret|password)\b\s*[:=]\s*[^\s,;]+/giu, "$1=[redacted]")
+		.replace(/[a-z]:[\\/][^\s:"'<>|]+(?:[\\/][^\s:"'<>|]+)*/giu, "<path>")
+		.replace(/\/(?:[^\s/]+\/)+[^\s/:]+/gu, "<path>")
+		.replace(/\b(?:0x)?[a-f0-9]{8,}\b/gu, "<id>")
+		.replace(/\b\d+\b/gu, "<n>")
+		.replace(/\s+/gu, " ")
+		.trim()
+		.slice(0, 500);
+	return createHash("sha256")
+		.update(`${event.toolName}:${normalized || "unknown"}`)
+		.digest("hex");
 }
 
 export class RunMetricsTracker {
@@ -55,9 +79,14 @@ export class RunMetricsTracker {
 	recordTool(event: ObservedToolResult): void {
 		if (!this.active) return;
 		const name = boundedToolName(event.toolName);
-		const usage = this.tools.get(name) ?? { calls: 0, errors: 0 };
+		const usage = this.tools.get(name) ?? { calls: 0, errors: 0, errorFingerprints: [] };
 		usage.calls++;
-		if (event.isError) usage.errors++;
+		if (event.isError) {
+			usage.errors++;
+			usage.errorFingerprints = [...new Set([...(usage.errorFingerprints ?? []), errorFingerprint(event)])].slice(
+				-5,
+			);
+		}
 		this.tools.set(name, usage);
 
 		if (mutationPaths(event).length > 0) {

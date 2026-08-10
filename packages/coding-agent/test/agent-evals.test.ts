@@ -3,6 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { ENV_MEMORY_FILE } from "../src/config.ts";
 import { AGENT_EVAL_CASES } from "../src/extensions/evals/agent-cases.ts";
 import { IsolatedAgentEvalRunner } from "../src/extensions/evals/agent-runner.ts";
 import { AgentEvalResultStore } from "../src/extensions/evals/agent-store.ts";
@@ -10,15 +11,16 @@ import type { JsonAgentSessionEvent } from "../src/modes/json-event.ts";
 
 describe("Agent capability evaluation", () => {
 	it("ships exactly one case for each initial capability", () => {
-		expect(AGENT_EVAL_CASES).toHaveLength(5);
+		expect(AGENT_EVAL_CASES).toHaveLength(6);
 		expect(AGENT_EVAL_CASES.map((testCase) => testCase.category).sort()).toEqual([
 			"bug_fix",
+			"memory",
 			"navigation",
 			"recovery",
 			"scope_control",
 			"verification",
 		]);
-		expect(new Set(AGENT_EVAL_CASES.map((testCase) => testCase.id)).size).toBe(5);
+		expect(new Set(AGENT_EVAL_CASES.map((testCase) => testCase.id)).size).toBe(6);
 		for (const testCase of AGENT_EVAL_CASES) {
 			expect(Object.keys(testCase.publicFiles).some((file) => file.startsWith(".pi-eval-hidden/"))).toBe(false);
 			expect(Object.keys(testCase.hiddenFiles).every((file) => file.startsWith(".pi-eval-hidden/"))).toBe(true);
@@ -32,6 +34,11 @@ describe("Agent capability evaluation", () => {
 		let emit = (_event: JsonAgentSessionEvent): void => {};
 		const runner = new IsolatedAgentEvalRunner((options) => {
 			workspace = options.cwd ?? "";
+			expect(options.env?.[ENV_MEMORY_FILE]).toBe(path.join(workspace, ".pi-eval-memory.json"));
+			expect(options.args).toContain("--append-system-prompt");
+			expect(options.args?.find((argument) => argument.includes("Prefer the dedicated grep tool."))).toContain(
+				"Prefer the dedicated grep tool.",
+			);
 			return {
 				start: async () => {},
 				onEvent: (listener) => {
@@ -80,6 +87,7 @@ describe("Agent capability evaluation", () => {
 			model: "test-model",
 			thinkingLevel: "medium",
 			tools: ["read", "grep", "write"],
+			appendSystemPrompt: "Prefer the dedicated grep tool.",
 		});
 		expect(result).toMatchObject({
 			passed: true,
@@ -108,6 +116,60 @@ describe("Agent capability evaluation", () => {
 			]),
 		);
 		expect(existsSync(workspace)).toBe(false);
+	});
+
+	it("requires the memory case to use the real memory tool", async () => {
+		const testCase = AGENT_EVAL_CASES.find((candidate) => candidate.category === "memory");
+		if (!testCase) throw new Error("memory case is missing");
+		let workspace = "";
+		const runner = new IsolatedAgentEvalRunner((options) => {
+			workspace = options.cwd ?? "";
+			return {
+				start: async () => {},
+				onEvent: () => () => {},
+				promptAndWait: async () => {
+					await writeFile(
+						path.join(workspace, ".pi-eval-memory.json"),
+						JSON.stringify({
+							records: [
+								{
+									kind: "user",
+									status: "active",
+									claim: { value: "concise" },
+									content: "Keep replies concise.",
+								},
+							],
+						}),
+						"utf8",
+					);
+					return [];
+				},
+				getSessionStats: async () => ({
+					sessionFile: undefined,
+					sessionId: "memory-eval",
+					userMessages: 1,
+					assistantMessages: 1,
+					toolCalls: 0,
+					toolResults: 0,
+					totalMessages: 2,
+					tokens: { input: 100, output: 50, cacheRead: 0, cacheWrite: 0, total: 150 },
+					cost: 0,
+				}),
+				abort: async () => {},
+				stop: async () => {},
+			};
+		});
+		const result = await runner.run(testCase, {
+			provider: "test-provider",
+			model: "test-model",
+			thinkingLevel: "medium",
+			tools: [],
+		});
+		expect(result).toMatchObject({
+			passed: false,
+			verificationPassed: true,
+			failure: "Required tool was not used: memory",
+		});
 	});
 
 	it("marks a bounded child timeout as a failed capability result", async () => {

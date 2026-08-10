@@ -9,7 +9,7 @@ import { getReadmePath } from "../../config.ts";
 import { keyHint, keyText } from "../../modes/interactive/components/keybinding-hints.ts";
 import { getLanguageFromPath, highlightCode, type Theme } from "../../modes/interactive/theme/theme.ts";
 import { processImage } from "../../utils/image-process.ts";
-import { detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
+import { detectSupportedImageMimeType, detectSupportedImageMimeTypeFromFile } from "../../utils/mime.ts";
 import { formatPathRelativeToCwdOrAbsolute } from "../../utils/paths.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
 import {
@@ -25,11 +25,18 @@ import { resolveReadPathAsync, resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, renderToolPath, replaceTabs, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
 import { DEFAULT_MAX_BYTES, DEFAULT_MAX_LINES, formatSize, type TruncationResult, truncateHead } from "./truncate.ts";
+import { materializeReadContent, type ReadSourceDetails, resolveUnifiedReadTarget } from "./unified-read.ts";
 
 const readSchema = Type.Object({
 	path: Type.String({ description: "Path to the file to read (relative or absolute)" }),
 	offset: Type.Optional(Type.Number({ description: "Line number to start reading from (1-indexed)" })),
 	limit: Type.Optional(Type.Number({ description: "Maximum number of lines to read" })),
+	page: Type.Optional(
+		Type.Integer({ minimum: 1, description: "PDF page to read (1-indexed); omit to read all pages" }),
+	),
+	entry: Type.Optional(
+		Type.String({ description: "File inside a ZIP, TAR, or TAR.GZ archive; omit to list archive contents" }),
+	),
 	mode: Type.Optional(
 		Type.Union([Type.Literal("auto"), Type.Literal("full"), Type.Literal("outline")], {
 			description:
@@ -39,11 +46,12 @@ const readSchema = Type.Object({
 });
 
 export const readToolSystemPromptContribution = {
-	snippet: "Read file contents with stable line anchors for reliable edits",
+	snippet: "Read local files and resource content; local text includes stable edit anchors",
 	guidelines: [
-		"Use read to examine files instead of cat or sed.",
+		"Use read for local files, webpages, PDFs, archives, and internal resource URIs instead of shell commands.",
 		"When read returns line#hash anchors, use those anchors in edit instead of copying large oldText blocks.",
 		"Long code reads may return a structural outline. Expand only the needed omitted range with offset/limit; use mode=full only when the entire implementation is necessary.",
+		"For PDFs use page when one page is enough. For archives omit entry to list files, then read only the needed entry.",
 	],
 } as const;
 
@@ -54,6 +62,7 @@ export interface ReadToolDetails {
 	fileHash?: string;
 	anchored?: boolean;
 	outline?: CodeOutlineDetails;
+	source?: ReadSourceDetails;
 }
 
 interface CompactReadClassification {
@@ -96,6 +105,8 @@ type ReadRenderArgs = {
 	file_path?: string;
 	offset?: number;
 	limit?: number;
+	page?: number;
+	entry?: string;
 	mode?: "auto" | "full" | "outline";
 };
 
@@ -109,7 +120,9 @@ function formatReadLineRange(args: ReadRenderArgs | undefined, theme: Theme): st
 function formatReadCall(args: ReadRenderArgs | undefined, theme: Theme, cwd: string): string {
 	const pathDisplay = renderToolPath(str(args?.file_path ?? args?.path), theme, cwd);
 	const mode = args?.mode && args.mode !== "auto" ? theme.fg("muted", ` [${args.mode}]`) : "";
-	return `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}${formatReadLineRange(args, theme)}${mode}`;
+	const page = args?.page === undefined ? "" : theme.fg("muted", ` [page ${args.page}]`);
+	const entry = args?.entry ? theme.fg("muted", ` [${args.entry}]`) : "";
+	return `${theme.fg("toolTitle", theme.bold("read"))} ${pathDisplay}${formatReadLineRange(args, theme)}${page}${entry}${mode}`;
 }
 
 function formatOutline(path: string, fileHash: string, outline: CodeOutlineResult): string {
@@ -258,6 +271,147 @@ function formatReadResult(
 	return text;
 }
 
+function utf8Prefix(value: string, maxBytes: number): string {
+	const bytes = Buffer.from(value, "utf8");
+	if (bytes.length <= maxBytes) return value;
+	const prefix = new TextDecoder().decode(bytes.subarray(0, maxBytes));
+	return prefix.endsWith("\uFFFD") ? prefix.slice(0, -1) : prefix;
+}
+
+function formatExternalSourceMetadata(source: ReadSourceDetails): string {
+	if (!source.untrusted || !source.sourceAddress || !source.readAt) return "";
+	return `[source=${source.sourceAddress} read_at=${source.readAt} content_type=${source.contentType ?? source.mimeType ?? "unknown"} cache=${source.cached ? "hit" : "miss"} truncated=${source.truncated === true} untrusted=true sha256=${source.contentSha256 ?? "unknown"}]`;
+}
+
+async function formatTextRead(options: {
+	path: string;
+	textContent: string;
+	offset?: number;
+	limit?: number;
+	mode: "auto" | "full" | "outline";
+	anchored: boolean;
+	outlineService: CodeOutlineService;
+	source?: ReadSourceDetails;
+	signal?: AbortSignal;
+}): Promise<{ content: TextContent[]; details: ReadToolDetails | undefined }> {
+	const fileHash = options.anchored ? createFileRevision(options.textContent) : undefined;
+	const allLines = options.textContent.split("\n");
+	const totalFileLines = allLines.length;
+	const explicitRange = options.offset !== undefined || options.limit !== undefined;
+	const shouldOutline =
+		options.anchored &&
+		!explicitRange &&
+		options.mode !== "full" &&
+		(options.mode === "outline" || totalFileLines >= SMART_READ_MIN_LINES);
+	if (shouldOutline && fileHash) {
+		let outline: CodeOutlineResult | undefined;
+		try {
+			outline = await options.outlineService.createOutline({
+				path: options.path,
+				content: options.textContent,
+				force: options.mode === "outline",
+			});
+		} catch {}
+		if (options.signal?.aborted) throw options.signal.reason;
+		if (outline) {
+			return {
+				content: [{ type: "text", text: formatOutline(options.path, fileHash, outline) }],
+				details: {
+					fileHash,
+					anchored: true,
+					outline: outline.details,
+					...(options.source ? { source: options.source } : {}),
+				},
+			};
+		}
+	}
+
+	const startLine = options.offset ? Math.max(0, options.offset - 1) : 0;
+	const startLineDisplay = startLine + 1;
+	if (startLine >= allLines.length) {
+		throw new Error(`Offset ${options.offset} is beyond end of file (${allLines.length} lines total)`);
+	}
+	let selectedContent: string;
+	let userLimitedLines: number | undefined;
+	if (options.limit !== undefined) {
+		const endLine = Math.min(startLine + options.limit, allLines.length);
+		selectedContent = allLines.slice(startLine, endLine).join("\n");
+		userLimitedLines = endLine - startLine;
+	} else selectedContent = allLines.slice(startLine).join("\n");
+
+	const truncation = truncateHead(selectedContent);
+	const formatContent = (text: string): string =>
+		options.anchored && fileHash ? formatAnchoredText(text, startLineDisplay, fileHash, options.path) : text;
+	let outputText: string;
+	let details: ReadToolDetails | undefined = options.source ? { source: { ...options.source } } : undefined;
+	if (truncation.firstLineExceedsLimit) {
+		const firstLine = allLines[startLine] ?? "";
+		const firstLineSize = formatSize(Buffer.byteLength(firstLine, "utf8"));
+		outputText = `${formatContent(utf8Prefix(firstLine, DEFAULT_MAX_BYTES))}\n\n[Line ${startLineDisplay} is ${firstLineSize}; showing its first ${formatSize(DEFAULT_MAX_BYTES)}.]`;
+		details = { ...details, truncation };
+	} else if (truncation.truncated) {
+		const endLineDisplay = startLineDisplay + truncation.outputLines - 1;
+		const nextOffset = endLineDisplay + 1;
+		outputText = formatContent(truncation.content);
+		if (truncation.truncatedBy === "lines") {
+			outputText += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines}. Use offset=${nextOffset} to continue.]`;
+		} else {
+			outputText += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Use offset=${nextOffset} to continue.]`;
+		}
+		details = { ...details, truncation };
+	} else if (userLimitedLines !== undefined && startLine + userLimitedLines < allLines.length) {
+		const remaining = allLines.length - (startLine + userLimitedLines);
+		const nextOffset = startLine + userLimitedLines + 1;
+		outputText = `${formatContent(truncation.content)}\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`;
+	} else outputText = formatContent(truncation.content);
+	const rangeTruncated =
+		startLine > 0 || (userLimitedLines !== undefined && startLine + userLimitedLines < allLines.length);
+	if (details?.source && (truncation.truncated || truncation.firstLineExceedsLimit || rangeTruncated)) {
+		details.source.truncated = true;
+	}
+	if (details?.source) {
+		const metadata = formatExternalSourceMetadata(details.source);
+		if (metadata) outputText = `${metadata}\n${outputText}`;
+	}
+	if (options.anchored && fileHash) details = { ...details, fileHash, anchored: true };
+	return { content: [{ type: "text", text: outputText }], details };
+}
+
+async function formatImageRead(options: {
+	buffer: Uint8Array;
+	mimeType: string;
+	autoResizeImages: boolean;
+	model: Model<Api> | undefined;
+	source?: ReadSourceDetails;
+}): Promise<{ content: (TextContent | ImageContent)[]; details: ReadToolDetails | undefined }> {
+	const processed = await processImage(Buffer.from(options.buffer), options.mimeType, {
+		autoResizeImages: options.autoResizeImages,
+	});
+	const nonVisionImageNote = getNonVisionImageNote(options.model);
+	if (!processed.ok) {
+		let textNote = `Read image file [${options.mimeType}]\n${processed.message}`;
+		if (nonVisionImageNote) textNote += `\n${nonVisionImageNote}`;
+		return {
+			content: [{ type: "text", text: textNote }],
+			details: options.source ? { source: options.source } : undefined,
+		};
+	}
+	let textNote = `Read image file [${processed.mimeType}]`;
+	if (processed.hints.length > 0) textNote += `\n${processed.hints.join("\n")}`;
+	if (nonVisionImageNote) textNote += `\n${nonVisionImageNote}`;
+	if (options.source) {
+		const metadata = formatExternalSourceMetadata(options.source);
+		if (metadata) textNote = `${metadata}\n${textNote}`;
+	}
+	return {
+		content: [
+			{ type: "text", text: textNote },
+			{ type: "image", data: processed.data, mimeType: processed.mimeType },
+		],
+		details: options.source ? { source: options.source } : undefined,
+	};
+}
+
 export function createReadToolDefinition(
 	cwd: string,
 	options?: ReadToolOptions,
@@ -268,13 +422,13 @@ export function createReadToolDefinition(
 	return {
 		name: "read",
 		label: "read",
-		description: `Read files with stable edit anchors. Long supported code files automatically return a whole-file structural outline; use offset/limit for exact focused lines or mode="full" for verbatim content. Instruction resources remain plain text. Supports images (jpg, png, gif, webp, bmp). Verbatim text is truncated to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB.`,
+		description: `Read local files, file/pi/internal resource URIs, webpages, PDFs, images, and ZIP/TAR/TAR.GZ archives through one interface. Local text uses stable edit anchors and long code can return a structural outline. Use page for one PDF page, or entry (also path.zip!/entry) for an archive member; omit entry to list it. Output is limited to ${DEFAULT_MAX_LINES} lines or ${DEFAULT_MAX_BYTES / 1024}KB.`,
 		promptSnippet: readToolSystemPromptContribution.snippet,
 		promptGuidelines: [...readToolSystemPromptContribution.guidelines],
 		parameters: readSchema,
 		async execute(
 			_toolCallId,
-			{ path, offset, limit, mode = "auto" }: ReadToolInput,
+			{ path, offset, limit, page, entry, mode = "auto" }: ReadToolInput,
 			signal?: AbortSignal,
 			_onUpdate?,
 			ctx?,
@@ -294,120 +448,102 @@ export function createReadToolDefinition(
 
 					(async () => {
 						try {
-							const absolutePath = await resolveReadPathAsync(path, cwd);
+							const target = await resolveUnifiedReadTarget({ input: path, cwd, entry, signal });
 							if (aborted) return;
-							// Check if file exists and is readable.
-							await ops.access(absolutePath);
-							if (aborted) return;
-							const mimeType = ops.detectImageMimeType ? await ops.detectImageMimeType(absolutePath) : undefined;
-							let content: (TextContent | ImageContent)[];
-							let details: ReadToolDetails | undefined;
-							const nonVisionImageNote = getNonVisionImageNote(ctx?.model);
-							if (mimeType) {
-								// Read image as binary.
+							let result: { content: (TextContent | ImageContent)[]; details: ReadToolDetails | undefined };
+							if (target.kind === "file") {
+								const absolutePath = await resolveReadPathAsync(target.path, cwd);
+								await ops.access(absolutePath);
+								if (aborted) return;
+								const detectedMimeType = ops.detectImageMimeType
+									? await ops.detectImageMimeType(absolutePath)
+									: undefined;
 								const buffer = await ops.readFile(absolutePath);
-								const processed = await processImage(buffer, mimeType, { autoResizeImages });
-								if (!processed.ok) {
-									let textNote = `Read image file [${mimeType}]\n${processed.message}`;
-									if (nonVisionImageNote) textNote += `\n${nonVisionImageNote}`;
-									content = [{ type: "text", text: textNote }];
+								const imageMimeType = detectedMimeType ?? detectSupportedImageMimeType(buffer);
+								if (imageMimeType) {
+									result = await formatImageRead({
+										buffer,
+										mimeType: imageMimeType,
+										autoResizeImages,
+										model: ctx?.model,
+									});
 								} else {
-									let textNote = `Read image file [${processed.mimeType}]`;
-									if (processed.hints.length > 0) textNote += `\n${processed.hints.join("\n")}`;
-									if (nonVisionImageNote) textNote += `\n${nonVisionImageNote}`;
-									content = [
-										{ type: "text", text: textNote },
-										{ type: "image", data: processed.data, mimeType: processed.mimeType },
-									];
+									const materialized = await materializeReadContent({
+										data: buffer,
+										label: absolutePath,
+										entry: target.entry,
+										page,
+									});
+									if (materialized.kind === "binary") {
+										throw new Error(`不支持直接读取二进制文件：${path}`);
+									}
+									const special =
+										materialized.details.kind === "pdf" || materialized.details.kind === "archive";
+									if (page !== undefined && page !== 1 && !special) throw new Error(`${path} 不是 PDF 文件。`);
+									result = await formatTextRead({
+										path,
+										textContent: special ? (materialized.text ?? "") : buffer.toString("utf8"),
+										offset,
+										limit,
+										mode,
+										anchored:
+											!special && getCompactReadClassification({ path: absolutePath }, cwd) === undefined,
+										outlineService,
+										...(special ? { source: materialized.details } : {}),
+										signal,
+									});
 								}
 							} else {
-								// Read text content.
-								const buffer = await ops.readFile(absolutePath);
-								const textContent = buffer.toString("utf-8");
-								const fileHash = createFileRevision(textContent);
-								const anchored = getCompactReadClassification({ path }, cwd) === undefined;
-								const allLines = textContent.split("\n");
-								const totalFileLines = allLines.length;
-								const explicitRange = offset !== undefined || limit !== undefined;
-								const shouldOutline =
-									anchored &&
-									!explicitRange &&
-									mode !== "full" &&
-									(mode === "outline" || totalFileLines >= SMART_READ_MIN_LINES);
-								let outline: CodeOutlineResult | undefined;
-								if (shouldOutline) {
-									try {
-										outline = await outlineService.createOutline({
-											path,
-											content: textContent,
-											force: mode === "outline",
-										});
-									} catch {}
-									if (aborted) return;
-								}
-								if (outline) {
-									content = [{ type: "text", text: formatOutline(path, fileHash, outline) }];
-									details = { fileHash, anchored: true, outline: outline.details };
-									if (aborted) return;
-									signal?.removeEventListener("abort", onAbort);
-									resolve({ content, details });
-									return;
-								}
-								// Apply offset if specified. Convert from 1-indexed input to 0-indexed array access.
-								const startLine = offset ? Math.max(0, offset - 1) : 0;
-								const startLineDisplay = startLine + 1;
-								// Check if offset is out of bounds.
-								if (startLine >= allLines.length) {
-									throw new Error(`Offset ${offset} is beyond end of file (${allLines.length} lines total)`);
-								}
-								let selectedContent: string;
-								let userLimitedLines: number | undefined;
-								// If limit is specified by the user, honor it first. Otherwise truncateHead decides.
-								if (limit !== undefined) {
-									const endLine = Math.min(startLine + limit, allLines.length);
-									selectedContent = allLines.slice(startLine, endLine).join("\n");
-									userLimitedLines = endLine - startLine;
+								const imageMimeType = detectSupportedImageMimeType(target.data);
+								if (imageMimeType) {
+									result = await formatImageRead({
+										buffer: target.data,
+										mimeType: imageMimeType,
+										autoResizeImages,
+										model: ctx?.model,
+										source: {
+											kind: target.external ? "web" : "resource",
+											label: target.label,
+											mimeType: target.mimeType,
+											bytes: target.data.length,
+											external: target.external,
+											...target.metadata,
+										},
+									});
 								} else {
-									selectedContent = allLines.slice(startLine).join("\n");
-								}
-								// Apply truncation, respecting both line and byte limits.
-								const truncation = truncateHead(selectedContent);
-								const formatContent = (text: string): string =>
-									anchored ? formatAnchoredText(text, startLineDisplay, fileHash, path) : text;
-								let outputText: string;
-								if (truncation.firstLineExceedsLimit) {
-									// First line alone exceeds the byte limit. Point the model at a bash fallback.
-									const firstLineSize = formatSize(Buffer.byteLength(allLines[startLine], "utf-8"));
-									outputText = `[Line ${startLineDisplay} is ${firstLineSize}, exceeds ${formatSize(DEFAULT_MAX_BYTES)} limit. Use bash: sed -n '${startLineDisplay}p' ${path} | head -c ${DEFAULT_MAX_BYTES}]`;
-									details = { truncation };
-								} else if (truncation.truncated) {
-									// Truncation occurred. Build an actionable continuation notice.
-									const endLineDisplay = startLineDisplay + truncation.outputLines - 1;
-									const nextOffset = endLineDisplay + 1;
-									outputText = formatContent(truncation.content);
-									if (truncation.truncatedBy === "lines") {
-										outputText += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines}. Use offset=${nextOffset} to continue.]`;
-									} else {
-										outputText += `\n\n[Showing lines ${startLineDisplay}-${endLineDisplay} of ${totalFileLines} (${formatSize(DEFAULT_MAX_BYTES)} limit). Use offset=${nextOffset} to continue.]`;
+									const materialized = await materializeReadContent({
+										data: target.data,
+										label: target.label,
+										mimeType: target.mimeType,
+										external: target.external,
+										entry: target.entry,
+										page,
+									});
+									if (target.metadata) materialized.details = { ...materialized.details, ...target.metadata };
+									if (materialized.kind === "binary") {
+										throw new Error(`不支持直接读取二进制资源：${target.label}`);
 									}
-									details = { truncation };
-								} else if (userLimitedLines !== undefined && startLine + userLimitedLines < allLines.length) {
-									// User-specified limit stopped early, but the file still has more content.
-									const remaining = allLines.length - (startLine + userLimitedLines);
-									const nextOffset = startLine + userLimitedLines + 1;
-									outputText = `${formatContent(truncation.content)}\n\n[${remaining} more lines in file. Use offset=${nextOffset} to continue.]`;
-								} else {
-									// No truncation and no remaining user-limited content.
-									outputText = formatContent(truncation.content);
+									if (page !== undefined && page !== 1 && materialized.details.kind !== "pdf") {
+										throw new Error(`${target.label} 不是 PDF 资源。`);
+									}
+									result = await formatTextRead({
+										path: target.label,
+										textContent: materialized.text ?? "",
+										offset,
+										limit,
+										mode,
+										anchored: false,
+										outlineService,
+										source: materialized.details,
+										signal,
+									});
 								}
-								if (anchored) details = { ...details, fileHash, anchored: true };
-								content = [{ type: "text", text: outputText }];
 							}
 
 							if (aborted) return;
 							signal?.removeEventListener("abort", onAbort);
-							resolve({ content, details });
-						} catch (error: any) {
+							resolve(result);
+						} catch (error: unknown) {
 							signal?.removeEventListener("abort", onAbort);
 							if (!aborted) reject(error);
 						}

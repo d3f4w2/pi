@@ -8,7 +8,8 @@ import { fileURLToPath } from "node:url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
 const packageDir = join(repoRoot, "packages", "coding-agent");
-const distCliPath = join(packageDir, "dist", "cli.js");
+const bundledDistCliPath = join(packageDir, "dist", "bundle", "cli.js");
+const distCliPath = existsSync(bundledDistCliPath) ? bundledDistCliPath : join(packageDir, "dist", "cli.js");
 const srcCliPath = join(packageDir, "src", "cli.ts");
 const defaultNodeProfileDir = join(repoRoot, "profiles-node");
 const defaultBunProfileDir = join(repoRoot, "profiles-bun");
@@ -215,27 +216,29 @@ function summarize(values) {
 	};
 }
 
-function parseStartupTimings(stderr) {
+export function parseStartupTimings(stderr) {
 	const lines = stderr.split(/\r?\n/);
 	const timings = new Map();
-	let inBlock = false;
+	let namespace;
 
 	for (const line of lines) {
-		if (line.includes("--- Startup Timings ---")) {
-			inBlock = true;
+		const headerMatch = line.match(/^--- Startup Timings(?::\s+(.+?))? ---$/);
+		if (headerMatch) {
+			namespace = headerMatch[1]?.trim() || "startup";
 			continue;
 		}
-		if (!inBlock) {
+		if (!namespace) {
 			continue;
 		}
-		if (line.includes("------------------------")) {
-			break;
+		if (/^-{3,}$/.test(line)) {
+			namespace = undefined;
+			continue;
 		}
-		const match = line.match(/^\s+([^:]+):\s+(\d+)ms$/);
+		const match = line.match(/^\s+([^:]+):\s+(\d+(?:\.\d+)?)ms$/);
 		if (!match) {
 			continue;
 		}
-		timings.set(match[1], Number.parseInt(match[2], 10));
+		timings.set(`${namespace}.${match[1]}`, Number.parseFloat(match[2]));
 	}
 
 	return timings;
@@ -634,8 +637,10 @@ async function main() {
 	}
 }
 
-main().catch((error) => {
-	const message = error instanceof Error ? error.message : String(error);
-	console.error(message);
-	process.exit(1);
-});
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+	main().catch((error) => {
+		const message = error instanceof Error ? error.message : String(error);
+		console.error(message);
+		process.exit(1);
+	});
+}

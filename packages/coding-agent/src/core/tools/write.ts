@@ -224,6 +224,9 @@ export function createWriteToolDefinition(
 			_onUpdate?,
 			_ctx?,
 		) {
+			if (/^[a-z][a-z\d+.-]*:\/\//i.test(path.trim())) {
+				throw new Error("Resource addresses are read-only; write accepts local filesystem paths only.");
+			}
 			const absolutePath = resolveToCwd(path, cwd);
 			const dir = dirname(absolutePath);
 			return withFileMutationQueue(absolutePath, async () => {

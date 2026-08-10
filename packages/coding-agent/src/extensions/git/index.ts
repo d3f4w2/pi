@@ -3,11 +3,25 @@ import { type Static, Type } from "typebox";
 import type { ExtensionAPI, ExtensionCommandContext, ToolDefinition } from "../../core/extensions/types.ts";
 import { renderFileDiff } from "../../modes/interactive/components/diff.ts";
 import { GitService } from "./service.ts";
-import type { GitDiffScope, GitToolDetails } from "./types.ts";
+import type { GitCommitPlanGroup, GitDiffScope, GitToolDetails } from "./types.ts";
 import { type GitDashboardResult, showGitDashboard, showGitDiff } from "./ui.ts";
 
 const GitPath = Type.String({ minLength: 1, maxLength: 4096, description: "仓库中的相对文件路径" });
 const GitPaths = Type.Array(GitPath, { minItems: 1, maxItems: 100, description: "明确指定的文件路径" });
+const GitCommitGroup = Type.Object(
+	{
+		id: Type.String({ minLength: 1, maxLength: 64, pattern: "^[A-Za-z0-9][A-Za-z0-9._-]*$" }),
+		message: Type.String({ minLength: 1, maxLength: 500, description: "该组的提交信息" }),
+		paths: GitPaths,
+		depends_on: Type.Optional(
+			Type.Array(Type.String({ minLength: 1, maxLength: 64 }), {
+				maxItems: 20,
+				description: "必须先提交的组 ID",
+			}),
+		),
+	},
+	{ additionalProperties: false },
+);
 const GitParams = Type.Union([
 	Type.Object(
 		{ operation: Type.Literal("overview"), max_files: Type.Optional(Type.Integer({ minimum: 1, maximum: 1000 })) },
@@ -27,6 +41,29 @@ const GitParams = Type.Union([
 	),
 	Type.Object(
 		{ operation: Type.Literal("log"), max_count: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })) },
+		{ additionalProperties: false },
+	),
+	Type.Object(
+		{
+			operation: Type.Literal("plan_commits"),
+			groups: Type.Array(GitCommitGroup, { minItems: 1, maxItems: 20, description: "候选原子提交组" }),
+		},
+		{ additionalProperties: false },
+	),
+	Type.Object({ operation: Type.Literal("conflicts"), path: Type.Optional(GitPath) }, { additionalProperties: false }),
+	Type.Object(
+		{
+			operation: Type.Literal("resolve_conflict"),
+			path: GitPath,
+			resolution: Type.Union([
+				Type.Literal("base"),
+				Type.Literal("ours"),
+				Type.Literal("theirs"),
+				Type.Literal("worktree"),
+			]),
+			revision: Type.String({ minLength: 64, maxLength: 64, pattern: "^[0-9a-f]{64}$" }),
+			worktree_hash: Type.Optional(Type.String({ minLength: 64, maxLength: 64, pattern: "^[0-9a-f]{64}$" })),
+		},
 		{ additionalProperties: false },
 	),
 	Type.Object({ operation: Type.Literal("stage"), paths: GitPaths }, { additionalProperties: false }),
@@ -51,7 +88,19 @@ const GitParams = Type.Union([
 ]);
 
 type GitParams = Static<typeof GitParams>;
-type GitServiceLike = Pick<GitService, "overview" | "diff" | "log" | "stage" | "unstage" | "commit" | "push">;
+type GitServiceLike = Pick<
+	GitService,
+	| "overview"
+	| "diff"
+	| "log"
+	| "validateCommitPlan"
+	| "conflicts"
+	| "resolveConflict"
+	| "stage"
+	| "unstage"
+	| "commit"
+	| "push"
+>;
 
 function operationOf(args: unknown): string {
 	return typeof args === "object" && args !== null && typeof Reflect.get(args, "operation") === "string"
@@ -61,7 +110,22 @@ function operationOf(args: unknown): string {
 
 function gitApproval(args: unknown) {
 	const operation = operationOf(args);
-	if (operation === "overview" || operation === "diff" || operation === "log") return "read" as const;
+	if (
+		operation === "overview" ||
+		operation === "diff" ||
+		operation === "log" ||
+		operation === "plan_commits" ||
+		operation === "conflicts"
+	)
+		return "read" as const;
+	if (operation === "resolve_conflict") {
+		return {
+			tier: "write" as const,
+			policy: "prompt" as const,
+			override: true,
+			reason: "解决 Git 冲突并精确暂存文件",
+		};
+	}
 	if (operation === "stage" || operation === "unstage") return { tier: "write" as const, reason: "修改 Git 暂存区" };
 	if (operation === "commit") return { tier: "exec" as const, reason: "创建 Git 提交并可能运行提交钩子" };
 	if (operation === "push") {
@@ -74,13 +138,17 @@ function approvalDetails(args: unknown): string[] {
 	if (typeof args !== "object" || args === null) return [];
 	const operation = operationOf(args);
 	const paths = Reflect.get(args, "paths");
+	const path = Reflect.get(args, "path");
 	const message = Reflect.get(args, "message");
+	const resolution = Reflect.get(args, "resolution");
 	return [
 		`操作：${operation}`,
 		...(Array.isArray(paths)
 			? [`文件：${paths.filter((item): item is string => typeof item === "string").join("、")}`]
 			: []),
+		...(typeof path === "string" ? [`文件：${path}`] : []),
 		...(typeof message === "string" ? [`提交信息：${message}`] : []),
+		...(typeof resolution === "string" ? [`解决方式：${resolution}`] : []),
 	];
 }
 
@@ -106,6 +174,54 @@ async function executeGit(service: GitServiceLike, params: GitParams, cwd: strin
 			return {
 				content: [{ type: "text" as const, text: result.text }],
 				details: { operation: "log" as const, entries: result.entries },
+			};
+		}
+		case "plan_commits": {
+			const groups: GitCommitPlanGroup[] = params.groups.map((group) => ({
+				id: group.id,
+				message: group.message,
+				paths: group.paths,
+				dependsOn: group.depends_on ?? [],
+			}));
+			const result = await service.validateCommitPlan(cwd, groups, signal);
+			return {
+				content: [{ type: "text" as const, text: result.text }],
+				details: {
+					operation: "plan_commits" as const,
+					plan: {
+						revision: result.revision,
+						groups: result.groups,
+						executionOrder: result.executionOrder,
+					},
+				},
+			};
+		}
+		case "conflicts": {
+			const result = await service.conflicts(cwd, params.path, signal);
+			return {
+				content: [{ type: "text" as const, text: result.text }],
+				details: { operation: "conflicts" as const, conflicts: result.conflicts },
+			};
+		}
+		case "resolve_conflict": {
+			const result = await service.resolveConflict(
+				cwd,
+				{
+					path: params.path,
+					resolution: params.resolution,
+					revision: params.revision,
+					...(params.worktree_hash === undefined ? {} : { worktreeHash: params.worktree_hash }),
+				},
+				signal,
+			);
+			return {
+				content: [{ type: "text" as const, text: result.text }],
+				details: {
+					operation: "resolve_conflict" as const,
+					path: result.path,
+					resolution: result.resolution,
+					overview: result.overview,
+				},
 			};
 		}
 		case "stage": {
@@ -221,9 +337,21 @@ function registerGitExtension(pi: ExtensionAPI, service: GitServiceLike): void {
 	const definition: ToolDefinition<typeof GitParams, GitToolDetails> = {
 		name: "git",
 		label: "Git 版本管理",
-		description: "查看变更和历史，精确暂存、取消暂存、提交或推送。",
+		description: "查看变更和历史，验证原子提交计划，解决冲突，精确暂存、提交或推送。",
 		discovery: {
-			keywords: ["git", "提交代码", "查看改动", "暂存文件", "推送代码", "commit", "diff", "push"],
+			keywords: [
+				"git",
+				"提交代码",
+				"原子提交",
+				"解决冲突",
+				"查看改动",
+				"暂存文件",
+				"推送代码",
+				"commit",
+				"conflict",
+				"diff",
+				"push",
+			],
 			companionTools: ["verify"],
 		},
 		promptSnippet: "用紧凑、安全的结构化操作管理 Git 变更、提交和推送",
@@ -231,6 +359,8 @@ function registerGitExtension(pi: ExtensionAPI, service: GitServiceLike): void {
 			"查看或操作 Git 时优先使用 git 工具，不要用 bash、PowerShell 或 WSL 执行同类 Git 命令。",
 			"先 overview，再按具体 path 查看 diff；不要一次读取所有大型 Diff。",
 			"stage、unstage 和 commit 必须使用明确文件列表，不要猜测或扩大范围。",
+			"需要拆分多个原子提交时，先检查相关 Diff，再用 plan_commits 验证所有变更恰好覆盖一次和依赖顺序；它不会自动提交。",
+			"有冲突时先用 conflicts 读取 base、ours、theirs 和指纹；整文件选择或手工 edit 后都必须用 resolve_conflict 重新校验并暂存。",
 			"只有用户明确要求提交时才 commit，只有用户明确要求推送时才 push。",
 			"git 工具失败时说明错误；不要改用带有 add .、reset --hard 或 force push 的终端命令。",
 		],

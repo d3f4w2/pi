@@ -237,7 +237,7 @@ function dynamicPrefixProof(): {
 	};
 }
 
-function statefulPayloadProof(): { fullBytes: number; deltaBytes: number; uploadReductionRate: number } {
+async function statefulPayloadProof(): Promise<{ fullBytes: number; deltaBytes: number; uploadReductionRate: number }> {
 	const state = new OpenAIResponsesState();
 	const firstInput: ResponseInput = [
 		{ role: "developer", content: "s".repeat(64 * 1024) },
@@ -249,7 +249,7 @@ function statefulPayloadProof(): { fullBytes: number; deltaBytes: number; upload
 		stream: true,
 		store: true,
 	};
-	const first = state.prepare("benchmark", baseParams);
+	const first = await state.prepare("benchmark", baseParams);
 	const assistant = {
 		type: "message" as const,
 		role: "assistant" as const,
@@ -257,9 +257,9 @@ function statefulPayloadProof(): { fullBytes: number; deltaBytes: number; upload
 		id: "msg_1",
 		content: [{ type: "output_text" as const, text: "answer", annotations: [] }],
 	};
-	state.commit(first, "resp_1", [assistant]);
+	await state.commit(first, "resp_1", [assistant]);
 	const nextUser = { role: "user" as const, content: [{ type: "input_text" as const, text: "n".repeat(2_048) }] };
-	const second = state.prepare("benchmark", {
+	const second = await state.prepare("benchmark", {
 		...baseParams,
 		input: [...firstInput, assistant, nextUser],
 	});
@@ -316,7 +316,7 @@ const result = {
 	providerModelSha256: createHash("sha256").update(`${args.provider}/${args.model}`).digest("hex"),
 	historicalUsage: auditSessions(args),
 	dynamicPrefixProof: dynamicPrefixProof(),
-	statefulPayloadProof: statefulPayloadProof(),
+	statefulPayloadProof: await statefulPayloadProof(),
 	memoProof: memoProof(),
 	providerRequests: 0,
 };

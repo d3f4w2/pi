@@ -1,7 +1,8 @@
 import type { ToolFailureGuardSnapshot } from "@earendil-works/pi-agent-core";
+import type { SandboxControllerSnapshot } from "../../core/sandbox/controller.ts";
 
 export type DoctorSeverity = "ok" | "info" | "warning" | "error";
-export type DoctorArea = "core" | "shell" | "lsp" | "search" | "web" | "config";
+export type DoctorArea = "core" | "sandbox" | "shell" | "lsp" | "search" | "web" | "config";
 export type DoctorLanguage = "typescript" | "python" | "go";
 
 export interface DoctorFinding {
@@ -47,6 +48,7 @@ export interface DoctorSnapshot {
 	isBunBinary: boolean;
 	toolFailureGuard?: ToolFailureGuardSnapshot;
 	toolApprovalMode?: "always-ask" | "write" | "yolo";
+	sandbox?: SandboxControllerSnapshot;
 }
 
 export interface DoctorFileProbes {

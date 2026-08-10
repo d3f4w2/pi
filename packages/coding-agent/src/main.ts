@@ -9,29 +9,7 @@ import { createInterface } from "node:readline";
 import { type ImageContent, modelsAreEqual } from "@earendil-works/pi-ai";
 import chalk from "chalk";
 import { type Args, type Mode, parseArgs, printHelp } from "./cli/args.ts";
-import {
-	type AuthCheckResult,
-	checkProviderAuth,
-	createAuthCheckModelRuntime,
-	getProviderCredential,
-} from "./cli/auth-check.ts";
-import {
-	type AuthCommand,
-	AuthCommandError,
-	getAuthCommandName,
-	getAuthCommandUsage,
-	isAuthCommandHelp,
-	parseAuthCommand,
-	printAuthCommandHelp,
-	validateAuthCommandArgs,
-} from "./cli/auth-command.ts";
-import { resolveCredentialForPrint } from "./cli/credential-print.ts";
-import { processFileArguments } from "./cli/file-processor.ts";
 import { buildInitialMessage } from "./cli/initial-message.ts";
-import { listModels } from "./cli/list-models.ts";
-import { createProjectTrustContext } from "./cli/project-trust.ts";
-import { selectSession } from "./cli/session-picker.ts";
-import { shouldRunFirstTimeSetup, showFirstTimeSetup, showStartupSelector } from "./cli/startup-ui.ts";
 import { APP_NAME, ENV_SESSION_DIR, expandTildePath, getAgentDir, getPackageDir, VERSION } from "./config.ts";
 import { type CreateAgentSessionRuntimeFactory, createAgentSessionRuntime } from "./core/agent-session-runtime.ts";
 import {
@@ -40,10 +18,8 @@ import {
 	createAgentSessionServices,
 } from "./core/agent-session-services.ts";
 import { formatNoModelsAvailableMessage } from "./core/auth-guidance.ts";
-import { AuthStorage, ReadOnlyAuthStorage } from "./core/auth-storage.ts";
-import { exportFromFile } from "./core/export-html/index.ts";
 import type { InlineExtension } from "./core/extensions/types.ts";
-import { applyHttpProxySettings, configureHttpDispatcher } from "./core/http-dispatcher.ts";
+import { applyHttpProxySettings, configureHttpDispatcher, preconnectHttpOrigin } from "./core/http-dispatcher.ts";
 import { resolveCliModel, resolveModelScope, type ScopedModel } from "./core/model-resolver.ts";
 import { ModelRuntime } from "./core/model-runtime.ts";
 import { restoreStdout, takeOverStdout } from "./core/output-guard.ts";
@@ -61,9 +37,6 @@ import { printTimings, resetTimings, time } from "./core/timings.ts";
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "./core/trust-manager.ts";
 import { builtInExtensions } from "./extensions/index.ts";
 import { runMigrations, showDeprecationWarnings } from "./migrations.ts";
-import { InteractiveMode, runPrintMode, runRpcMode } from "./modes/index.ts";
-import { initTheme, stopThemeWatcher } from "./modes/interactive/theme/theme.ts";
-import { handleConfigCommand, handlePackageCommand } from "./package-manager-cli.ts";
 import { isLocalPath, normalizePath, resolvePath } from "./utils/paths.ts";
 import { cleanupWindowsSelfUpdateQuarantine } from "./utils/windows-self-update.ts";
 
@@ -116,6 +89,9 @@ function isTruthyEnvFlag(value: string | undefined): boolean {
 }
 
 function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean): AppMode {
+	if (parsed.mode === "acp") {
+		return "acp";
+	}
 	if (parsed.mode === "rpc") {
 		return "rpc";
 	}
@@ -128,7 +104,7 @@ function resolveAppMode(parsed: Args, stdinIsTTY: boolean, stdoutIsTTY: boolean)
 	return "interactive";
 }
 
-function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc"> {
+function toPrintOutputMode(appMode: AppMode): Exclude<Mode, "rpc" | "acp"> {
 	return appMode === "json" ? "json" : "text";
 }
 
@@ -137,12 +113,22 @@ function isPlainRuntimeMetadataCommand(parsed: Args): boolean {
 }
 
 async function runAuthCommand(args: string[]): Promise<boolean> {
+	if (args[0] !== "auth") return false;
+	const {
+		AuthCommandError,
+		getAuthCommandName,
+		getAuthCommandUsage,
+		isAuthCommandHelp,
+		parseAuthCommand,
+		printAuthCommandHelp,
+		validateAuthCommandArgs,
+	} = await import("./cli/auth-command.ts");
 	if (isAuthCommandHelp(args)) {
 		printAuthCommandHelp();
 		return true;
 	}
 
-	let command: AuthCommand | undefined;
+	let command: ReturnType<typeof parseAuthCommand>;
 	try {
 		command = parseAuthCommand(args);
 	} catch (error) {
@@ -167,6 +153,7 @@ async function runAuthCommand(args: string[]): Promise<boolean> {
 		}
 		if (command.kind !== "check") {
 			const signal = AbortSignal.timeout(15_000);
+			const { resolveCredentialForPrint } = await import("./cli/credential-print.ts");
 			const modelRuntime = await ModelRuntime.create({ allowModelNetwork: false, signal });
 			const credential = await resolveCredentialForPrint(
 				parsed,
@@ -180,7 +167,11 @@ async function runAuthCommand(args: string[]): Promise<boolean> {
 		}
 
 		const requestedAuth = validateAuthCommandArgs(parsed, command.kind);
-		let result: AuthCheckResult;
+		const [
+			{ checkProviderAuth, createAuthCheckModelRuntime, getProviderCredential },
+			{ AuthStorage, ReadOnlyAuthStorage },
+		] = await Promise.all([import("./cli/auth-check.ts"), import("./core/auth-storage.ts")]);
+		let result: Awaited<ReturnType<typeof checkProviderAuth>>;
 		let credential: string | undefined;
 		try {
 			const credentials = command.noRefresh ? new ReadOnlyAuthStorage() : AuthStorage.create();
@@ -226,6 +217,7 @@ async function prepareInitialMessage(
 		return buildInitialMessage({ parsed, stdinContent });
 	}
 
+	const { processFileArguments } = await import("./cli/file-processor.ts");
 	const { text, images } = await processFileArguments(parsed.fileArgs, { autoResizeImages });
 	return buildInitialMessage({
 		parsed,
@@ -416,6 +408,7 @@ async function createSessionManager(
 
 	if (parsed.resume) {
 		try {
+			const { selectSession } = await import("./cli/session-picker.ts");
 			const selectedPath = await selectSession(
 				(onProgress) => SessionManager.list(cwd, sessionDir, onProgress),
 				(onProgress) => SessionManager.listAll(sessionDir, onProgress),
@@ -427,6 +420,7 @@ async function createSessionManager(
 			}
 			return SessionManager.open(selectedPath, sessionDir);
 		} finally {
+			const { stopThemeWatcher } = await import("./modes/interactive/theme/theme.ts");
 			stopThemeWatcher();
 		}
 	}
@@ -556,6 +550,7 @@ async function promptForMissingSessionCwd(
 	issue: SessionCwdIssue,
 	settingsManager: SettingsManager,
 ): Promise<string | undefined> {
+	const { showStartupSelector } = await import("./cli/startup-ui.ts");
 	return showStartupSelector(settingsManager, formatMissingSessionCwdPrompt(issue), [
 		{ label: "Continue", value: issue.fallbackCwd },
 		{ label: "Cancel", value: undefined },
@@ -567,6 +562,7 @@ export interface MainOptions {
 }
 
 export async function main(args: string[], options?: MainOptions) {
+	time("module graph loaded", "process");
 	resetTimings();
 	const extensionFactories = [...builtInExtensions, ...(options?.extensionFactories ?? [])];
 	const offlineMode = args.includes("--offline") || isTruthyEnvFlag(process.env.PI_OFFLINE);
@@ -589,7 +585,15 @@ export async function main(args: string[], options?: MainOptions) {
 	applyHttpProxySettings(bootstrapSettingsManager.getGlobalSettings().httpProxy);
 	configureHttpDispatcher();
 
-	if (await handlePackageCommand(args, { extensionFactories })) {
+	const packageCommand = args[0];
+	if (
+		(packageCommand === "install" ||
+			packageCommand === "uninstall" ||
+			packageCommand === "remove" ||
+			packageCommand === "update" ||
+			packageCommand === "list") &&
+		(await (await import("./package-manager-cli.ts")).handlePackageCommand(args, { extensionFactories }))
+	) {
 		const exitCode = process.exitCode ?? 0;
 		if (process.platform === "win32" && exitCode === 0 && args[0] === "update") {
 			// We normally prefer process.exit(0) for package commands so bad extensions cannot keep
@@ -602,7 +606,10 @@ export async function main(args: string[], options?: MainOptions) {
 		return;
 	}
 
-	if (await handleConfigCommand(args, { extensionFactories })) {
+	if (
+		packageCommand === "config" &&
+		(await (await import("./package-manager-cli.ts")).handleConfigCommand(args, { extensionFactories }))
+	) {
 		return;
 	}
 
@@ -627,6 +634,7 @@ export async function main(args: string[], options?: MainOptions) {
 		let result: string;
 		try {
 			const outputPath = parsed.messages.length > 0 ? parsed.messages[0] : undefined;
+			const { exportFromFile } = await import("./core/export-html/index.ts");
 			result = await exportFromFile(parsed.export, outputPath);
 		} catch (error: unknown) {
 			const message = error instanceof Error ? error.message : "Failed to export session";
@@ -643,8 +651,8 @@ export async function main(args: string[], options?: MainOptions) {
 		takeOverStdout();
 	}
 
-	if (parsed.mode === "rpc" && parsed.fileArgs.length > 0) {
-		console.error(chalk.red("Error: @file arguments are not supported in RPC mode"));
+	if ((parsed.mode === "rpc" || parsed.mode === "acp") && parsed.fileArgs.length > 0) {
+		console.error(chalk.red("Error: @file arguments are not supported in RPC or ACP mode"));
 		process.exit(1);
 	}
 
@@ -660,9 +668,12 @@ export async function main(args: string[], options?: MainOptions) {
 
 	// Experimental first-time setup: theme choice and analytics opt-in.
 	// Runs before any runtime services are created so the chosen settings apply everywhere.
-	if (appMode === "interactive" && !parsed.help && parsed.listModels === undefined && shouldRunFirstTimeSetup()) {
-		await showFirstTimeSetup(startupSettingsManager);
-		time("firstTimeSetup");
+	if (appMode === "interactive" && !parsed.help && parsed.listModels === undefined) {
+		const { showFirstTimeSetup, shouldRunFirstTimeSetup } = await import("./cli/startup-ui.ts");
+		if (shouldRunFirstTimeSetup()) {
+			await showFirstTimeSetup(startupSettingsManager);
+			time("firstTimeSetup");
+		}
 	}
 
 	// Decide the final runtime cwd before creating cwd-bound runtime services.
@@ -740,20 +751,23 @@ export async function main(args: string[], options?: MainOptions) {
 			resourceLoaderReloadOptions: shouldResolveProjectTrust
 				? {
 						resolveProjectTrust: async ({ extensionsResult }) => {
+							let resolvedProjectTrustContext = projectTrustContext;
+							if (!resolvedProjectTrustContext) {
+								const { createProjectTrustContext } = await import("./cli/project-trust.ts");
+								resolvedProjectTrustContext = createProjectTrustContext({
+									cwd,
+									mode: isInitialRuntime ? trustPromptMode : appMode,
+									settingsManager: startupSettingsManager,
+									hasUI: isInitialRuntime && trustPromptMode === "interactive",
+								});
+							}
 							const trusted = await resolveProjectTrusted({
 								cwd,
 								trustStore,
 								trustOverride: parsed.projectTrustOverride,
 								defaultProjectTrust: startupSettingsManager.getDefaultProjectTrust(),
 								extensionsResult,
-								projectTrustContext:
-									projectTrustContext ??
-									createProjectTrustContext({
-										cwd,
-										mode: isInitialRuntime ? trustPromptMode : appMode,
-										settingsManager: startupSettingsManager,
-										hasUI: isInitialRuntime && trustPromptMode === "interactive",
-									}),
+								projectTrustContext: resolvedProjectTrustContext,
 								onExtensionError: (message) => projectTrustDiagnostics.push({ type: "warning", message }),
 							});
 							projectTrustByCwd.set(cwd, trusted);
@@ -861,13 +875,14 @@ export async function main(args: string[], options?: MainOptions) {
 
 	if (parsed.listModels !== undefined) {
 		const searchPattern = typeof parsed.listModels === "string" ? parsed.listModels : undefined;
+		const { listModels } = await import("./cli/list-models.ts");
 		await listModels(modelRuntime, searchPattern, AbortSignal.timeout(15_000));
 		process.exit(0);
 	}
 
 	// Read piped stdin content (if any) - skip for RPC mode which uses stdin for JSON-RPC
 	let stdinContent: string | undefined;
-	if (appMode !== "rpc") {
+	if (appMode !== "rpc" && appMode !== "acp") {
 		stdinContent = await readPipedStdin();
 		if (stdinContent !== undefined && appMode === "interactive") {
 			appMode = "print";
@@ -881,7 +896,8 @@ export async function main(args: string[], options?: MainOptions) {
 		stdinContent,
 	);
 	time("prepareInitialMessage");
-	initTheme(settingsManager.getTheme(), appMode === "interactive");
+	const themeModule = appMode === "interactive" ? await import("./modes/interactive/theme/theme.ts") : undefined;
+	themeModule?.initTheme(settingsManager.getTheme(), true);
 	time("initTheme");
 
 	// Show deprecation warnings in interactive mode
@@ -903,6 +919,13 @@ export async function main(args: string[], options?: MainOptions) {
 		console.error(chalk.red(formatNoModelsAvailableMessage()));
 		process.exit(1);
 	}
+	const hasImmediateModelRequest =
+		appMode === "print" ||
+		appMode === "json" ||
+		(appMode === "interactive" && (initialMessage !== undefined || parsed.messages.length > 0));
+	if (!offlineMode && hasImmediateModelRequest && session.model) {
+		void preconnectHttpOrigin(session.model.baseUrl).catch(() => false);
+	}
 
 	const startupBenchmark = isTruthyEnvFlag(process.env.PI_STARTUP_BENCHMARK);
 	if (startupBenchmark && appMode !== "interactive") {
@@ -911,7 +934,7 @@ export async function main(args: string[], options?: MainOptions) {
 	}
 
 	// RPC refreshes catalogs here in the background; interactive mode starts its refresh after TUI initialization.
-	if (!offlineMode && appMode === "rpc") {
+	if (!offlineMode && (appMode === "rpc" || appMode === "acp")) {
 		const controller = new AbortController();
 		const timeout = setTimeout(() => controller.abort(), 15_000);
 		void modelRuntime
@@ -920,10 +943,19 @@ export async function main(args: string[], options?: MainOptions) {
 			.finally(() => clearTimeout(timeout));
 	}
 
-	if (appMode === "rpc") {
+	if (appMode === "acp") {
+		const { runAcpMode } = await import("./modes/acp/acp-mode.ts");
+		time("loadAcpMode");
+		printTimings();
+		await runAcpMode(runtime);
+	} else if (appMode === "rpc") {
+		const { runRpcMode } = await import("./modes/rpc/rpc-mode.ts");
+		time("loadRpcMode");
 		printTimings();
 		await runRpcMode(runtime);
 	} else if (appMode === "interactive") {
+		const { InteractiveMode } = await import("./modes/interactive/interactive-mode.ts");
+		time("loadInteractiveMode");
 		const interactiveMode = new InteractiveMode(runtime, {
 			migratedProviders,
 			modelFallbackMessage,
@@ -941,7 +973,7 @@ export async function main(args: string[], options?: MainOptions) {
 			// (Kitty keyboard protocol, device attributes, cell size) before restoring the terminal.
 			await new Promise((resolve) => setTimeout(resolve, 150));
 			interactiveMode.stop();
-			stopThemeWatcher();
+			themeModule?.stopThemeWatcher();
 			printTimings();
 			if (process.stdout.writableLength > 0) {
 				await new Promise<void>((resolve) => process.stdout.once("drain", resolve));
@@ -955,6 +987,8 @@ export async function main(args: string[], options?: MainOptions) {
 		printTimings();
 		await interactiveMode.run();
 	} else {
+		const { runPrintMode } = await import("./modes/print-mode.ts");
+		time("loadPrintMode");
 		printTimings();
 		const exitCode = await runPrintMode(runtime, {
 			mode: toPrintOutputMode(appMode),
@@ -962,7 +996,7 @@ export async function main(args: string[], options?: MainOptions) {
 			initialMessage,
 			initialImages,
 		});
-		stopThemeWatcher();
+		themeModule?.stopThemeWatcher();
 		restoreStdout();
 		if (exitCode !== 0) {
 			process.exitCode = exitCode;

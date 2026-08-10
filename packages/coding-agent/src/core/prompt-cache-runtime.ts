@@ -34,43 +34,43 @@ export interface PromptCacheRuntimeSnapshot {
 }
 
 interface SerializedInput {
-	items: string[];
+	items: Array<{ sha256: string; bytes: number }>;
 	bytes: number;
-	sha256: string;
+}
+
+function sha256(value: string): string {
+	return createHash("sha256").update(value).digest("hex");
 }
 
 function serializeInput(payload: unknown): SerializedInput {
 	if (typeof payload !== "object" || payload === null || Array.isArray(payload)) {
-		return { items: [], bytes: 0, sha256: createHash("sha256").update("").digest("hex") };
+		return { items: [], bytes: 0 };
 	}
 	const input = (payload as Record<string, unknown>).input;
 	if (!Array.isArray(input)) {
-		return { items: [], bytes: 0, sha256: createHash("sha256").update("").digest("hex") };
+		return { items: [], bytes: 0 };
 	}
-	const items = input.map((item) => JSON.stringify(item) ?? "undefined");
-	const serialized = items.join(",");
+	const items = input.map((item) => {
+		const serialized = JSON.stringify(item) ?? "undefined";
+		return { sha256: sha256(serialized), bytes: Buffer.byteLength(serialized) };
+	});
 	return {
 		items,
-		bytes: Buffer.byteLength(serialized),
-		sha256: createHash("sha256").update(serialized).digest("hex"),
+		bytes: items.reduce((total, item) => total + item.bytes, 0),
 	};
 }
 
-function commonPrefixBytes(previous: string[], current: string[]): number {
+function commonPrefixBytes(
+	previous: Array<{ sha256: string; bytes: number }>,
+	current: Array<{ sha256: string; bytes: number }>,
+): number {
 	let bytes = 0;
 	const length = Math.min(previous.length, current.length);
 	for (let index = 0; index < length; index++) {
 		const left = previous[index];
 		const right = current[index];
-		if (left === right) {
-			bytes += Buffer.byteLength(left);
-			continue;
-		}
-		let character = 0;
-		const characterLength = Math.min(left.length, right.length);
-		while (character < characterLength && left[character] === right[character]) character++;
-		bytes += Buffer.byteLength(left.slice(0, character));
-		break;
+		if (left.sha256 !== right.sha256 || left.bytes !== right.bytes) break;
+		bytes += left.bytes;
 	}
 	return bytes;
 }

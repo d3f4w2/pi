@@ -4,7 +4,7 @@ import type { ExtensionAPI } from "../../core/extensions/types.ts";
 import { formatRunMetrics } from "./report.ts";
 import { RunMetricsStore } from "./store.ts";
 import { RunMetricsTracker } from "./tracker.ts";
-import type { RunMetricsStoreLike } from "./types.ts";
+import { RUN_METRICS_RECORDED_EVENT, type RunMetricsStoreLike } from "./types.ts";
 
 export function createRunMetricsExtension(store: RunMetricsStoreLike): (pi: ExtensionAPI) => void {
 	return (pi) => {
@@ -32,6 +32,7 @@ export function createRunMetricsExtension(store: RunMetricsStoreLike): (pi: Exte
 			if (!record) return;
 			try {
 				await store.append(record);
+				pi.events.emit(RUN_METRICS_RECORDED_EVENT, structuredClone(record));
 			} catch {
 				// Metrics are best-effort and must never affect the agent run.
 			}

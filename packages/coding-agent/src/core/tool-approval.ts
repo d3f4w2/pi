@@ -45,6 +45,19 @@ export interface ToolApprovalEvaluation {
 	fingerprint: string;
 }
 
+export const TOOL_APPROVAL_DECISION_ENTRY_TYPE = "pi.tool-approval-decision.v1";
+
+export interface ToolApprovalDecisionRecord {
+	version: 1;
+	toolCallId: string;
+	toolName: string;
+	tier: ToolApprovalTier;
+	choice: "allow-once" | "allow-session" | "allow-always" | "deny-always" | "reject-once";
+	outcome: "allow" | "deny";
+	reason?: string;
+	details: string[];
+}
+
 export interface EvaluateToolApprovalOptions {
 	tool: ToolApprovalSource;
 	args: unknown;

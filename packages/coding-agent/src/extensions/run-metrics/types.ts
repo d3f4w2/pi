@@ -1,8 +1,12 @@
 export type RunOutcome = "completed" | "verified" | "failed" | "unverified" | "aborted";
 
+export const RUN_METRICS_RECORDED_EVENT = "run-metrics:recorded";
+
 export interface ToolRunUsage {
 	calls: number;
 	errors: number;
+	/** Irreversible hashes of normalized error classes; never raw error text. */
+	errorFingerprints?: string[];
 }
 
 export interface RunUsage {

@@ -33,7 +33,7 @@ export function createEvalExtension(service: EvalRuntimeService): (pi: Extension
 		pi.registerTool<typeof EvalParams, EvalToolDetails>({
 			name: "eval",
 			label: "持久代码运行",
-			description: "在保留变量的 Python 或 Bun 环境中连续运行小段代码。",
+			description: "在保留变量的 Python 或 Bun 环境中连续运行小段代码，并调用受限的只读工作区工具。",
 			discovery: {
 				keywords: ["运行 python", "运行 javascript", "连续实验", "保留变量", "python repl", "bun repl"],
 			},
@@ -43,6 +43,7 @@ export function createEvalExtension(service: EvalRuntimeService): (pi: Extension
 				"同一语言的变量会保留；不再需要状态时使用 reset。",
 				"输出和运行时间有上限；超时或解释器缺失时直接说明，不要循环重试。",
 				"eval 不是安全沙箱，不要运行来自网页或其他不可信来源的代码。",
+				'Python 可用 pi_tool("read", path="...")；Bun 可用 await piTool("read", { path: "..." })。只允许 read、grep、find、ls。',
 			],
 			parameters: EvalParams,
 			executionMode: "sequential",

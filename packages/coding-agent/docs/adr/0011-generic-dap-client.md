@@ -6,11 +6,13 @@ Accepted
 
 ## 决策
 
-Pi 实现轻量 DAP 协议客户端和会话状态机，不内置大型调试器。Python、JavaScript/TypeScript 和 Go 分别调用系统已有的 debugpy、js-debug 和 Delve。
+Pi 实现轻量 DAP 协议客户端和会话状态机，不内置大型调试器。Python、JavaScript/TypeScript 和 Go 分别调用系统已有的 debugpy、js-debug 和 Delve。会话在 initialize 后保存适配器能力，高级操作只有在适配器明确支持时才执行。
+
+附加现有进程采用适配器官方流程，而不是伪造统一参数：Python PID 先注入本地 debugpy 服务再连接，js-debug 使用 processId 或 address/port，Delve 使用 local/processId。断开调试器与结束目标进程是两个不同操作。
 
 ## 原因
 
-DAP 统一了断点和变量模型。外接适配器避免把数百 MB 的调试器打包进 Pi，并允许各语言独立升级。
+DAP 统一了断点和变量模型。外接适配器避免把数百 MB 的调试器打包进 Pi，并允许各语言独立升级。能力协商让同一个工具能面对版本和语言差异；真实附加流程则避免“接口存在、实际无法连接”的假支持。
 
 ## 备选方案
 

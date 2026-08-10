@@ -192,6 +192,7 @@ function registerAstGrepExtension(
 							truncated: false,
 							outputTruncated: false,
 							durationMs: 0,
+							matches: [],
 						},
 					}),
 			);

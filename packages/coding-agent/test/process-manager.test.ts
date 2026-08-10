@@ -40,6 +40,25 @@ describe("background process manager", () => {
 		expect(next.text).not.toContain("ready");
 	});
 
+	test("sends bounded input to a running managed process", async () => {
+		const service = manager();
+		const processInfo = await service.start(
+			{
+				command: process.execPath,
+				args: [
+					"-e",
+					"process.stdin.setEncoding('utf8'); process.stdin.on('data', value => console.log('echo:' + value.trim()))",
+				],
+				cwd: process.cwd(),
+			},
+			process.cwd(),
+		);
+
+		await service.input(processInfo.id, "hello\n");
+		await expect.poll(async () => (await service.logs(processInfo.id)).text).toContain("echo:hello");
+		await expect(service.input(processInfo.id, "x".repeat(64 * 1024 + 1))).rejects.toThrow("过长");
+	});
+
 	test("stops and restarts only a process owned by this manager", async () => {
 		const service = manager();
 		const processInfo = await service.start(

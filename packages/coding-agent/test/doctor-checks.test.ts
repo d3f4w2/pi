@@ -144,6 +144,27 @@ describe("doctor checks and report", () => {
 		expect(report.findings.find((finding) => finding.id === "web")?.severity).toBe("ok");
 	});
 
+	it("reports the active high-assurance sandbox backend", () => {
+		const report = runDoctorChecks(
+			snapshot({
+				sandbox: {
+					state: "active",
+					mode: "auto",
+					backend: "srt-windows",
+					workspaceRoot: "C:\\repo",
+					enforced: true,
+				},
+			}),
+			probes(["C:\\Program Files\\Git\\bin\\bash.exe"]),
+		);
+
+		expect(report.findings.find((finding) => finding.id === "sandbox")).toMatchObject({
+			area: "sandbox",
+			severity: "ok",
+			detail: expect.stringContaining("srt-windows"),
+		});
+	});
+
 	it("reports open tool circuits with a direct recovery action", () => {
 		const report = runDoctorChecks(
 			snapshot({

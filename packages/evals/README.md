@@ -151,3 +151,35 @@ necessary, use Vitest's built-in sequence shuffling.
 
 See the [`skill-eval-harness`](https://github.com/adewale/skill-eval-harness/) guidance for comparative-eval methodology,
 repetition strategy, trustworthy judges, and telemetry interpretation.
+
+## Comparing Pi with an external coding agent
+
+`createCommandHarness(...)` runs a command directly with an argument array in an isolated temporary workspace. It never
+concatenates a shell command. A task can provide text fixtures, deterministic stdout or file assertions, an allowed-write
+list, and a timeout. The result records exit status, latency, changed files, unexpected writes, bounded stdout/stderr, and
+individual assertion outcomes. Token and cost comparisons remain unavailable unless the compared command exposes them;
+the report must not treat missing telemetry as zero.
+
+The checked-in OhMyPi comparison contains three small deterministic editing tasks and defaults to three paired
+repetitions. It is disabled during normal eval runs. Configure both CLIs to use the same provider, model, thinking level,
+and credentials, verify that `omp` resolves on `PATH`, then run:
+
+```powershell
+$env:PI_RUN_OMP_COMPARE = "1"
+npm --prefix packages/evals run compare:omp
+```
+
+Commands and argument arrays can be overridden without shell parsing:
+
+```powershell
+$env:PI_OMP_COMMAND = "C:\\tools\\omp.exe"
+$env:PI_OMP_ARGS_JSON = '["-p","{prompt}"]'
+$env:PI_OMP_AGENT_DIR = "C:\\temp\\isolated-omp-profile"
+$env:PI_COMPARE_COMMAND = "C:\\tools\\candidate.exe"
+$env:PI_COMPARE_ARGS_JSON = '["--print","{prompt}"]'
+$env:PI_OMP_COMPARE_REPETITIONS = "5"
+```
+
+Only paths listed by a task's `allowedWrites` are accepted. Directory entries end with `/` and allow every descendant.
+Assertions refuse symlinks and other non-regular files so an agent cannot satisfy a file check by linking outside the
+temporary workspace.

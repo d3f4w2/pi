@@ -33,6 +33,15 @@ const ProcessParams = Type.Union([
 		{ additionalProperties: false },
 	),
 	Type.Object(
+		{
+			operation: Type.Literal("input"),
+			id: Type.String({ minLength: 1, maxLength: 100 }),
+			data: Type.String({ maxLength: 65_536, description: "写入进程标准输入的文本" }),
+			append_newline: Type.Optional(Type.Boolean({ description: "末尾追加换行，默认 true" })),
+		},
+		{ additionalProperties: false },
+	),
+	Type.Object(
 		{ operation: Type.Literal("restart"), id: Type.String({ minLength: 1, maxLength: 100 }) },
 		{ additionalProperties: false },
 	),
@@ -48,6 +57,7 @@ function operationOf(args: unknown): ProcessOperation | "unknown" {
 	return operation === "start" ||
 		operation === "status" ||
 		operation === "logs" ||
+		operation === "input" ||
 		operation === "restart" ||
 		operation === "stop"
 		? operation
@@ -217,6 +227,14 @@ function registerProcessExtension(pi: ExtensionAPI, service: BackgroundProcessSe
 				return {
 					content: [{ type: "text", text: `${logs.text || "没有新增日志。"}${suffix}` }],
 					details: { operation: "logs", logs },
+				};
+			}
+			if (params.operation === "input") {
+				const data = params.append_newline === false ? params.data : `${params.data}\n`;
+				const processInfo = await service.input(params.id, data);
+				return {
+					content: [{ type: "text", text: `已向 ${params.id} 写入 ${Buffer.byteLength(data, "utf8")} 字节。` }],
+					details: { operation: "input", process: processInfo, bytes: Buffer.byteLength(data, "utf8") },
 				};
 			}
 			if (params.operation === "restart") {

@@ -190,11 +190,20 @@ export async function createTestExtensionsResult(
 	const extensions: Extension[] = [];
 
 	for (const [index, input] of inputs.entries()) {
-		const isObject = typeof input !== "function";
-		const hasName = isObject && "name" in input;
-		const hasPath = isObject && "path" in input && typeof input.path === "string" && input.path !== "";
-		const factory = isObject ? input.factory : input;
-		const extensionPath = hasName ? `<inline:${input.name}>` : hasPath ? input.path : `<inline:${index + 1}>`;
+		let factory: ExtensionFactory;
+		let extensionPath: string;
+		if (typeof input === "function") {
+			factory = input;
+			extensionPath = `<inline:${index + 1}>`;
+		} else {
+			extensionPath =
+				"name" in input
+					? `<inline:${input.name}>`
+					: typeof input.path === "string" && input.path !== ""
+						? input.path
+						: `<inline:${index + 1}>`;
+			factory = "load" in input && typeof input.load === "function" ? await input.load() : input.factory;
+		}
 
 		extensions.push(await loadExtensionFromFactory(factory, cwd, eventBus, runtime, extensionPath));
 	}

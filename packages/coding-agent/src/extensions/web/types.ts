@@ -12,11 +12,21 @@ export interface SearchFilters {
 }
 
 export interface WebSearchDetails {
-	provider: "brave" | "duckduckgo";
+	provider: "official" | "brave" | "duckduckgo";
 	query: string;
 	resultCount: number;
 	durationMs: number;
 	fallbackReason?: string;
+	officialSourceFirstHit?: boolean;
+	officialSourceVerified?: boolean;
+	officialVerificationCached?: boolean;
+	sourceAddress: string;
+	strategy?: "official-direct" | "generic-search" | "single-fallback";
+	readAt: string;
+	contentType: "application/vnd.pi.search-results+text";
+	cached: false;
+	truncated: boolean;
+	untrusted: true;
 }
 
 export interface WebFetchDetails {
@@ -28,4 +38,9 @@ export interface WebFetchDetails {
 	bytes: number;
 	outputBytes: number;
 	truncated: boolean;
+	sourceAddress: string;
+	readAt: string;
+	cached: boolean;
+	untrusted: true;
+	contentSha256: string;
 }

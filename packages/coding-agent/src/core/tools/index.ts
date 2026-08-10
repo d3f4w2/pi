@@ -61,6 +61,13 @@ export {
 	truncateTail,
 } from "./truncate.ts";
 export {
+	type InternalReadResource,
+	type InternalReadResourceContext,
+	type InternalReadResourceResolver,
+	type ReadSourceDetails,
+	registerInternalReadResourceResolver,
+} from "./unified-read.ts";
+export {
 	createWriteTool,
 	createWriteToolDefinition,
 	type WriteOperations,
@@ -68,15 +75,19 @@ export {
 	type WriteToolOptions,
 } from "./write.ts";
 
+import { fileURLToPath } from "node:url";
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolDefinition } from "../extensions/types.ts";
-import { type BashToolOptions, createBashTool, createBashToolDefinition } from "./bash.ts";
-import { createEditTool, createEditToolDefinition, type EditToolOptions } from "./edit.ts";
-import { createFindTool, createFindToolDefinition, type FindToolOptions } from "./find.ts";
-import { createGrepTool, createGrepToolDefinition, type GrepToolOptions } from "./grep.ts";
-import { createLsTool, createLsToolDefinition, type LsToolOptions } from "./ls.ts";
-import { createReadTool, createReadToolDefinition, type ReadToolOptions } from "./read.ts";
-import { createWriteTool, createWriteToolDefinition, type WriteToolOptions } from "./write.ts";
+import { checkDefaultSandboxPath, ensureDefaultSandbox } from "../sandbox/default.ts";
+import { type BashToolOptions, createBashToolDefinition } from "./bash.ts";
+import { createEditToolDefinition, type EditToolOptions } from "./edit.ts";
+import { createFindToolDefinition, type FindToolOptions } from "./find.ts";
+import { createGrepToolDefinition, type GrepToolOptions } from "./grep.ts";
+import { createLsToolDefinition, type LsToolOptions } from "./ls.ts";
+import { resolveToCwd } from "./path-utils.ts";
+import { createReadToolDefinition, type ReadToolOptions } from "./read.ts";
+import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
+import { createWriteToolDefinition, type WriteToolOptions } from "./write.ts";
 
 export type Tool = AgentTool<any>;
 export type ToolDef = ToolDefinition<any, any>;
@@ -93,104 +104,117 @@ export interface ToolsOptions {
 	ls?: LsToolOptions;
 }
 
+function guardToolDefinition(tool: ToolDef, cwd: string): ToolDef {
+	const access = tool.name === "write" || tool.name === "edit" ? "write" : tool.name === "bash" ? undefined : "read";
+	const execute = tool.execute.bind(tool);
+	return {
+		...tool,
+		async execute(toolCallId, input, signal, onUpdate, context) {
+			if (access) {
+				const candidate = input as { path?: unknown };
+				const requestedPath = typeof candidate.path === "string" ? candidate.path : ".";
+				const sourcePath = requestedPath.split("!/")[0] ?? requestedPath;
+				const isResourceUri = /^[a-z][a-z\d+.-]*:\/\//i.test(sourcePath);
+				if (!isResourceUri) await checkDefaultSandboxPath(cwd, resolveToCwd(sourcePath, cwd), access);
+				else if (sourcePath.toLowerCase().startsWith("file://")) {
+					await checkDefaultSandboxPath(cwd, fileURLToPath(new URL(sourcePath)), access);
+				}
+			} else await ensureDefaultSandbox(cwd);
+			return execute(toolCallId, input, signal, onUpdate, context);
+		},
+	};
+}
+
 export function createToolDefinition(toolName: ToolName, cwd: string, options?: ToolsOptions): ToolDef {
+	let definition: ToolDef;
 	switch (toolName) {
 		case "read":
-			return createReadToolDefinition(cwd, options?.read);
+			definition = createReadToolDefinition(cwd, options?.read);
+			break;
 		case "bash":
-			return createBashToolDefinition(cwd, options?.bash);
+			definition = createBashToolDefinition(cwd, options?.bash);
+			break;
 		case "edit":
-			return createEditToolDefinition(cwd, options?.edit);
+			definition = createEditToolDefinition(cwd, options?.edit);
+			break;
 		case "write":
-			return createWriteToolDefinition(cwd, options?.write);
+			definition = createWriteToolDefinition(cwd, options?.write);
+			break;
 		case "grep":
-			return createGrepToolDefinition(cwd, options?.grep);
+			definition = createGrepToolDefinition(cwd, options?.grep);
+			break;
 		case "find":
-			return createFindToolDefinition(cwd, options?.find);
+			definition = createFindToolDefinition(cwd, options?.find);
+			break;
 		case "ls":
-			return createLsToolDefinition(cwd, options?.ls);
+			definition = createLsToolDefinition(cwd, options?.ls);
+			break;
 		default:
 			throw new Error(`Unknown tool name: ${toolName}`);
 	}
+	return guardToolDefinition(definition, cwd);
 }
 
 export function createTool(toolName: ToolName, cwd: string, options?: ToolsOptions): Tool {
-	switch (toolName) {
-		case "read":
-			return createReadTool(cwd, options?.read);
-		case "bash":
-			return createBashTool(cwd, options?.bash);
-		case "edit":
-			return createEditTool(cwd, options?.edit);
-		case "write":
-			return createWriteTool(cwd, options?.write);
-		case "grep":
-			return createGrepTool(cwd, options?.grep);
-		case "find":
-			return createFindTool(cwd, options?.find);
-		case "ls":
-			return createLsTool(cwd, options?.ls);
-		default:
-			throw new Error(`Unknown tool name: ${toolName}`);
-	}
+	return wrapToolDefinition(createToolDefinition(toolName, cwd, options));
 }
 
 export function createCodingToolDefinitions(cwd: string, options?: ToolsOptions): ToolDef[] {
 	return [
-		createReadToolDefinition(cwd, options?.read),
-		createBashToolDefinition(cwd, options?.bash),
-		createEditToolDefinition(cwd, options?.edit),
-		createWriteToolDefinition(cwd, options?.write),
+		createToolDefinition("read", cwd, options),
+		createToolDefinition("bash", cwd, options),
+		createToolDefinition("edit", cwd, options),
+		createToolDefinition("write", cwd, options),
 	];
 }
 
 export function createReadOnlyToolDefinitions(cwd: string, options?: ToolsOptions): ToolDef[] {
 	return [
-		createReadToolDefinition(cwd, options?.read),
-		createGrepToolDefinition(cwd, options?.grep),
-		createFindToolDefinition(cwd, options?.find),
-		createLsToolDefinition(cwd, options?.ls),
+		createToolDefinition("read", cwd, options),
+		createToolDefinition("grep", cwd, options),
+		createToolDefinition("find", cwd, options),
+		createToolDefinition("ls", cwd, options),
 	];
 }
 
 export function createAllToolDefinitions(cwd: string, options?: ToolsOptions): Record<ToolName, ToolDef> {
 	return {
-		read: createReadToolDefinition(cwd, options?.read),
-		bash: createBashToolDefinition(cwd, options?.bash),
-		edit: createEditToolDefinition(cwd, options?.edit),
-		write: createWriteToolDefinition(cwd, options?.write),
-		grep: createGrepToolDefinition(cwd, options?.grep),
-		find: createFindToolDefinition(cwd, options?.find),
-		ls: createLsToolDefinition(cwd, options?.ls),
+		read: createToolDefinition("read", cwd, options),
+		bash: createToolDefinition("bash", cwd, options),
+		edit: createToolDefinition("edit", cwd, options),
+		write: createToolDefinition("write", cwd, options),
+		grep: createToolDefinition("grep", cwd, options),
+		find: createToolDefinition("find", cwd, options),
+		ls: createToolDefinition("ls", cwd, options),
 	};
 }
 
 export function createCodingTools(cwd: string, options?: ToolsOptions): Tool[] {
 	return [
-		createReadTool(cwd, options?.read),
-		createBashTool(cwd, options?.bash),
-		createEditTool(cwd, options?.edit),
-		createWriteTool(cwd, options?.write),
+		createTool("read", cwd, options),
+		createTool("bash", cwd, options),
+		createTool("edit", cwd, options),
+		createTool("write", cwd, options),
 	];
 }
 
 export function createReadOnlyTools(cwd: string, options?: ToolsOptions): Tool[] {
 	return [
-		createReadTool(cwd, options?.read),
-		createGrepTool(cwd, options?.grep),
-		createFindTool(cwd, options?.find),
-		createLsTool(cwd, options?.ls),
+		createTool("read", cwd, options),
+		createTool("grep", cwd, options),
+		createTool("find", cwd, options),
+		createTool("ls", cwd, options),
 	];
 }
 
 export function createAllTools(cwd: string, options?: ToolsOptions): Record<ToolName, Tool> {
 	return {
-		read: createReadTool(cwd, options?.read),
-		bash: createBashTool(cwd, options?.bash),
-		edit: createEditTool(cwd, options?.edit),
-		write: createWriteTool(cwd, options?.write),
-		grep: createGrepTool(cwd, options?.grep),
-		find: createFindTool(cwd, options?.find),
-		ls: createLsTool(cwd, options?.ls),
+		read: createTool("read", cwd, options),
+		bash: createTool("bash", cwd, options),
+		edit: createTool("edit", cwd, options),
+		write: createTool("write", cwd, options),
+		grep: createTool("grep", cwd, options),
+		find: createTool("find", cwd, options),
+		ls: createTool("ls", cwd, options),
 	};
 }

@@ -34,6 +34,9 @@ import { type GitSource, parseGitUrl } from "../utils/git.ts";
 import { canonicalizePath, isLocalPath, markPathIgnoredByCloudSync, resolvePath } from "../utils/paths.ts";
 import { isStdoutTakenOver } from "./output-guard.ts";
 import { type PiManifest, readPiManifest } from "./pi-manifest.ts";
+import { hasControlledPluginManifest } from "./plugins/manifest.ts";
+import { PluginRegistry } from "./plugins/registry.ts";
+import type { RegisteredPlugin } from "./plugins/types.ts";
 import type { PackageSource, SettingsManager } from "./settings-manager.ts";
 
 const NETWORK_TIMEOUT_MS = 10000;
@@ -783,11 +786,13 @@ export class DefaultPackageManager implements PackageManager {
 	private globalNpmRoot: string | undefined;
 	private globalNpmRootCommandKey: string | undefined;
 	private progressCallback: ProgressCallback | undefined;
+	private pluginRegistry: PluginRegistry;
 
 	constructor(options: PackageManagerOptions) {
 		this.cwd = resolvePath(options.cwd);
 		this.agentDir = resolvePath(options.agentDir);
 		this.settingsManager = options.settingsManager;
+		this.pluginRegistry = new PluginRegistry({ statePath: join(this.agentDir, "plugin-state.json") });
 	}
 
 	setProgressCallback(callback: ProgressCallback | undefined): void {
@@ -859,6 +864,14 @@ export class DefaultPackageManager implements PackageManager {
 			return existsSync(path) ? path : undefined;
 		}
 		return undefined;
+	}
+
+	discoverControlledPlugins(): RegisteredPlugin[] {
+		for (const configured of this.listConfiguredPackages()) {
+			if (!configured.installedPath || !hasControlledPluginManifest(configured.installedPath)) continue;
+			this.pluginRegistry.register(configured.installedPath, configured.source);
+		}
+		return this.pluginRegistry.list();
 	}
 
 	private emitProgress(event: ProgressEvent): void {
@@ -1745,9 +1758,9 @@ export class DefaultPackageManager implements PackageManager {
 	private getGitDependencyInstallArgs(): string[] {
 		const configuredCommand = this.settingsManager.getNpmCommand();
 		if (configuredCommand && configuredCommand.length > 0) {
-			return ["install"];
+			return ["install", "--ignore-scripts"];
 		}
-		return ["install", "--omit=dev"];
+		return ["install", "--omit=dev", "--ignore-scripts"];
 	}
 
 	private runNpmCommandSync(args: string[]): string {
@@ -1762,7 +1775,7 @@ export class DefaultPackageManager implements PackageManager {
 		// equivalent bun/pnpm settings) so package managers do not install or solve host-provided
 		// @earendil-works/pi-* peers. Stale auto-installed pi peers can otherwise block updates.
 		if (packageManagerName === "bun") {
-			return ["install", ...specs, "--cwd", installRoot, "--omit=peer"];
+			return ["install", ...specs, "--cwd", installRoot, "--omit=peer", "--ignore-scripts"];
 		}
 		if (packageManagerName === "pnpm") {
 			return [
@@ -1773,9 +1786,10 @@ export class DefaultPackageManager implements PackageManager {
 				"--config.auto-install-peers=false",
 				"--config.strict-peer-dependencies=false",
 				"--config.strict-dep-builds=false",
+				"--ignore-scripts",
 			];
 		}
-		return ["install", ...specs, "--prefix", installRoot, "--legacy-peer-deps"];
+		return ["install", ...specs, "--prefix", installRoot, "--legacy-peer-deps", "--ignore-scripts"];
 	}
 
 	private async installNpm(source: NpmSource, scope: SourceScope, temporary: boolean): Promise<void> {
@@ -1926,8 +1940,23 @@ export class DefaultPackageManager implements PackageManager {
 		}
 
 		writeFileSync(markerPath, "", "utf-8");
-		await this.runCommand("git", ["reset", "--hard", commitRef], { cwd: targetDir });
-		await this.cleanAndInstallGitDependencies(targetDir, markerPath);
+		try {
+			await this.runCommand("git", ["reset", "--hard", commitRef], { cwd: targetDir });
+			await this.cleanAndInstallGitDependencies(targetDir, markerPath);
+		} catch (updateError) {
+			try {
+				await this.runCommand("git", ["reset", "--hard", localHead.trim()], { cwd: targetDir });
+				await this.cleanAndInstallGitDependencies(targetDir, markerPath);
+			} catch (rollbackError) {
+				const updateMessage = updateError instanceof Error ? updateError.message : String(updateError);
+				const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+				throw new AggregateError(
+					[updateError, rollbackError],
+					`Git update failed: ${updateMessage}; rollback to ${localHead.trim()} also failed: ${rollbackMessage}`,
+				);
+			}
+			throw new Error(`Git update failed; restored ${localHead.trim()}`, { cause: updateError });
+		}
 	}
 
 	private async refreshTemporaryGitSource(source: GitSource, sourceStr: string): Promise<void> {
@@ -2129,6 +2158,18 @@ export class DefaultPackageManager implements PackageManager {
 		filter: PackageFilter | undefined,
 		metadata: PathMetadata,
 	): boolean {
+		if (hasControlledPluginManifest(packageRoot)) {
+			const plugin = this.pluginRegistry.register(packageRoot, metadata.source);
+			if (!plugin.enabled) return true;
+			for (const file of plugin.files) {
+				if (file.kind === "extensions") {
+					this.addResource(accumulator.extensions, file.absolutePath, metadata, true);
+				} else if (file.kind === "skills") {
+					this.addResource(accumulator.skills, file.absolutePath, metadata, true);
+				}
+			}
+			return true;
+		}
 		if (filter) {
 			for (const resourceType of RESOURCE_TYPES) {
 				const patterns = filter[resourceType];

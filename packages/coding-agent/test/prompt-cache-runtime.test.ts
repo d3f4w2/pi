@@ -135,10 +135,13 @@ describe("PromptCacheRuntime", () => {
 		);
 
 		const serialized = JSON.stringify(runtime.snapshot());
+		const internalState = JSON.stringify(runtime);
 		expect(runtime.snapshot().changeCounts["dynamic-system-suffix"]).toBe(1);
 		expect(serialized).not.toContain("private-one");
 		expect(serialized).not.toContain("private-two");
 		expect(serialized).not.toContain("private-key");
+		expect(internalState).not.toContain("private-one");
+		expect(internalState).not.toContain("private-two");
 	});
 
 	it("tracks compaction deferrals in the same session report", () => {

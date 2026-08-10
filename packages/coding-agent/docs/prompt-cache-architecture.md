@@ -60,7 +60,7 @@ Cache-expiry analysis is model-aware: explicit GPT-5.6 requests use the configur
 - Missing or malformed payload: return it unchanged.
 - Stable prefix does not exactly match serialized system content: keep implicit behavior and report `prefix-mismatch`.
 - Provider lacks either explicit capability: do not send breakpoint fields.
-- Extension changes or removes `prompt_cache_key`: preserve extension ownership.
+- Extension changes or removes `prompt_cache_key`: preserve extension ownership, but still remove the private developer-context sentinel and restore its provider role.
 - Diagnostic callback throws: ignore the callback failure and continue the provider request.
 - Key exceeds provider limits: use the existing bounded SHA-256 format.
 

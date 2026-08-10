@@ -1,0 +1,117 @@
+{
+  "schemaVersion": 1,
+  "method": {
+    "baseline": "tsx source launcher",
+    "candidate": "Node native TypeScript strip-only source launcher",
+    "runs": 7,
+    "warmupRuns": 1,
+    "offline": true,
+    "isolatedAgentDirectory": true,
+    "interleavedOrder": true
+  },
+  "system": {
+    "recordedAt": "2026-08-10T08:58:17.046Z",
+    "gitCommit": "a26e6c709897192e4f15b2651062397349ac5064",
+    "workingTreeDirty": true,
+    "platform": "win32",
+    "osRelease": "10.0.26200",
+    "architecture": "x64",
+    "cpu": "Intel(R) Core(TM) Ultra 7 255HX",
+    "logicalCpuCount": 20,
+    "totalMemoryBytes": 33786957824,
+    "freeMemoryBytesAtStart": 7394430976,
+    "node": "v24.13.1"
+  },
+  "results": {
+    "version": {
+      "baseline": {
+        "runs": 7,
+        "minMs": 4608.863100000002,
+        "medianMs": 5826.4146,
+        "avgMs": 6047.913571428572,
+        "p95Ms": 8633.058300000004,
+        "maxMs": 8633.058300000004
+      },
+      "candidate": {
+        "runs": 7,
+        "minMs": 1704.5944999999992,
+        "medianMs": 1946.456000000002,
+        "avgMs": 1903.156214285713,
+        "p95Ms": 2191.6470000000045,
+        "maxMs": 2191.6470000000045
+      },
+      "improvement": {
+        "medianSavedMs": 3879.958599999998,
+        "medianImprovementPercent": 66.59255934172617,
+        "medianSpeedup": 2.993345135980466,
+        "p95SavedMs": 6441.4113,
+        "p95ImprovementPercent": 74.61331866599345
+      },
+      "samples": {
+        "tsx": [
+          5826.4146,
+          4744.565600000002,
+          4608.863100000002,
+          8633.058300000004,
+          5484.894899999999,
+          5828.8361,
+          7208.762399999992
+        ],
+        "nodeStrip": [
+          1946.456000000002,
+          2000.1211999999941,
+          2191.6470000000045,
+          1953.9121999999988,
+          1704.5944999999992,
+          1800.7086999999883,
+          1724.6539000000048
+        ]
+      }
+    },
+    "rpc": {
+      "baseline": {
+        "runs": 7,
+        "minMs": 3957.632500000007,
+        "medianMs": 5319.936999999991,
+        "avgMs": 5128.472185714285,
+        "p95Ms": 6484.981999999989,
+        "maxMs": 6484.981999999989
+      },
+      "candidate": {
+        "runs": 7,
+        "minMs": 1732.5967999999993,
+        "medianMs": 1889.6960000000108,
+        "avgMs": 2008.1071857142856,
+        "p95Ms": 2562.5583000000042,
+        "maxMs": 2562.5583000000042
+      },
+      "improvement": {
+        "medianSavedMs": 3430.24099999998,
+        "medianImprovementPercent": 64.47897785255701,
+        "medianSpeedup": 2.8152343022369526,
+        "p95SavedMs": 3922.423699999985,
+        "p95ImprovementPercent": 60.484727636869174
+      },
+      "samples": {
+        "tsx": [
+          4170.555899999992,
+          3996.6647999999986,
+          3957.632500000007,
+          5319.936999999991,
+          6334.312300000005,
+          5635.22080000001,
+          6484.981999999989
+        ],
+        "nodeStrip": [
+          1889.6960000000108,
+          1766.533899999995,
+          1732.5967999999993,
+          2562.5583000000042,
+          2408.0437999999995,
+          1927.596899999975,
+          1769.724600000016
+        ]
+      }
+    }
+  }
+}

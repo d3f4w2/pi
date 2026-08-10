@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { ENV_MEMORY_FILE } from "../../config.ts";
 import type { SessionStats } from "../../core/agent-session.ts";
 import type { JsonAgentSessionEvent } from "../../modes/json-event.ts";
 import { RpcClient, type RpcClientOptions } from "../../modes/rpc/rpc-client.ts";
@@ -28,6 +29,7 @@ const EVAL_TOOLS = new Set([
 	"lsp",
 	"ast_grep",
 	"verify",
+	"memory",
 ]);
 const MAX_VERIFIER_OUTPUT = 2_000;
 const MAX_TRACE_ENTRIES = 40;
@@ -169,11 +171,15 @@ export class IsolatedAgentEvalRunner implements AgentEvalRunnerLike {
 	async run(testCase: AgentEvalCase, options: AgentEvalRunOptions, signal?: AbortSignal): Promise<AgentEvalResult> {
 		const startedAt = Date.now();
 		const workspace = await mkdtemp(path.join(tmpdir(), `pi-go-eval-${testCase.id}-`));
+		const enabledTools = [
+			...new Set([...options.tools, ...(testCase.requiredTools ?? [])].filter((tool) => EVAL_TOOLS.has(tool))),
+		];
 		const client = this.createClient({
 			cliPath: cliPath(),
 			cwd: workspace,
 			provider: options.provider,
 			model: options.model,
+			env: { [ENV_MEMORY_FILE]: path.join(workspace, ".pi-eval-memory.json") },
 			args: [
 				"--thinking",
 				options.thinkingLevel,
@@ -185,9 +191,14 @@ export class IsolatedAgentEvalRunner implements AgentEvalRunnerLike {
 				"--no-context-files",
 				"--approve",
 				"--tools",
-				options.tools.filter((tool) => EVAL_TOOLS.has(tool)).join(",") || "read,bash,edit,write,grep",
+				enabledTools.join(",") || "read,bash,edit,write,grep",
 				"--append-system-prompt",
-				"This is a bounded capability evaluation. Work only inside the current fixture, avoid broad searches, verify the requested result, and stop when the task is complete.",
+				[
+					"This is a bounded capability evaluation. Work only inside the current fixture, avoid broad searches, verify the requested result, and stop when the task is complete.",
+					options.appendSystemPrompt?.trim(),
+				]
+					.filter((item): item is string => !!item)
+					.join("\n\n"),
 			],
 		});
 		let events: JsonAgentSessionEvent[] = [];
@@ -197,6 +208,7 @@ export class IsolatedAgentEvalRunner implements AgentEvalRunnerLike {
 		let cacheReadTokens = 0;
 		let toolCalls = 0;
 		let observedToolCalls = 0;
+		const observedTools = new Set<string>();
 		let timedOut = false;
 		let verificationPassed = false;
 		let budgetPassed = false;
@@ -263,6 +275,7 @@ export class IsolatedAgentEvalRunner implements AgentEvalRunnerLike {
 			unsubscribe = client.onEvent((event) => {
 				if (event.type === "tool_execution_start") {
 					observedToolCalls++;
+					observedTools.add(event.toolName);
 					const toolStartedAt = Date.now();
 					const input = summarizeToolInput(event.args);
 					const entry: AgentEvalTraceEntry | undefined =
@@ -354,6 +367,10 @@ export class IsolatedAgentEvalRunner implements AgentEvalRunnerLike {
 				}
 			}
 			budgetPassed = outputTokens <= testCase.maxOutputTokens && toolCalls <= testCase.maxToolCalls;
+			const missingRequiredTools = (testCase.requiredTools ?? []).filter((tool) => !observedTools.has(tool));
+			if (!failure && missingRequiredTools.length > 0) {
+				failure = `Required tool was not used: ${missingRequiredTools.join(", ")}`;
+			}
 			if (!failure && !budgetPassed) {
 				failure =
 					outputTokens > testCase.maxOutputTokens

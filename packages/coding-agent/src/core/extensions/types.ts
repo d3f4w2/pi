@@ -309,7 +309,7 @@ export interface CompactOptions {
 /**
  * Context passed to extension event handlers.
  */
-export type ExtensionMode = "tui" | "rpc" | "json" | "print";
+export type ExtensionMode = "tui" | "rpc" | "acp" | "json" | "print";
 
 export interface ExtensionContext {
 	/** UI methods for user interaction */
@@ -1549,13 +1549,12 @@ export type ExtensionFactory = (pi: ExtensionAPI) => void | Promise<void>;
 
 export type InlineExtension =
 	| ExtensionFactory
-	| {
+	| ({
 			/** Display name shown as `<inline:name>` in the startup Extensions list. */
 			name: string;
-			factory: ExtensionFactory;
 			/** Omit this extension from the startup Extensions list. */
 			hidden?: boolean;
-	  };
+	  } & ({ factory: ExtensionFactory; load?: never } | { factory?: never; load: () => Promise<ExtensionFactory> }));
 
 // ============================================================================
 // Loaded Extension Types

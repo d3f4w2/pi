@@ -494,6 +494,7 @@ export const VERSION: string = pkg.version || "0.0.0";
 // e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
 export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
 export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
+export const ENV_MEMORY_FILE = `${APP_NAME.toUpperCase()}_MEMORY_FILE`;
 
 export function expandTildePath(path: string): string {
 	return normalizePath(path);
@@ -543,6 +544,12 @@ export function getSettingsPath(): string {
 /** Get path to tools directory */
 export function getToolsDir(): string {
 	return join(getAgentDir(), "tools");
+}
+
+/** Get path to the evidence-backed memory store. */
+export function getMemoryPath(): string {
+	const envPath = process.env[ENV_MEMORY_FILE];
+	return envPath ? expandTildePath(envPath) : join(getAgentDir(), "memory.json");
 }
 
 /** Get path to managed binaries directory (fd, rg) */

@@ -1,5 +1,31 @@
-import hljs from "highlight.js/lib/index.js";
+import { createRequire } from "node:module";
+import type HighlightJs from "highlight.js/lib/index.js";
 import { decodeHtmlEntityAt } from "./html.ts";
+
+type HighlightJsApi = typeof HighlightJs;
+
+const loadModule = createRequire(import.meta.url);
+let highlightJs: HighlightJsApi | undefined;
+let highlightJsPromise: Promise<HighlightJsApi> | undefined;
+
+function getHighlightJs(): HighlightJsApi {
+	highlightJs ??= loadModule("highlight.js/lib/index.js") as HighlightJsApi;
+	return highlightJs;
+}
+
+export function preloadSyntaxHighlighter(): Promise<HighlightJsApi> {
+	if (highlightJs) return Promise.resolve(highlightJs);
+	highlightJsPromise ??= import("highlight.js/lib/index.js")
+		.then((module) => {
+			highlightJs = module.default;
+			return highlightJs;
+		})
+		.catch((error: unknown) => {
+			highlightJsPromise = undefined;
+			throw error;
+		});
+	return highlightJsPromise;
+}
 
 export type HighlightFormatter = (text: string) => string;
 export type HighlightTheme = Partial<Record<string, HighlightFormatter>>;
@@ -132,6 +158,7 @@ export function renderHighlightedHtml(html: string, theme: HighlightTheme = {}):
 }
 
 export function highlight(code: string, options: HighlightOptions = {}): string {
+	const hljs = getHighlightJs();
 	const html = options.language
 		? hljs.highlight(code, {
 				language: options.language,
@@ -142,5 +169,5 @@ export function highlight(code: string, options: HighlightOptions = {}): string 
 }
 
 export function supportsLanguage(name: string): boolean {
-	return hljs.getLanguage(name) !== undefined;
+	return getHighlightJs().getLanguage(name) !== undefined;
 }

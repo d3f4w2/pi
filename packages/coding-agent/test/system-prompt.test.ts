@@ -139,14 +139,14 @@ describe("buildSystemPrompt", () => {
 			expect(grep.promptGuidelines?.join(" ")).toContain("call grep once for each path");
 		});
 
-		test("routes Windows-only operations through the PowerShell executor", () => {
+		test("routes ordinary Windows operations directly through PowerShell", () => {
 			const bash = createBashToolDefinition(process.cwd());
 			const guidance = bash.promptGuidelines?.join(" ") ?? "";
 
 			if (process.platform === "win32") {
 				expect(guidance).toContain('executor="powershell"');
-				expect(guidance).toContain("Windows-only");
-				expect(guidance).toContain("Git, npm, Node, or Python");
+				expect(guidance).toContain("without Git Bash or WSL");
+				expect(guidance).toContain("Git, npm, Node, Python");
 			} else {
 				expect(guidance).not.toContain('executor="powershell"');
 			}

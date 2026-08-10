@@ -3,11 +3,14 @@ import { chmod, readFile, rename, stat, unlink, writeFile } from "node:fs/promis
 import path from "node:path";
 import { pattern as compilePattern, type NapiConfig, parseAsync, type SgNode } from "@ast-grep/napi";
 import { createFileDiff } from "../../core/tools/edit-diff.ts";
+import type { LanguageConfig } from "./languages.ts";
+import { expandMarkdownReplacement, findMarkdownMatches } from "./markdown.ts";
 import { collectFiles, configForFile, resolveSearchTarget } from "./search.ts";
 import type { AstEditDetails, AstEditRequest, AstEditResult, AstGrepExplicitLanguage } from "./types.ts";
 
 const DEFAULT_MAX_MATCHES = 100;
 const MAX_CHANGED_FILES = 100;
+const MAX_CACHED_PREVIEWS = 20;
 const TIMEOUT_MS = 20_000;
 
 interface PreparedFileEdit {
@@ -22,6 +25,10 @@ interface PreparedFileEdit {
 export interface AstEditPlan {
 	files: PreparedFileEdit[];
 	details: AstEditDetails;
+}
+
+export interface AstEditServiceOptions {
+	replaceFile?: (filePath: string, content: string) => Promise<void>;
 }
 
 function fileRevision(content: string): string {
@@ -52,49 +59,72 @@ function projectPath(projectRoot: string, filePath: string): string {
 	return path.relative(projectRoot, filePath).replaceAll("\\", "/") || path.basename(filePath);
 }
 
+function commitMarkdownEdits(source: string, pattern: string, replacement: string): { content: string; count: number } {
+	const matches = findMarkdownMatches(source, pattern);
+	for (let index = 1; index < matches.length; index++) {
+		if (matches[index - 1].endOffset > matches[index].startOffset) {
+			throw new Error("ast_edit 找到重叠的 Markdown 结构，未修改任何文件。");
+		}
+	}
+	let content = source;
+	for (const match of matches.slice().reverse()) {
+		content = `${content.slice(0, match.startOffset)}${expandMarkdownReplacement(match, replacement)}${content.slice(match.endOffset)}`;
+	}
+	return { content, count: matches.length };
+}
+
 async function prepareFile(
 	filePath: string,
 	projectRoot: string,
-	matcher: NapiConfig,
+	config: LanguageConfig,
+	matcher: NapiConfig | undefined,
 	request: AstEditRequest,
 ): Promise<PreparedFileEdit | undefined> {
-	const config = configForFile(filePath, request.language);
-	if (!config) return undefined;
 	const originalContent = await readFile(filePath, "utf8");
-	const root = await parseAsync(config.lang, originalContent);
-	const nodes = root.root().findAll(matcher);
-	if (nodes.length === 0) return undefined;
-
-	const edits = nodes.map((node) => node.replace(expandReplacement(node, request.replacement, originalContent)));
-	edits.sort((left, right) => left.startPos - right.startPos);
-	for (let index = 1; index < edits.length; index++) {
-		if (edits[index - 1].endPos > edits[index].startPos) {
-			throw new Error(`ast_edit 在 ${projectPath(projectRoot, filePath)} 找到重叠结构，未修改任何文件。`);
+	let newContent: string;
+	let matchCount: number;
+	if (config.engine === "markdown") {
+		const result = commitMarkdownEdits(originalContent, request.pattern, request.replacement);
+		newContent = result.content;
+		matchCount = result.count;
+	} else {
+		if (!config.lang || !matcher) throw new Error(`ast_edit 缺少 ${config.id} 解析器。`);
+		const root = await parseAsync(config.lang, originalContent);
+		const nodes = root.root().findAll(matcher);
+		if (nodes.length === 0) return undefined;
+		const edits = nodes.map((node) => node.replace(expandReplacement(node, request.replacement, originalContent)));
+		edits.sort((left, right) => left.startPos - right.startPos);
+		for (let index = 1; index < edits.length; index++) {
+			if (edits[index - 1].endPos > edits[index].startPos) {
+				throw new Error(`ast_edit 在 ${projectPath(projectRoot, filePath)} 找到重叠结构，未修改任何文件。`);
+			}
 		}
+		newContent = root.root().commitEdits(edits);
+		matchCount = nodes.length;
 	}
-	const newContent = root.root().commitEdits(edits);
 	if (newContent === originalContent) return undefined;
+	config.validate?.(newContent);
 	return {
 		absolutePath: filePath,
 		displayPath: projectPath(projectRoot, filePath),
 		originalContent,
 		newContent,
 		revision: fileRevision(originalContent),
-		matchCount: nodes.length,
+		matchCount,
 	};
 }
 
-async function atomicReplace(file: PreparedFileEdit, content: string): Promise<void> {
-	const fileStat = await stat(file.absolutePath);
+async function atomicReplace(filePath: string, content: string): Promise<void> {
+	const fileStat = await stat(filePath);
 	const tempPath = path.join(
-		path.dirname(file.absolutePath),
-		`.${path.basename(file.absolutePath)}.pi-ast-edit-${process.pid}-${randomUUID()}.tmp`,
+		path.dirname(filePath),
+		`.${path.basename(filePath)}.pi-ast-edit-${process.pid}-${randomUUID()}.tmp`,
 	);
 	let committed = false;
 	try {
 		await writeFile(tempPath, content, { encoding: "utf8", flag: "wx", mode: fileStat.mode });
 		await chmod(tempPath, fileStat.mode);
-		await rename(tempPath, file.absolutePath);
+		await rename(tempPath, filePath);
 		committed = true;
 	} finally {
 		if (!committed) {
@@ -105,12 +135,30 @@ async function atomicReplace(file: PreparedFileEdit, content: string): Promise<v
 	}
 }
 
+function previewKey(request: AstEditRequest, cwd: string): string {
+	return JSON.stringify([
+		path.resolve(cwd),
+		request.pattern,
+		request.replacement,
+		request.language,
+		request.path?.trim() || ".",
+		request.maxMatches ?? DEFAULT_MAX_MATCHES,
+	]);
+}
+
 export interface AstEditServiceLike {
 	preview(request: AstEditRequest, cwd: string, signal?: AbortSignal): Promise<AstEditResult>;
 	edit(request: AstEditRequest, cwd: string, signal?: AbortSignal): Promise<AstEditResult>;
 }
 
 export class AstEditService implements AstEditServiceLike {
+	private readonly previews = new Map<string, AstEditPlan>();
+	private readonly replaceFile: (filePath: string, content: string) => Promise<void>;
+
+	constructor(options: AstEditServiceOptions = {}) {
+		this.replaceFile = options.replaceFile ?? atomicReplace;
+	}
+
 	async preparePlan(request: AstEditRequest, cwd: string, signal?: AbortSignal): Promise<AstEditPlan> {
 		const startedAt = Date.now();
 		const requestedPath = request.path?.trim() || ".";
@@ -129,12 +177,16 @@ export class AstEditService implements AstEditServiceLike {
 				if (combinedSignal.aborted) throw combinedSignal.reason;
 				const config = configForFile(filePath, request.language);
 				if (!config) continue;
-				let matcher = matchers.get(config.id);
-				if (!matcher) {
-					matcher = compilePattern(config.lang, request.pattern);
-					matchers.set(config.id, matcher);
+				let matcher: NapiConfig | undefined;
+				if (config.engine === "napi") {
+					if (!config.lang) throw new Error(`ast_edit 缺少 ${config.id} 解析器。`);
+					matcher = matchers.get(config.id);
+					if (!matcher) {
+						matcher = compilePattern(config.lang, request.pattern);
+						matchers.set(config.id, matcher);
+					}
 				}
-				const prepared = await prepareFile(filePath, projectRoot, matcher, request);
+				const prepared = await prepareFile(filePath, projectRoot, config, matcher, request);
 				if (!prepared) continue;
 				matchCount += prepared.matchCount;
 				if (matchCount > maxMatches) {
@@ -188,14 +240,14 @@ export class AstEditService implements AstEditServiceLike {
 		try {
 			for (const file of plan.files) {
 				if (signal?.aborted) throw new Error("ast_edit 已取消。");
-				await atomicReplace(file, file.newContent);
+				await this.replaceFile(file.absolutePath, file.newContent);
 				committed.push(file);
 			}
 		} catch (error) {
 			const rollbackFailures: string[] = [];
-			for (const file of committed.reverse()) {
+			for (const file of committed.slice().reverse()) {
 				try {
-					await atomicReplace(file, file.originalContent);
+					await this.replaceFile(file.absolutePath, file.originalContent);
 				} catch {
 					rollbackFailures.push(file.displayPath);
 				}
@@ -210,6 +262,14 @@ export class AstEditService implements AstEditServiceLike {
 
 	async preview(request: AstEditRequest, cwd: string, signal?: AbortSignal): Promise<AstEditResult> {
 		const plan = await this.preparePlan(request, cwd, signal);
+		const key = previewKey(request, cwd);
+		this.previews.delete(key);
+		this.previews.set(key, plan);
+		while (this.previews.size > MAX_CACHED_PREVIEWS) {
+			const oldest = this.previews.keys().next().value as string | undefined;
+			if (!oldest) break;
+			this.previews.delete(oldest);
+		}
 		return {
 			text: `将修改 ${plan.details.changedFileCount} 个文件中的 ${plan.details.matchCount} 处代码结构。`,
 			details: plan.details,
@@ -217,7 +277,9 @@ export class AstEditService implements AstEditServiceLike {
 	}
 
 	async edit(request: AstEditRequest, cwd: string, signal?: AbortSignal): Promise<AstEditResult> {
-		const plan = await this.preparePlan(request, cwd, signal);
+		const key = previewKey(request, cwd);
+		const plan = this.previews.get(key) ?? (await this.preparePlan(request, cwd, signal));
+		this.previews.delete(key);
 		await this.applyPlan(plan, signal);
 		return {
 			text: `已修改 ${plan.details.changedFileCount} 个文件中的 ${plan.details.matchCount} 处代码结构。`,

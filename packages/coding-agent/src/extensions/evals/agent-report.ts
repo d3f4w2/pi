@@ -11,6 +11,7 @@ export interface AgentEvalReportEntryData {
 	results: AgentEvalResult[];
 	previousResults?: AgentEvalResult[];
 	comparisonUnavailable?: boolean;
+	comparisonMode?: "history" | "candidate";
 }
 
 function formatDuration(milliseconds: number): string {
@@ -148,6 +149,7 @@ function formatComparison(
 	previous: AgentEvalResult | undefined,
 	theme: Theme,
 	unavailable: boolean,
+	mode: AgentEvalReportEntryData["comparisonMode"],
 ): string[] {
 	if (unavailable) return [theme.fg("warning", t("agentEval.reportComparisonUnavailable"))];
 	if (!previous) return [theme.fg("dim", t("agentEval.reportFirstRun"))];
@@ -155,7 +157,7 @@ function formatComparison(
 	const currentConfig = `${current.provider}/${current.model} · ${current.thinkingLevel}`;
 	const sameConfig = previousConfig === currentConfig;
 	return [
-		theme.fg("dim", t("agentEval.reportNeutralComparison")),
+		theme.fg("dim", mode === "candidate" ? t("learning.evalComparisonNote") : t("agentEval.reportNeutralComparison")),
 		t("agentEval.reportCompareOutcome", { previous: resultOutcome(previous), current: resultOutcome(current) }),
 		sameConfig
 			? t("agentEval.reportCompareConfigSame", { config: currentConfig })
@@ -189,6 +191,7 @@ function formatResultDetails(
 	previous: AgentEvalResult | undefined,
 	theme: Theme,
 	comparisonUnavailable: boolean,
+	comparisonMode: AgentEvalReportEntryData["comparisonMode"],
 ): string {
 	const lines = [
 		`${outcomeColor(result, resultOutcome(result), theme)}  ${theme.fg("accent", result.title)}`,
@@ -198,7 +201,7 @@ function formatResultDetails(
 		),
 		"",
 		theme.fg("accent", t("agentEval.reportComparison")),
-		...formatComparison(result, previous, theme, comparisonUnavailable),
+		...formatComparison(result, previous, theme, comparisonUnavailable, comparisonMode),
 		"",
 		theme.fg("accent", t("agentEval.reportChain")),
 		...formatTrace(result, theme),
@@ -254,6 +257,7 @@ export function createAgentEvalReportComponent(
 								data.previousResults?.find((previous) => previous.caseId === result.caseId),
 								theme,
 								data.comparisonUnavailable === true,
+								data.comparisonMode,
 							),
 						)
 						.join("\n\n")}`

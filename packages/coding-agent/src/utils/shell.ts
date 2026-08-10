@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, dirname, isAbsolute, join } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
 
@@ -7,6 +7,43 @@ export interface ShellConfig {
 	shell: string;
 	args: string[];
 	commandTransport?: "argv" | "stdin";
+}
+
+interface CachedShellConfig {
+	config: ShellConfig;
+	resolvedPath: string;
+}
+
+const shellConfigCache = new Map<string, CachedShellConfig>();
+
+function cloneShellConfig(config: ShellConfig): ShellConfig {
+	return {
+		shell: config.shell,
+		args: [...config.args],
+		...(config.commandTransport === undefined ? {} : { commandTransport: config.commandTransport }),
+	};
+}
+
+function shellResolutionKey(customShellPath: string | undefined): string {
+	const pathKey = Object.keys(process.env).find((key) => key.toLowerCase() === "path");
+	return JSON.stringify([
+		process.platform,
+		customShellPath ?? "",
+		pathKey ? (process.env[pathKey] ?? "") : "",
+		process.env.ProgramFiles ?? "",
+		process.env["ProgramFiles(x86)"] ?? "",
+	]);
+}
+
+export function getPowerShellConfig(platform: NodeJS.Platform = process.platform): ShellConfig {
+	if (platform !== "win32") throw new Error("PowerShell executor is only available on Windows.");
+	const systemRoot = process.env.SystemRoot;
+	const bundled = systemRoot ? join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe") : undefined;
+	return {
+		shell: bundled && existsSync(bundled) ? bundled : "powershell.exe",
+		args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", "-"],
+		commandTransport: "stdin",
+	};
 }
 
 /**
@@ -100,7 +137,7 @@ function findBashOnPath(): string | null {
  * 2. On Windows: Git Bash in known locations, Git Bash beside git.exe, then bash on PATH
  * 3. On Unix: /bin/bash, then bash on PATH, then fallback to sh
  */
-export function getShellConfig(customShellPath?: string): ShellConfig {
+function resolveShellConfig(customShellPath?: string): ShellConfig {
 	// 1. Check user-specified shell path
 	if (customShellPath) {
 		if (existsSync(customShellPath)) {
@@ -154,6 +191,20 @@ export function getShellConfig(customShellPath?: string): ShellConfig {
 	}
 
 	return { shell: "sh", args: ["-c"] };
+}
+
+export function getShellConfig(customShellPath?: string): ShellConfig {
+	const cacheKey = shellResolutionKey(customShellPath);
+	const cached = shellConfigCache.get(cacheKey);
+	if (cached && (!cached.resolvedPath || existsSync(cached.resolvedPath))) {
+		return cloneShellConfig(cached.config);
+	}
+	if (cached) shellConfigCache.delete(cacheKey);
+
+	const config = resolveShellConfig(customShellPath);
+	const resolvedPath = isAbsolute(config.shell) ? config.shell : "";
+	shellConfigCache.set(cacheKey, { config, resolvedPath });
+	return cloneShellConfig(config);
 }
 
 export function getShellEnv(): NodeJS.ProcessEnv {

@@ -41,7 +41,18 @@ describe("web extension", () => {
 		let agentStart: (() => void) | undefined;
 		const search = vi.fn(async (options: { query: string }) => ({
 			text: `没有结果：${options.query}`,
-			details: { provider: "duckduckgo" as const, query: options.query, resultCount: 0, durationMs: 1 },
+			details: {
+				provider: "duckduckgo" as const,
+				query: options.query,
+				resultCount: 0,
+				durationMs: 1,
+				sourceAddress: "https://html.duckduckgo.com/html/",
+				readAt: "2026-08-10T00:00:00.000Z",
+				contentType: "application/vnd.pi.search-results+text" as const,
+				cached: false as const,
+				truncated: false,
+				untrusted: true as const,
+			},
 		}));
 		createWebExtension({ searchWeb: search })({
 			registerTool: (tool: ToolDefinition) => tools.push(tool),
@@ -80,6 +91,11 @@ describe("web extension", () => {
 						bytes: number;
 						outputBytes: number;
 						truncated: boolean;
+						sourceAddress: string;
+						readAt: string;
+						cached: boolean;
+						untrusted: true;
+						contentSha256: string;
 					};
 				}>((resolve) => {
 					resolvers.push(() =>
@@ -94,6 +110,11 @@ describe("web extension", () => {
 								bytes: 1,
 								outputBytes: 1,
 								truncated: false,
+								sourceAddress: options.url,
+								readAt: "2026-08-10T00:00:00.000Z",
+								cached: false,
+								untrusted: true,
+								contentSha256: "0".repeat(64),
 							},
 						}),
 					);

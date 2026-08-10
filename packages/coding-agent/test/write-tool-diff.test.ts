@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { type Terminal, type TUI, TuiMainScreen } from "@earendil-works/pi-tui";
 import { afterEach, beforeAll, describe, expect, test } from "vitest";
+import type { ExtensionContext } from "../src/core/extensions/types.ts";
 import { createWriteToolDefinition } from "../src/core/tools/write.ts";
 import { ToolExecutionComponent } from "../src/modes/interactive/components/tool-execution.ts";
 import { initTheme } from "../src/modes/interactive/theme/theme.ts";
@@ -77,5 +78,21 @@ describe("write tool diff preview", () => {
 		expect(rendered).toContain("Created");
 		expect(rendered).toContain("export {}");
 		expect(rendered).toContain("+1");
+	});
+
+	test("rejects read-only resource addresses before filesystem resolution", async () => {
+		const directory = await mkdtemp(path.join(tmpdir(), "pi-write-diff-"));
+		tempDirectories.push(directory);
+		const tool = createWriteToolDefinition(directory);
+
+		await expect(
+			tool.execute(
+				"write-resource",
+				{ path: "npm://react", content: "must not be written" },
+				undefined,
+				undefined,
+				{} as ExtensionContext,
+			),
+		).rejects.toThrow("read-only");
 	});
 });

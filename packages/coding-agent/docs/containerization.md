@@ -1,6 +1,6 @@
 # Containerization
 
-Pi runs with all permissions by default, but in some cases, you will want to have more control over what directories Pi can write to and which accesses it has.
+Pi includes a lightweight default sandbox for built-in tools, including an optional separate-user/WFP backend on Windows. Containers and micro-VMs remain the right choice when you need to isolate trusted extensions, the whole Pi process, or every host read.
 
 There are two general options. You can either
 1. run the whole `pi` process inside an isolated environment, or

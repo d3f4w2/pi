@@ -28,6 +28,8 @@ export interface ObservedToolResult {
 	input: Readonly<Record<string, unknown>>;
 	details: unknown;
 	isError: boolean;
+	/** Optional rendered result blocks; consumers must not persist their raw content. */
+	content?: readonly unknown[];
 }
 
 export interface ExecutionPolicySnapshot {

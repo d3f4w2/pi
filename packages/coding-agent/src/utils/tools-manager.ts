@@ -2,7 +2,7 @@ import chalk from "chalk";
 import { type SpawnSyncReturns, spawnSync } from "child_process";
 import { chmodSync, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync } from "fs";
 import { arch, platform } from "os";
-import { join } from "path";
+import { isAbsolute, join } from "path";
 import { Readable } from "stream";
 import { pipeline } from "stream/promises";
 import { APP_NAME, getBinDir } from "../config.ts";
@@ -11,6 +11,20 @@ import { fetchWithRetry } from "./management-http.ts";
 const TOOLS_DIR = getBinDir();
 const NETWORK_TIMEOUT_MS = 10_000;
 const DOWNLOAD_TIMEOUT_MS = 120_000;
+type ManagedTool = "fd" | "rg";
+
+interface ResolvedToolPath {
+	path: string;
+	searchPath: string;
+}
+
+const resolvedToolPaths = new Map<ManagedTool, ResolvedToolPath>();
+const toolDownloadPromises = new Map<ManagedTool, Promise<string>>();
+
+function getSearchPath(): string {
+	const key = Object.keys(process.env).find((name) => name.toLowerCase() === "path");
+	return key ? (process.env[key] ?? "") : "";
+}
 
 function isOfflineModeEnabled(): boolean {
 	const value = process.env.PI_OFFLINE;
@@ -75,29 +89,49 @@ const TOOLS: Record<string, ToolConfig> = {
 function commandExists(cmd: string): boolean {
 	try {
 		const result = spawnSync(cmd, ["--version"], { stdio: "pipe" });
-		// Check for ENOENT error (command not found)
-		return result.error === undefined || result.error === null;
+		return !result.error && result.status === 0;
 	} catch {
 		return false;
 	}
 }
 
+function resolveSystemBinary(cmd: string): string | null {
+	if (platform() !== "win32") return commandExists(cmd) ? cmd : null;
+	const result = spawnSync("where.exe", [cmd], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+	if (result.error || result.status !== 0) return null;
+	for (const candidate of result.stdout.split(/\r?\n/)) {
+		const resolved = candidate.trim();
+		if (!resolved.toLowerCase().endsWith(".exe") || !existsSync(resolved)) continue;
+		if (commandExists(resolved)) return resolved;
+	}
+	return null;
+}
+
 // Get the path to a tool (system-wide or in our tools dir)
-export function getToolPath(tool: "fd" | "rg"): string | null {
+export function getToolPath(tool: ManagedTool): string | null {
 	const config = TOOLS[tool];
 	if (!config) return null;
+	const searchPath = getSearchPath();
+	const cached = resolvedToolPaths.get(tool);
+	if (cached?.searchPath === searchPath && (!isAbsolute(cached.path) || existsSync(cached.path))) {
+		return cached.path;
+	}
+	if (cached) resolvedToolPaths.delete(tool);
 
 	// Check our tools directory first
 	const localPath = join(TOOLS_DIR, config.binaryName + (platform() === "win32" ? ".exe" : ""));
 	if (existsSync(localPath)) {
+		resolvedToolPaths.set(tool, { path: localPath, searchPath });
 		return localPath;
 	}
 
 	// Check system PATH - if found, just return the command name (it's in PATH)
 	const systemBinaryNames = config.systemBinaryNames ?? [config.binaryName];
 	for (const systemBinaryName of systemBinaryNames) {
-		if (commandExists(systemBinaryName)) {
-			return systemBinaryName;
+		const systemPath = resolveSystemBinary(systemBinaryName);
+		if (systemPath) {
+			resolvedToolPaths.set(tool, { path: systemPath, searchPath });
+			return systemPath;
 		}
 	}
 
@@ -240,7 +274,7 @@ function extractZipArchive(archivePath: string, extractDir: string, assetName: s
 }
 
 // Download and install a tool
-async function downloadTool(tool: "fd" | "rg"): Promise<string> {
+async function downloadTool(tool: ManagedTool): Promise<string> {
 	const config = TOOLS[tool];
 	if (!config) throw new Error(`Unknown tool: ${tool}`);
 
@@ -325,7 +359,7 @@ const TERMUX_PACKAGES: Record<string, string> = {
 
 // Ensure a tool is available, downloading if necessary
 // Returns the path to the tool, or null if unavailable
-export async function ensureTool(tool: "fd" | "rg", silent: boolean = false): Promise<string | undefined> {
+export async function ensureTool(tool: ManagedTool, silent: boolean = false): Promise<string | undefined> {
 	const existingPath = getToolPath(tool);
 	if (existingPath) {
 		return existingPath;
@@ -357,7 +391,14 @@ export async function ensureTool(tool: "fd" | "rg", silent: boolean = false): Pr
 	}
 
 	try {
-		const path = await downloadTool(tool);
+		let downloadPromise = toolDownloadPromises.get(tool);
+		if (!downloadPromise) {
+			downloadPromise = downloadTool(tool);
+			toolDownloadPromises.set(tool, downloadPromise);
+			void downloadPromise.finally(() => toolDownloadPromises.delete(tool)).catch(() => {});
+		}
+		const path = await downloadPromise;
+		resolvedToolPaths.set(tool, { path, searchPath: getSearchPath() });
 		if (!silent) {
 			console.log(chalk.dim(`${config.name} installed to ${path}`));
 		}

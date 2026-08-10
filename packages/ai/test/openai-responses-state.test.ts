@@ -23,14 +23,14 @@ const assistant = {
 };
 
 describe("OpenAIResponsesState", () => {
-	it("sends only the exact delta after a covered input and output prefix", () => {
+	it("sends only the exact delta after a covered input and output prefix", async () => {
 		const state = new OpenAIResponsesState();
-		const first = state.prepare("session", params([system, user]));
+		const first = await state.prepare("session", params([system, user]));
 		expect(first.chained).toBe(false);
-		state.commit(first, "resp_1", [assistant]);
+		await state.commit(first, "resp_1", [assistant]);
 
 		const toolResult = { type: "function_call_output" as const, call_id: "call_1", output: "ok" };
-		const second = state.prepare("session", params([system, user, assistant, toolResult]));
+		const second = await state.prepare("session", params([system, user, assistant, toolResult]));
 
 		expect(second.chained).toBe(true);
 		expect(second.params.previous_response_id).toBe("resp_1");
@@ -39,16 +39,16 @@ describe("OpenAIResponsesState", () => {
 		expect(second.fullParams.input).toEqual([system, user, assistant, toolResult]);
 	});
 
-	it("uses a full request on prefix or non-input shape mismatch", () => {
+	it("uses a full request on prefix or non-input shape mismatch", async () => {
 		const state = new OpenAIResponsesState();
-		const first = state.prepare("session", params([system, user]));
-		state.commit(first, "resp_1", [assistant]);
+		const first = await state.prepare("session", params([system, user]));
+		await state.commit(first, "resp_1", [assistant]);
 
-		expect(state.prepare("session", params([system, { ...user, content: "changed" }])).chained).toBe(false);
-		expect(state.prepare("session", params([system, user, assistant], "write")).chained).toBe(false);
+		expect((await state.prepare("session", params([system, { ...user, content: "changed" }]))).chained).toBe(false);
+		expect((await state.prepare("session", params([system, user, assistant], "write"))).chained).toBe(false);
 	});
 
-	it("ignores cache-breakpoint metadata when checking covered semantic input", () => {
+	it("ignores cache-breakpoint metadata when checking covered semantic input", async () => {
 		const state = new OpenAIResponsesState();
 		const markedUser = {
 			...user,
@@ -60,18 +60,18 @@ describe("OpenAIResponsesState", () => {
 				},
 			],
 		};
-		const first = state.prepare("session", params([system, markedUser]));
-		state.commit(first, "resp_1", [assistant]);
-		const next = state.prepare("session", params([system, user, assistant, { ...user, content: "two" }]));
+		const first = await state.prepare("session", params([system, markedUser]));
+		await state.commit(first, "resp_1", [assistant]);
+		const next = await state.prepare("session", params([system, user, assistant, { ...user, content: "two" }]));
 
 		expect(next.chained).toBe(true);
 		expect(next.params.input).toEqual([{ ...user, content: "two" }]);
 	});
 
-	it("opens a circuit after three continuation failures while preserving full fallback", () => {
+	it("opens a circuit after three continuation failures while preserving full fallback", async () => {
 		const state = new OpenAIResponsesState();
-		let prepared = state.prepare("session", params([system, user]));
-		state.commit(prepared, "resp_1", [assistant]);
+		let prepared = await state.prepare("session", params([system, user]));
+		await state.commit(prepared, "resp_1", [assistant]);
 		const nextInput: ResponseInput = [
 			system,
 			user,
@@ -80,22 +80,22 @@ describe("OpenAIResponsesState", () => {
 		];
 
 		for (let failure = 0; failure < 3; failure++) {
-			prepared = state.prepare("session", params(nextInput));
+			prepared = await state.prepare("session", params(nextInput));
 			expect(prepared.chained).toBe(true);
 			state.recordContinuationFailure(prepared);
 		}
 
-		const disabled = state.prepare("session", params(nextInput));
+		const disabled = await state.prepare("session", params(nextInput));
 		expect(disabled.chained).toBe(false);
 		expect(disabled.params.previous_response_id).toBeUndefined();
 		expect(disabled.fullParams.input).toEqual(nextInput);
 	});
 
-	it("bounds session state with least-recent insertion eviction", () => {
+	it("bounds session state with least-recent insertion eviction", async () => {
 		const state = new OpenAIResponsesState(2);
 		for (const key of ["a", "b", "c"]) {
-			const prepared = state.prepare(key, params([system, user]));
-			state.commit(prepared, `resp_${key}`, [assistant]);
+			const prepared = await state.prepare(key, params([system, user]));
+			await state.commit(prepared, `resp_${key}`, [assistant]);
 		}
 		expect(state.size).toBe(2);
 		expect(state.has("a")).toBe(false);
@@ -103,10 +103,34 @@ describe("OpenAIResponsesState", () => {
 		expect(state.has("c")).toBe(true);
 	});
 
-	it("disables provider storage for a rejected session and recognizes ZDR errors", () => {
+	it("retains only digests for covered prompts, outputs, and request shape", async () => {
+		const state = new OpenAIResponsesState();
+		const privateSystem = { role: "developer" as const, content: "private-system-secret" };
+		const privateUser = {
+			role: "user" as const,
+			content: [{ type: "input_text" as const, text: "private-user-secret" }],
+		};
+		const privateAssistant = {
+			...assistant,
+			content: [{ type: "output_text" as const, text: "private-output-secret", annotations: [] }],
+		};
+		const prepared = await state.prepare("session", params([privateSystem, privateUser], "private-tool-secret"));
+		await state.commit(prepared, "resp_private", [privateAssistant]);
+
+		const internalState = state as unknown as {
+			entries: Map<string, { coveredInput: string[]; shape: string }>;
+		};
+		const serialized = JSON.stringify([...internalState.entries]);
+		expect(serialized).not.toContain("private-system-secret");
+		expect(serialized).not.toContain("private-user-secret");
+		expect(serialized).not.toContain("private-output-secret");
+		expect(serialized).not.toContain("private-tool-secret");
+	});
+
+	it("disables provider storage for a rejected session and recognizes ZDR errors", async () => {
 		const state = new OpenAIResponsesState();
 		state.disable("session");
-		const prepared = state.prepare("session", params([system, user]));
+		const prepared = await state.prepare("session", params([system, user]));
 
 		expect(prepared.params.store).toBe(false);
 		expect(prepared.chained).toBe(false);

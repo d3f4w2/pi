@@ -9,12 +9,7 @@ export type { ResourceCollision, ResourceDiagnostic } from "./diagnostics.ts";
 
 import { canonicalizePath, isLocalPath, resolvePath } from "../utils/paths.ts";
 import { createEventBus, type EventBus } from "./event-bus.ts";
-import {
-	clearExtensionCache,
-	createExtensionRuntime,
-	loadExtensionFromFactory,
-	loadExtensionsCached,
-} from "./extensions/loader.ts";
+import { createExtensionRuntime, loadExtensionFromFactory } from "./extensions/inline-loader.ts";
 import type { Extension, ExtensionRuntime, InlineExtension, LoadExtensionsResult } from "./extensions/types.ts";
 import { findGitPaths } from "./footer-data-provider.ts";
 import { DefaultPackageManager, type PathMetadata, type ResolvedResource } from "./package-manager.ts";
@@ -25,6 +20,28 @@ import type { Skill } from "./skills.ts";
 import { loadSkills } from "./skills.ts";
 import { createSourceInfo, type SourceInfo } from "./source-info.ts";
 import { resetTimings } from "./timings.ts";
+
+let externalExtensionLoaderLoaded = false;
+
+async function loadExternalExtensionsCached(
+	paths: string[],
+	cwd: string,
+	eventBus: EventBus,
+	runtime?: ExtensionRuntime,
+): Promise<LoadExtensionsResult> {
+	if (paths.length === 0) {
+		return { extensions: [], errors: [], runtime: runtime ?? createExtensionRuntime() };
+	}
+	externalExtensionLoaderLoaded = true;
+	const { loadExtensionsCached } = await import("./extensions/loader.ts");
+	return loadExtensionsCached(paths, cwd, eventBus, runtime);
+}
+
+async function clearExternalExtensionCache(): Promise<void> {
+	if (!externalExtensionLoaderLoaded) return;
+	const { clearExtensionCache } = await import("./extensions/loader.ts");
+	clearExtensionCache();
+}
 
 export interface ResourceExtensionPaths {
 	skillPaths?: Array<{ path: string; metadata: PathMetadata }>;
@@ -388,7 +405,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		resetTimings("extensions");
 
 		if (this.loaded) {
-			clearExtensionCache();
+			await clearExternalExtensionCache();
 		}
 
 		let preTrustExtensions: LoadExtensionsResult | undefined;
@@ -400,10 +417,10 @@ export class DefaultResourceLoader implements ResourceLoader {
 
 		// reload() preserves SettingsManager.projectTrusted and reloads settings for that trust state.
 		await this.settingsManager.reload();
-		const resolvedPaths = await this.packageManager.resolve();
-		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
-			temporary: true,
-		});
+		const [resolvedPaths, cliExtensionPaths] = await Promise.all([
+			this.packageManager.resolve(),
+			this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, { temporary: true }),
+		]);
 		// Kept on the instance so post-reload passes (extendResources) can still resolve package metadata.
 		this.resourceMetadataByPath = new Map();
 		const metadataByPath = this.resourceMetadataByPath;
@@ -546,16 +563,16 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}
 
 	private async loadCurrentExtensionSet(options: { includeInlineFactories: boolean }): Promise<LoadExtensionsResult> {
-		const resolvedPaths = await this.packageManager.resolve();
-		const cliExtensionPaths = await this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, {
-			temporary: true,
-		});
+		const [resolvedPaths, cliExtensionPaths] = await Promise.all([
+			this.packageManager.resolve(),
+			this.packageManager.resolveExtensionSources(this.additionalExtensionPaths, { temporary: true }),
+		]);
 		const enabledExtensions = resolvedPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
 		const cliEnabledExtensions = cliExtensionPaths.extensions.filter((r) => r.enabled).map((r) => r.path);
 		const extensionPaths = this.noExtensions
 			? cliEnabledExtensions
 			: this.mergePaths(cliEnabledExtensions, enabledExtensions);
-		const extensionsResult = await loadExtensionsCached(extensionPaths, this.cwd, this.eventBus);
+		const extensionsResult = await loadExternalExtensionsCached(extensionPaths, this.cwd, this.eventBus);
 		if (!options.includeInlineFactories) {
 			return extensionsResult;
 		}
@@ -575,7 +592,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		preTrustExtensions: LoadExtensionsResult | undefined,
 	): Promise<LoadExtensionsResult> {
 		if (!preTrustExtensions) {
-			const extensionsResult = await loadExtensionsCached(extensionPaths, this.cwd, this.eventBus);
+			const extensionsResult = await loadExternalExtensionsCached(extensionPaths, this.cwd, this.eventBus);
 			const inlineExtensions = await this.loadExtensionFactories(extensionsResult.runtime);
 			extensionsResult.extensions.push(...inlineExtensions.extensions);
 			extensionsResult.errors.push(...inlineExtensions.errors);
@@ -595,7 +612,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 			const resolvedPath = this.resolveExtensionLoadPath(path);
 			return !preloadedByPath.has(resolvedPath) && !failedPreloadPaths.has(resolvedPath);
 		});
-		const remainingExtensions = await loadExtensionsCached(
+		const remainingExtensions = await loadExternalExtensionsCached(
 			remainingPaths,
 			this.cwd,
 			this.eventBus,
@@ -948,18 +965,45 @@ export class DefaultResourceLoader implements ResourceLoader {
 	}> {
 		const extensions: Extension[] = [];
 		const errors: Array<{ path: string; error: string }> = [];
+		const resolvedFactories = await Promise.all(
+			this.extensionFactories.map(async (input, index) => {
+				if (typeof input === "function") {
+					return {
+						status: "loaded" as const,
+						extensionPath: `<inline:${index + 1}>`,
+						factory: input,
+						hidden: false,
+					};
+				}
+				const extensionPath = `<inline:${input.name}>`;
+				try {
+					const factory = "load" in input && typeof input.load === "function" ? await input.load() : input.factory;
+					return { status: "loaded" as const, extensionPath, factory, hidden: input.hidden };
+				} catch (error) {
+					const message = error instanceof Error ? error.message : "failed to import extension";
+					return { status: "error" as const, extensionPath, error: message };
+				}
+			}),
+		);
 
-		for (const [index, input] of this.extensionFactories.entries()) {
-			const isNamed = typeof input !== "function";
-			const factory = isNamed ? input.factory : input;
-			const extensionPath = `<inline:${isNamed ? input.name : index + 1}>`;
+		for (const resolved of resolvedFactories) {
+			if (resolved.status === "error") {
+				errors.push({ path: resolved.extensionPath, error: resolved.error });
+				continue;
+			}
 			try {
-				const extension = await loadExtensionFromFactory(factory, this.cwd, this.eventBus, runtime, extensionPath);
-				extension.hidden = isNamed && input.hidden;
+				const extension = await loadExtensionFromFactory(
+					resolved.factory,
+					this.cwd,
+					this.eventBus,
+					runtime,
+					resolved.extensionPath,
+				);
+				extension.hidden = resolved.hidden;
 				extensions.push(extension);
 			} catch (error) {
 				const message = error instanceof Error ? error.message : "failed to load extension";
-				errors.push({ path: extensionPath, error: message });
+				errors.push({ path: resolved.extensionPath, error: message });
 			}
 		}
 

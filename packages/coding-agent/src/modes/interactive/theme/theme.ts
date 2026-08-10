@@ -15,7 +15,7 @@ import { Compile } from "typebox/compile";
 import { getCustomThemesDir, getThemesDir } from "../../../config.ts";
 import type { SourceInfo } from "../../../core/source-info.ts";
 import { closeWatcher, watchWithErrorHandler } from "../../../utils/fs-watch.ts";
-import { highlight, supportsLanguage } from "../../../utils/syntax-highlight.ts";
+import { highlight, preloadSyntaxHighlighter, supportsLanguage } from "../../../utils/syntax-highlight.ts";
 
 // ============================================================================
 // Types & Schema
@@ -867,6 +867,7 @@ export function initTheme(themeName?: string, enableWatcher: boolean = false): v
 		setGlobalTheme(loadTheme("dark"));
 		// Don't start watcher for fallback theme
 	}
+	void preloadSyntaxHighlighter().catch(() => {});
 }
 
 export function setTheme(name: string, enableWatcher: boolean = false): { success: boolean; error?: string } {

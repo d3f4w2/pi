@@ -1,7 +1,7 @@
 import { WebSocket } from "undici";
 
 const DEFAULT_REQUEST_TIMEOUT_MS = 10_000;
-const MAX_MESSAGE_BYTES = 4 * 1024 * 1024;
+const MAX_MESSAGE_BYTES = 32 * 1024 * 1024;
 
 export interface CdpTransport {
 	send(message: string): void;
@@ -101,7 +101,7 @@ export class CdpClient {
 
 	private handleMessage(message: string): void {
 		if (Buffer.byteLength(message) > MAX_MESSAGE_BYTES) {
-			this.handleClose(new Error("浏览器消息超过 4 MB 安全上限。"));
+			this.handleClose(new Error("Browser CDP message exceeds the 32 MB safety limit."));
 			return;
 		}
 		let parsed: unknown;

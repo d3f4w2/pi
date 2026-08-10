@@ -21,7 +21,7 @@ import { createJiti } from "jiti/static";
 import * as _bundledTypebox from "typebox";
 import * as _bundledTypeboxCompile from "typebox/compile";
 import * as _bundledTypeboxValue from "typebox/value";
-import { CONFIG_DIR_NAME, getAgentDir, isBunBinary } from "../../config.ts";
+import { CONFIG_DIR_NAME, getAgentDir, getPackageDir, isBunBinary } from "../../config.ts";
 // NOTE: This import works because loader.ts exports are NOT re-exported from index.ts,
 // avoiding a circular dependency. Extensions can import from @earendil-works/pi-coding-agent.
 import * as _bundledPiCodingAgent from "../../index.ts";
@@ -86,14 +86,13 @@ let _aliases: Record<string, string> | null = null;
 function getAliases(): Record<string, string> {
 	if (_aliases) return _aliases;
 
-	const __dirname = path.dirname(fileURLToPath(import.meta.url));
-	const packageIndex = path.resolve(__dirname, "../..", "index.js");
+	const packageIndex = path.resolve(getPackageDir(), "dist", "index.js");
 
 	const typeboxEntry = require.resolve("typebox");
 	const typeboxCompileEntry = require.resolve("typebox/compile");
 	const typeboxValueEntry = require.resolve("typebox/value");
 
-	const packagesRoot = path.resolve(__dirname, "../../../../");
+	const packagesRoot = path.resolve(getPackageDir(), "..");
 	const resolveWorkspaceOrImport = (workspaceRelativePath: string, specifier: string): string => {
 		const workspacePath = path.join(packagesRoot, workspaceRelativePath);
 		if (fs.existsSync(workspacePath)) {
@@ -357,7 +356,7 @@ function createExtensionAPI(
 
 		exec(command: string, args: string[], options?: ExecOptions) {
 			runtime.assertActive();
-			return execCommand(command, args, options?.cwd ?? cwd, options);
+			return execCommand(command, args, options?.cwd ?? cwd, options, cwd);
 		},
 
 		getActiveTools(): string[] {
@@ -487,31 +486,32 @@ function createExtension(extensionPath: string, resolvedPath: string): Extension
 	};
 }
 
-async function loadExtension(
+async function loadExtensionFactory(
 	extensionPath: string,
 	cwd: string,
-	eventBus: EventBus,
-	runtime: ExtensionRuntime,
 	cacheToken?: ExtensionCacheToken,
-): Promise<{ extension: Extension | null; error: string | null }> {
+): Promise<{
+	extensionPath: string;
+	resolvedPath: string;
+	factory?: ExtensionFactory;
+	error?: string;
+}> {
 	const resolvedPath = resolvePath(extensionPath, cwd, { normalizeUnicodeSpaces: true });
 
 	try {
 		const factory = await loadExtensionModule(resolvedPath, cacheToken);
 		time(`${extensionPath} module import`, "extensions");
 		if (!factory) {
-			return { extension: null, error: `Extension does not export a valid factory function: ${extensionPath}` };
+			return {
+				extensionPath,
+				resolvedPath,
+				error: `Extension does not export a valid factory function: ${extensionPath}`,
+			};
 		}
-
-		const extension = createExtension(extensionPath, resolvedPath);
-		const api = createExtensionAPI(extension, runtime, cwd, eventBus);
-		await factory(api);
-		time(`${extensionPath} factory`, "extensions");
-
-		return { extension, error: null };
+		return { extensionPath, resolvedPath, factory };
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
-		return { extension: null, error: `Failed to load extension: ${message}` };
+		return { extensionPath, resolvedPath, error: `Failed to load extension: ${message}` };
 	}
 }
 
@@ -550,22 +550,23 @@ async function loadExtensionsInternal(
 	const resolvedEventBus = eventBus ?? createEventBus();
 	const resolvedRuntime = runtime ?? createExtensionRuntime();
 
-	for (const extPath of paths) {
-		const { extension, error } = await loadExtension(
-			extPath,
-			resolvedCwd,
-			resolvedEventBus,
-			resolvedRuntime,
-			cacheToken,
-		);
-
-		if (error) {
-			errors.push({ path: extPath, error });
+	const importedExtensions = await Promise.all(
+		paths.map((extensionPath) => loadExtensionFactory(extensionPath, resolvedCwd, cacheToken)),
+	);
+	for (const imported of importedExtensions) {
+		if (imported.error || !imported.factory) {
+			errors.push({ path: imported.extensionPath, error: imported.error ?? "Extension factory is missing" });
 			continue;
 		}
-
-		if (extension) {
+		try {
+			const extension = createExtension(imported.extensionPath, imported.resolvedPath);
+			const api = createExtensionAPI(extension, resolvedRuntime, resolvedCwd, resolvedEventBus);
+			await imported.factory(api);
+			time(`${imported.extensionPath} factory`, "extensions");
 			extensions.push(extension);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			errors.push({ path: imported.extensionPath, error: `Failed to load extension: ${message}` });
 		}
 	}
 

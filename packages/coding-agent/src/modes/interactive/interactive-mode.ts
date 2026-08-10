@@ -415,6 +415,11 @@ export class InteractiveMode {
 	private isInitialized = false;
 	private onInputCallback?: (text: string) => void;
 	private pendingUserInputs: string[] = [];
+	private pendingRenderedUserMessages: Array<{
+		text: string;
+		spacer: Spacer | undefined;
+		component: UserMessageComponent;
+	}> = [];
 	private activeStatusIndicator: StatusIndicator | undefined = undefined;
 	private readonly idleStatus = new IdleStatus();
 	private workingMessage: string | undefined = undefined;
@@ -1097,7 +1102,9 @@ export class InteractiveMode {
 			const userInput = await this.getUserInput();
 			try {
 				await this.session.prompt(userInput);
+				this.discardPendingUserMessage(userInput, false);
 			} catch (error: unknown) {
+				this.discardPendingUserMessage(userInput, true);
 				const errorMessage = error instanceof Error ? error.message : "Unknown error occurred";
 				this.showError(errorMessage);
 			}
@@ -3062,6 +3069,9 @@ export class InteractiveMode {
 			// Normal message submission
 			// First, move any pending bash components to chat
 			this.flushPendingBashComponents();
+			if (!this.isExtensionCommand(text)) {
+				this.showPendingUserMessage(text);
+			}
 
 			if (this.onInputCallback) {
 				this.onInputCallback(text);
@@ -3139,7 +3149,9 @@ export class InteractiveMode {
 					this.addMessageToChat(event.message);
 					this.ui.requestRender();
 				} else if (event.message.role === "user") {
-					this.addMessageToChat(event.message);
+					if (!this.reconcilePendingUserMessage(event.message)) {
+						this.addMessageToChat(event.message);
+					}
 					this.updatePendingMessagesDisplay();
 					this.ui.requestRender();
 				} else if (event.message.role === "assistant") {
@@ -3416,6 +3428,60 @@ export class InteractiveMode {
 				? [{ type: "text", text: message.content }]
 				: message.content.filter((c: { type: string }) => c.type === "text");
 		return textBlocks.map((c) => (c as { text: string }).text).join("");
+	}
+
+	/** Render submitted text before prompt preflight so the UI responds in the same frame. */
+	private showPendingUserMessage(text: string): void {
+		const spacer = this.chatContainer.children.length > 0 ? new Spacer(1) : undefined;
+		if (spacer) {
+			this.chatContainer.addChild(spacer);
+		}
+		const component = new UserMessageComponent(
+			text,
+			this.getMarkdownThemeWithSettings(),
+			this.outputPad,
+			this.getMarkdownTransformers(),
+		);
+		this.chatContainer.addChild(component);
+		this.pendingRenderedUserMessages.push({ text, spacer, component });
+		this.ui.requestRender();
+	}
+
+	/** Keep an exact optimistic render, or remove it when input hooks transformed the message. */
+	private reconcilePendingUserMessage(message: Message): boolean {
+		const pending = this.pendingRenderedUserMessages.shift();
+		if (!pending) {
+			return false;
+		}
+		if (pending.text === this.getUserMessageText(message)) {
+			return true;
+		}
+		this.removePendingUserMessage(pending);
+		return false;
+	}
+
+	/** Remove an optimistic render left behind by a handled command or failed prompt preflight. */
+	private discardPendingUserMessage(text: string, restoreEditor: boolean): void {
+		const pendingIndex = this.pendingRenderedUserMessages.findIndex((pending) => pending.text === text);
+		if (pendingIndex < 0) {
+			return;
+		}
+		const [pending] = this.pendingRenderedUserMessages.splice(pendingIndex, 1);
+		if (!pending) {
+			return;
+		}
+		this.removePendingUserMessage(pending);
+		if (restoreEditor && !this.editor.getText().trim()) {
+			this.editor.setText(text);
+		}
+		this.ui.requestRender();
+	}
+
+	private removePendingUserMessage(pending: { spacer: Spacer | undefined; component: UserMessageComponent }): void {
+		if (pending.spacer) {
+			this.chatContainer.removeChild(pending.spacer);
+		}
+		this.chatContainer.removeChild(pending.component);
 	}
 
 	/**

@@ -43,6 +43,7 @@ describe("process extension", () => {
 			start: vi.fn(),
 			status: vi.fn(),
 			logs: vi.fn(),
+			input: vi.fn(),
 			restart: vi.fn(),
 			stop: vi.fn(),
 			stopAll: vi.fn(),

@@ -2,6 +2,7 @@ import { accessSync, constants, statSync } from "node:fs";
 import path from "node:path";
 import { getAgentDir, getAuthPath, getModelsPath, getSettingsPath, isBunBinary } from "../../config.ts";
 import type { ExtensionAPI, ExtensionCommandContext } from "../../core/extensions/types.ts";
+import { snapshotDefaultSandbox } from "../../core/sandbox/default.ts";
 import { SettingsManager } from "../../core/settings-manager.ts";
 import { runDoctorChecks } from "./checks.ts";
 import { formatDoctorReport } from "./report.ts";
@@ -104,6 +105,7 @@ function collectDoctorSnapshot(
 		isBunBinary,
 		...(toolFailureGuard === undefined ? {} : { toolFailureGuard }),
 		...(toolApprovalMode === undefined ? {} : { toolApprovalMode }),
+		sandbox: snapshotDefaultSandbox(ctx.cwd),
 	};
 }
 

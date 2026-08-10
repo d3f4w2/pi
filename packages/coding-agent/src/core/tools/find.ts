@@ -8,6 +8,9 @@ import { keyHint } from "../../modes/interactive/components/keybinding-hints.ts"
 import type { Theme } from "../../modes/interactive/theme/theme.ts";
 import { ensureTool } from "../../utils/tools-manager.ts";
 import type { ToolDefinition, ToolRenderResultOptions } from "../extensions/types.ts";
+import { ensureDefaultSandbox } from "../sandbox/default.ts";
+import { spawnSandboxedProcess } from "../sandbox/process.ts";
+import { walkNativeFiles } from "./native-file-search.ts";
 import { pathExists, resolveToCwd } from "./path-utils.ts";
 import { getTextOutput, invalidArgText, shortenPath, str } from "./render-utils.ts";
 import { wrapToolDefinition } from "./tool-definition-wrapper.ts";
@@ -66,7 +69,7 @@ const defaultFindOperations: FindOperations = {
 };
 
 export interface FindToolOptions {
-	/** Custom operations for find. Default: local filesystem plus fd */
+	/** Custom operations for find. Default: managed fd with a local-filesystem fallback. */
 	operations?: FindOperations;
 }
 
@@ -221,14 +224,54 @@ export function createFindToolDefinition(
 							return;
 						}
 
-						// Default implementation uses fd.
 						const fdPath = await ensureTool("fd", true);
 						if (signal?.aborted) {
 							settle(() => reject(new Error("Operation aborted")));
 							return;
 						}
 						if (!fdPath) {
-							settle(() => reject(new Error("fd is not available and could not be downloaded")));
+							if (!(await ops.exists(searchPath))) {
+								settle(() => reject(new Error(`Path not found: ${searchPath}`)));
+								return;
+							}
+							const entries = await walkNativeFiles(searchPath, {
+								pattern,
+								limit: effectiveLimit,
+								signal,
+							});
+							if (entries.length === 0) {
+								settle(() =>
+									resolve({
+										content: [{ type: "text", text: "No files found matching pattern" }],
+										details: undefined,
+									}),
+								);
+								return;
+							}
+							const resultLimitReached = entries.length >= effectiveLimit;
+							const truncation = truncateHead(entries.map((entry) => entry.relativePath).join("\n"), {
+								maxLines: Number.MAX_SAFE_INTEGER,
+							});
+							let resultOutput = truncation.content;
+							const details: FindToolDetails = {};
+							const notices: string[] = [];
+							if (resultLimitReached) {
+								notices.push(
+									`${effectiveLimit} results limit reached. Use limit=${effectiveLimit * 2} for more, or refine pattern`,
+								);
+								details.resultLimitReached = effectiveLimit;
+							}
+							if (truncation.truncated) {
+								notices.push(`${formatSize(DEFAULT_MAX_BYTES)} limit reached`);
+								details.truncation = truncation;
+							}
+							if (notices.length > 0) resultOutput += `\n\n[${notices.join(". ")}]`;
+							settle(() =>
+								resolve({
+									content: [{ type: "text", text: resultOutput }],
+									details: Object.keys(details).length > 0 ? details : undefined,
+								}),
+							);
 							return;
 						}
 
@@ -261,12 +304,32 @@ export function createFindToolDefinition(
 								effectivePattern = `**/${pattern}`;
 							}
 							// fd matches full paths using native separators on Windows.
-							if (process.platform === "win32")
-								effectivePattern = effectivePattern.replaceAll("/", String.raw`[/\\]`);
+							if (path.sep === "\\") effectivePattern = effectivePattern.replaceAll("/", String.raw`[/\\]`);
 						}
 						args.push("--", effectivePattern, searchPath);
 
-						const child = spawn(fdPath, args, { stdio: ["ignore", "pipe", "pipe"] });
+						const child = await (async () => {
+							if (process.platform === "win32") {
+								return spawn(fdPath, args, {
+									cwd: searchPath,
+									stdio: ["ignore", "pipe", "pipe"],
+									windowsHide: true,
+									...(signal ? { signal } : {}),
+								});
+							}
+							const controller = await ensureDefaultSandbox(cwd);
+							return spawnSandboxedProcess(
+								fdPath,
+								args,
+								{
+									cwd: searchPath,
+									stdio: ["ignore", "pipe", "pipe"],
+									...(signal ? { signal } : {}),
+								},
+								controller,
+							);
+						})();
+						if (!child.stdout) throw new Error("fd 没有可读取的标准输出。");
 						const rl = createInterface({ input: child.stdout });
 						let stderr = "";
 						const lines: string[] = [];

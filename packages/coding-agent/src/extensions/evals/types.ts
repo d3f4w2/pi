@@ -175,7 +175,7 @@ export interface RegressionCaseWriterLike {
 	): Promise<ApprovedRegressionCase>;
 }
 
-export type AgentEvalCategory = "navigation" | "bug_fix" | "verification" | "recovery" | "scope_control";
+export type AgentEvalCategory = "navigation" | "bug_fix" | "verification" | "recovery" | "scope_control" | "memory";
 
 export interface AgentEvalCase {
 	id: string;
@@ -187,6 +187,7 @@ export interface AgentEvalCase {
 	timeoutMs: number;
 	maxOutputTokens: number;
 	maxToolCalls: number;
+	requiredTools?: string[];
 }
 
 export type AgentEvalProgressStage = "preparing" | "starting" | "working" | "tool" | "verifying" | "cleanup";
@@ -223,6 +224,8 @@ export interface AgentEvalRunOptions {
 	model: string;
 	thinkingLevel: string;
 	tools: string[];
+	/** Frozen behavior candidate appended only inside the isolated evaluation process. */
+	appendSystemPrompt?: string;
 	onProgress?: (progress: AgentEvalProgress) => void;
 }
 

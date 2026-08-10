@@ -72,6 +72,7 @@ export class RecoveredFailureTracker {
 		}
 		if (this.lastStopReason === "aborted") {
 			this.currentFailure = undefined;
+			this.unresolvedFailure = undefined;
 			return undefined;
 		}
 		if (this.lastStopReason !== "stop" && this.lastStopReason !== "length") {

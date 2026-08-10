@@ -30,6 +30,7 @@
 		"check:model-catalog": "node scripts/publish-model-catalog.mjs --input .artifacts/model-catalog --dry-run",
 		"profile:tui": "node scripts/profile-coding-agent-node.mjs --mode tui",
 		"profile:rpc": "node scripts/profile-coding-agent-node.mjs --mode rpc",
+		"benchmark:pi-dev": "node scripts/benchmark-pi-dev.mjs",
 		"test": "npm run test:scripts && npm run test --workspaces --if-present",
 		"test:scripts": "node --test scripts/*.test.mjs",
 		"version:patch": "npm version patch --workspaces --no-git-tag-version --no-workspaces-update && node scripts/sync-versions.js && npm install --package-lock-only --ignore-scripts",
@@ -49,7 +50,7 @@
 		"prepare": "husky"
 	},
 	"devDependencies": {
-		"@anthropic-ai/sandbox-runtime": "0.0.26",
+		"@anthropic-ai/sandbox-runtime": "0.0.71",
 		"@biomejs/biome": "2.3.5",
 		"@types/node": "22.19.19",
 		"@typescript/native-preview": "7.0.0-dev.20260120.1",

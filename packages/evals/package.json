@@ -5,6 +5,7 @@
 	"type": "module",
 	"scripts": {
 		"clean": "shx rm -rf .eval",
+		"compare:omp": "node scripts/run-evals.mjs src/omp-comparison.eval.ts",
 		"eval": "node scripts/run-evals.mjs",
 		"test": "vitest run --config vitest.test.config.ts"
 	},

@@ -25,6 +25,7 @@ function createSession(options: {
 	compactionUsage?: AssistantUsage;
 	toolUsage?: AssistantUsage;
 	usingSubscription?: boolean;
+	onGetEntries?: () => void;
 }): AgentSession {
 	const usage = options.usage;
 	const entries: Array<Record<string, unknown>> = [];
@@ -74,7 +75,11 @@ function createSession(options: {
 			thinkingLevel: options.thinkingLevel ?? "off",
 		},
 		sessionManager: {
-			getEntries: () => entries,
+			getEntries: () => {
+				options.onGetEntries?.();
+				return entries;
+			},
+			getLeafId: () => (entries.length > 0 ? `leaf-${entries.length}` : null),
 			getSessionName: () => options.sessionName,
 			getCwd: () => "/tmp/project",
 		},
@@ -251,6 +256,29 @@ describe("FooterComponent width handling", () => {
 
 		const statsLine = stripAnsi(footer.render(120)[1]);
 		expect(statsLine).toContain("CH25.0%");
+	});
+
+	it("reuses cumulative statistics while the session leaf is unchanged", () => {
+		let getEntriesCalls = 0;
+		const session = createSession({
+			sessionName: "",
+			usage: {
+				input: 100,
+				output: 10,
+				cacheRead: 0,
+				cacheWrite: 0,
+				cost: { total: 0.001 },
+			},
+			onGetEntries: () => {
+				getEntriesCalls += 1;
+			},
+		});
+		const footer = new FooterComponent(session, createFooterData(1));
+
+		footer.render(120);
+		footer.render(80);
+
+		expect(getEntriesCalls).toBe(1);
 	});
 
 	it("marks Kimi Coding costs as subscription estimates", () => {

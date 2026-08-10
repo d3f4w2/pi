@@ -1,7 +1,7 @@
 import { Type } from "typebox";
 import type { ExtensionAPI } from "../../core/extensions/types.ts";
-import { fetchWebPage } from "./fetch.ts";
-import { searchWeb } from "./search.ts";
+import type { fetchWebPage } from "./fetch.ts";
+import type { searchWeb } from "./search.ts";
 import type { WebFetchDetails, WebSearchDetails } from "./types.ts";
 
 const MAX_CONSECUTIVE_EMPTY_SEARCHES = 2;
@@ -14,7 +14,10 @@ interface WebExtensionDependencies {
 	fetchWebPage: typeof fetchWebPage;
 }
 
-const defaultDependencies: WebExtensionDependencies = { searchWeb, fetchWebPage };
+const defaultDependencies: WebExtensionDependencies = {
+	searchWeb: async (options) => (await import("./search.ts")).searchWeb(options),
+	fetchWebPage: async (options) => (await import("./fetch.ts")).fetchWebPage(options),
+};
 
 const SearchParams = Type.Object(
 	{
@@ -32,7 +35,12 @@ const SearchParams = Type.Object(
 
 const FetchParams = Type.Object(
 	{
-		url: Type.String({ maxLength: 8192, description: "要读取的完整网址，必须以 http:// 或 https:// 开头" }),
+		url: Type.String({
+			minLength: 1,
+			maxLength: 8192,
+			description:
+				"要读取的 HTTP(S) URL，或 github://、gitlab://、npm://、pypi://、crates://、go://、arxiv://、osv:// 资源地址",
+		}),
 		format: Type.Optional(
 			Type.Union([Type.Literal("markdown"), Type.Literal("text"), Type.Literal("html")], {
 				description: "返回格式，默认 markdown",
@@ -90,6 +98,12 @@ function registerWebExtension(pi: ExtensionAPI, dependencies: WebExtensionDepend
 						resultCount: 0,
 						durationMs: 0,
 						fallbackReason: "search budget exhausted",
+						sourceAddress: "search://budget-exhausted",
+						readAt: new Date().toISOString(),
+						contentType: "application/vnd.pi.search-results+text",
+						cached: false,
+						truncated: false,
+						untrusted: true,
 					},
 				};
 			}

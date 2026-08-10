@@ -42,6 +42,14 @@
         {
           "title": "Compaction",
           "path": "compaction.md"
+        },
+        {
+          "title": "Evidence-backed Memory",
+          "path": "memory.md"
+        },
+        {
+          "title": "Controlled Self-Evolution",
+          "path": "self-evolution.md"
         }
       ]
     },
@@ -69,6 +77,14 @@
           "path": "packages.md"
         },
         {
+          "title": "Controlled Plugins",
+          "path": "plugins.md"
+        },
+        {
+          "title": "MCP",
+          "path": "mcp.md"
+        },
+        {
           "title": "Custom Models",
           "path": "models.md"
         },
@@ -84,6 +100,14 @@
         {
           "title": "Session Format",
           "path": "session-format.md"
+        },
+        {
+          "title": "Unified read",
+          "path": "unified-read.md"
+        },
+        {
+          "title": "Isolated task workers",
+          "path": "task-workers.md"
         }
       ]
     },
@@ -97,6 +121,10 @@
         {
           "title": "RPC Mode",
           "path": "rpc.md"
+        },
+        {
+          "title": "ACP Editor Mode",
+          "path": "acp.md"
         },
         {
           "title": "JSON Event Stream Mode",
@@ -139,6 +167,14 @@
         {
           "title": "Development",
           "path": "development.md"
+        },
+        {
+          "title": "Performance baseline",
+          "path": "performance.md"
+        },
+        {
+          "title": "Engineering portfolio (zh-CN)",
+          "path": "engineering-portfolio.zh-CN.md"
         }
       ]
     }

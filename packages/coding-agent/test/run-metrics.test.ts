@@ -93,8 +93,29 @@ describe("run metrics tracker", () => {
 	it("marks a read-only run with a tool error as failed", () => {
 		const tracker = new RunMetricsTracker();
 		tracker.start(1_000);
-		tracker.recordTool({ toolName: "read", input: {}, details: undefined, isError: true });
-		expect(tracker.finish(1_100)?.outcome).toBe("failed");
+		tracker.recordTool({
+			toolName: "read",
+			input: {},
+			details: undefined,
+			isError: true,
+			content: [{ type: "text", text: "ENOENT C:/private/project-123/file.ts" }],
+		});
+		const result = tracker.finish(1_100);
+		expect(result?.outcome).toBe("failed");
+		expect(result?.tools.read?.errorFingerprints?.[0]).toMatch(/^[a-f0-9]{64}$/u);
+		expect(JSON.stringify(result)).not.toContain("private/project");
+		const sameErrorElsewhere = new RunMetricsTracker();
+		sameErrorElsewhere.start(2_000);
+		sameErrorElsewhere.recordTool({
+			toolName: "read",
+			input: {},
+			details: undefined,
+			isError: true,
+			content: [{ type: "text", text: "ENOENT D:/another/location/file.ts" }],
+		});
+		expect(sameErrorElsewhere.finish(2_100)?.tools.read?.errorFingerprints?.[0]).toBe(
+			result?.tools.read?.errorFingerprints?.[0],
+		);
 	});
 });
 

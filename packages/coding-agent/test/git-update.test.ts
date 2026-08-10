@@ -126,6 +126,33 @@ describe("DefaultPackageManager git update", () => {
 	}
 
 	describe("normal updates (no force-push)", () => {
+		it("restores the previous revision when dependency installation fails", async () => {
+			mkdirSync(remoteDir, { recursive: true });
+			initGitRepo(remoteDir);
+			writeFileSync(join(remoteDir, "package.json"), JSON.stringify({ name: "test-extension", version: "1.0.0" }));
+			let initialCommit = createCommit(remoteDir, "extension.ts", "// v1", "Initial commit");
+			git(["add", "package.json"], remoteDir);
+			git(["commit", "--amend", "--no-edit"], remoteDir);
+			initialCommit = getCurrentCommit(remoteDir);
+
+			mkdirSync(join(agentDir, "git", "github.com", "test"), { recursive: true });
+			git(["clone", remoteDir, installedDir], tempDir);
+			settingsManager.setPackages([gitSource]);
+			createCommit(remoteDir, "extension.ts", "// v2", "Broken update");
+
+			let installAttempts = 0;
+			const internals = packageManager as unknown as { runNpmCommand: () => Promise<void> };
+			internals.runNpmCommand = async () => {
+				installAttempts += 1;
+				if (installAttempts === 1) throw new Error("dependency install failed");
+			};
+
+			await expect(packageManager.update()).rejects.toThrow(/restored/);
+			expect(getCurrentCommit(installedDir)).toBe(initialCommit);
+			expect(getFileContent(installedDir, "extension.ts")).toBe("// v1");
+			expect(installAttempts).toBe(2);
+		});
+
 		it("should skip reset, clean, and install when already up to date", async () => {
 			mkdirSync(remoteDir, { recursive: true });
 			initGitRepo(remoteDir);

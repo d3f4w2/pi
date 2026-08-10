@@ -1,7 +1,14 @@
 export type DebugLanguage = "python" | "javascript" | "go";
 export type DebugOperation =
 	| "start"
+	| "attach"
 	| "set_breakpoints"
+	| "set_function_breakpoints"
+	| "set_exception_breakpoints"
+	| "data_breakpoint_info"
+	| "set_data_breakpoints"
+	| "threads"
+	| "pause"
 	| "continue"
 	| "next"
 	| "step_in"
@@ -10,7 +17,11 @@ export type DebugOperation =
 	| "scopes"
 	| "variables"
 	| "evaluate"
+	| "loaded_sources"
+	| "modules"
+	| "restart"
 	| "status"
+	| "disconnect"
 	| "stop";
 
 export interface DapRequest {
@@ -55,6 +66,18 @@ export interface DebugStartRequest {
 	cwd: string;
 }
 
+export interface DebugAttachRequest {
+	language: DebugLanguage;
+	path?: string;
+	processId?: number;
+	host?: string;
+	port?: number;
+	breakpoints: number[];
+	cwd: string;
+}
+
+export type DebugAdapterRequest = (DebugStartRequest & { mode: "launch" }) | (DebugAttachRequest & { mode: "attach" });
+
 export interface DebugActionRequest {
 	operation: Exclude<DebugOperation, "start">;
 	path?: string;
@@ -63,6 +86,14 @@ export interface DebugActionRequest {
 	frameId?: number;
 	variablesReference?: number;
 	expression?: string;
+	functionNames?: string[];
+	exceptionFilters?: string[];
+	dataIds?: string[];
+	name?: string;
+	condition?: string;
+	hitCondition?: string;
+	logMessage?: string;
+	accessType?: string;
 }
 
 export interface DebugResult {
@@ -73,6 +104,7 @@ export interface DebugResult {
 export interface DebugToolDetails {
 	operation: DebugOperation;
 	language?: DebugLanguage;
+	mode?: "launch" | "attach";
 	state: "idle" | "starting" | "running" | "stopped" | "terminated";
 	threadId?: number;
 	itemCount: number;
@@ -81,6 +113,7 @@ export interface DebugToolDetails {
 
 export interface DebugServiceLike {
 	start(request: DebugStartRequest, signal?: AbortSignal): Promise<DebugResult>;
+	attach(request: DebugAttachRequest, signal?: AbortSignal): Promise<DebugResult>;
 	action(request: DebugActionRequest, cwd: string, signal?: AbortSignal): Promise<DebugResult>;
 	stop(): Promise<void>;
 }

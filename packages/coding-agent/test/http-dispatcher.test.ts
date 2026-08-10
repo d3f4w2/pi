@@ -1,8 +1,9 @@
+import http from "node:http";
 import net from "node:net";
 import tls from "node:tls";
 import * as undici from "undici";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { applyHttpProxySettings, configureHttpDispatcher } from "../src/core/http-dispatcher.ts";
+import { applyHttpProxySettings, configureHttpDispatcher, preconnectHttpOrigin } from "../src/core/http-dispatcher.ts";
 
 const PROXY_ENV_KEYS = ["HTTP_PROXY", "HTTPS_PROXY"] as const;
 const DISPATCHER_PROXY_ENV_KEYS = [...PROXY_ENV_KEYS, "http_proxy", "https_proxy"] as const;
@@ -109,5 +110,30 @@ describe("http dispatcher", () => {
 		);
 		expect(connectSpy.mock.calls[0]?.[0]).not.toHaveProperty("autoSelectFamily");
 		expect(net.getDefaultAutoSelectFamilyAttemptTimeout()).toBe(originalAttemptTimeoutMs);
+	});
+
+	it("reuses a preconnected socket for the first request", async () => {
+		let connections = 0;
+		const server = http.createServer((_request, response) => {
+			response.end("ok");
+		});
+		server.on("connection", () => {
+			connections++;
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		if (!address || typeof address === "string") throw new Error("Expected TCP server address");
+		const origin = `http://127.0.0.1:${address.port}`;
+
+		try {
+			configureHttpDispatcher();
+			expect(await preconnectHttpOrigin(origin)).toBe(true);
+			const response = await undici.fetch(origin, { signal: AbortSignal.timeout(2_000) });
+			expect(await response.text()).toBe("ok");
+			expect(connections).toBe(1);
+		} finally {
+			server.closeAllConnections();
+			await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
+		}
 	});
 });

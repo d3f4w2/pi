@@ -11,6 +11,11 @@ const rootLockfilePath = join(repoRoot, "package-lock.json");
 const shrinkwrapPath = join(codingAgentDir, "npm-shrinkwrap.json");
 const internalPackagePrefix = "@earendil-works/pi-";
 const allowedInstallScriptPackages = new Map([
+	["@ast-grep/lang-go@0.0.6", "postinstall selects a bundled parser prebuild or builds the bundled tree-sitter source"],
+	["@ast-grep/lang-json@0.0.7", "postinstall selects a bundled parser prebuild or builds the bundled tree-sitter source"],
+	["@ast-grep/lang-python@0.0.6", "postinstall selects a bundled parser prebuild or builds the bundled tree-sitter source"],
+	["@ast-grep/lang-rust@0.0.7", "postinstall selects a bundled parser prebuild or builds the bundled tree-sitter source"],
+	["@ast-grep/lang-yaml@0.0.6", "postinstall selects a bundled parser prebuild or builds the bundled tree-sitter source"],
 	["@google/genai@1.52.0", "preinstall is a no-op in the published package"],
 	["protobufjs@7.6.5", "postinstall only warns about protobufjs version scheme mismatches"],
 ]);

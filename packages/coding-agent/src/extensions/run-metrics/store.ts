@@ -19,7 +19,11 @@ function validUsage(value: unknown): value is ToolRunUsage {
 		value.calls >= 0 &&
 		typeof value.errors === "number" &&
 		Number.isInteger(value.errors) &&
-		value.errors >= 0
+		value.errors >= 0 &&
+		(value.errorFingerprints === undefined ||
+			(Array.isArray(value.errorFingerprints) &&
+				value.errorFingerprints.length <= 5 &&
+				value.errorFingerprints.every((item) => typeof item === "string" && /^[a-f0-9]{64}$/u.test(item))))
 	);
 }
 
@@ -88,7 +92,11 @@ function parseRecord(value: unknown): RunRecord | undefined {
 	const tools: Record<string, ToolRunUsage> = {};
 	for (const [name, usage] of Object.entries(value.tools)) {
 		if (name.length === 0 || name.length > 100 || !validUsage(usage)) return undefined;
-		tools[name] = usage;
+		tools[name] = {
+			calls: usage.calls,
+			errors: usage.errors,
+			...(usage.errorFingerprints ? { errorFingerprints: [...usage.errorFingerprints] } : {}),
+		};
 	}
 	if (value.version === 1) {
 		const digest = createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 20);

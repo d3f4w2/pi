@@ -8,8 +8,8 @@ Pi's cache runtime optimizes exact request prefixes without treating cache hits 
 2. Convert an exact appended extension suffix into a persisted developer-context revision. Replacement and prepending are left unchanged.
 3. Derive a project-private route key from the stable base, model, tools, and output shape.
 4. On explicitly compatible providers, select the stable system boundary and up to three recent text boundaries whose estimated reuse value exceeds their write premium.
-5. Record only hashes, byte counts, decisions, request timing, and provider usage.
-6. On opted-in official OpenAI sessions, use a response handle only when the previously covered request plus response is an exact prefix of the current input and the non-input request shape is unchanged.
+5. Record only per-item hashes, byte counts, decisions, request timing, and provider usage; the runtime does not retain serialized prompt or output text.
+6. On opted-in official OpenAI sessions, use a response handle only when hashes for the previously covered request plus response are an exact prefix of the current input and the hashed non-input request shape is unchanged.
 7. Before a response stream starts, retry one transient gateway setup failure with the same transformed request. That provider-layer attempt consumes the same total retry budget as outer AgentSession retries.
 
 ## Safety rules

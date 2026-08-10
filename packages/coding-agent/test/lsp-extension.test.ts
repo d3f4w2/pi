@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, test, vi } from "vitest";
-import type { Location, WorkspaceEdit } from "vscode-languageserver-protocol";
+import type { CodeAction, Location, WorkspaceEdit } from "vscode-languageserver-protocol";
 import type { ExtensionAPI, ToolDefinition, ToolResultEvent } from "../src/core/extensions/types.ts";
 import { LspAutoDiagnostics } from "../src/extensions/lsp/auto-diagnostics.ts";
 import { startLanguageClient } from "../src/extensions/lsp/client.ts";
@@ -431,7 +431,10 @@ describe("standard LSP client", () => {
 		);
 		const adapter = detectLanguageAdapter(usagePath);
 		expect(adapter).toBeDefined();
-		const client = await startLanguageClient(adapter!, project, { startupTimeoutMs: 15_000 });
+		const client = await startLanguageClient(adapter!, project, {
+			startupTimeoutMs: 15_000,
+			broker: { enabled: false },
+		});
 
 		try {
 			const document = await client.openDocument(usagePath);
@@ -457,6 +460,7 @@ function fakeClient(adapter: LanguageAdapter, workspaceRoot: string, locations: 
 	return {
 		adapter,
 		workspaceRoot,
+		capabilities: {},
 		openDocument: async (filePath) => ({
 			filePath,
 			uri: pathToFileURL(filePath).href,
@@ -465,6 +469,7 @@ function fakeClient(adapter: LanguageAdapter, workspaceRoot: string, locations: 
 			text: await readFile(filePath, "utf8"),
 		}),
 		definition: async () => locations,
+		typeDefinition: async () => locations,
 		references: async () => locations,
 		implementation: async () => locations,
 		hover: async () => ({ contents: { kind: "markdown", value: "```ts\nconst value: number\n```" } }),
@@ -472,12 +477,124 @@ function fakeClient(adapter: LanguageAdapter, workspaceRoot: string, locations: 
 		workspaceSymbols: async () => [],
 		diagnostics: async () => [],
 		rename: async () => null,
+		codeActions: async () => [],
+		resolveCodeAction: async (action) => action,
+		executeCommand: async () => null,
+		willRenameFiles: async () => null,
+		didRenameFiles: async () => {},
+		rawRequest: async () => null,
 		refreshOpenDocument: async () => {},
 		stop: async () => {},
 	};
 }
 
 describe("LSP service", () => {
+	test("supports status, type definitions, capabilities, raw requests, and targeted reload", async () => {
+		const project = await createTempDirectory();
+		const filePath = path.join(project, "index.ts");
+		await writeFile(path.join(project, "tsconfig.json"), "{}", "utf8");
+		await writeFile(filePath, "export const value = 1;\n", "utf8");
+		const adapter = detectLanguageAdapter(filePath)!;
+		const location: Location = {
+			uri: pathToFileURL(filePath).href,
+			range: { start: { line: 0, character: 13 }, end: { line: 0, character: 18 } },
+		};
+		const client = fakeClient(adapter, project, [location]);
+		Object.assign(client, {
+			capabilities: { hoverProvider: true },
+			rawRequest: vi.fn(async (_method: string, payload: unknown) => ({ payload })),
+		});
+		const factory = vi.fn(async () => client);
+		const service = new LspService({ clientFactory: factory });
+
+		const idle = await service.execute({ operation: "status", path: "." }, project);
+		expect(idle.text).toContain("还没有启动");
+		const typeDefinition = await service.execute(
+			{ operation: "type_definition", path: "index.ts", symbol: "value" },
+			project,
+		);
+		expect(typeDefinition.text).toContain("index.ts:1:14");
+		const capabilities = await service.execute({ operation: "capabilities", path: "index.ts" }, project);
+		expect(capabilities.text).toContain("hoverProvider");
+		const raw = await service.execute(
+			{ operation: "request", path: "index.ts", method: "custom/inspect", payload: '{"limit":2}' },
+			project,
+		);
+		expect(raw.text).toContain('"limit": 2');
+		const ready = await service.execute({ operation: "status", path: "." }, project);
+		expect(ready.text).toContain("typescript · ready");
+
+		await service.execute({ operation: "reload", path: "index.ts" }, project);
+		expect(factory).toHaveBeenCalledTimes(2);
+		await service.stop();
+	});
+
+	test("previews and applies one exact code action", async () => {
+		const project = await createTempDirectory();
+		const filePath = path.join(project, "index.ts");
+		await writeFile(path.join(project, "tsconfig.json"), "{}", "utf8");
+		await writeFile(filePath, "let value = 1;\n", "utf8");
+		const adapter = detectLanguageAdapter(filePath)!;
+		const action: CodeAction = {
+			title: "Use const",
+			kind: "quickfix",
+			isPreferred: true,
+			edit: {
+				changes: {
+					[pathToFileURL(filePath).href]: [
+						{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } }, newText: "const" },
+					],
+				},
+			},
+		};
+		const client = fakeClient(adapter, project);
+		client.codeActions = async () => [action];
+		const service = new LspService({ clientFactory: async () => client });
+
+		const preview = await service.execute({ operation: "code_actions", path: "index.ts" }, project);
+		expect(preview.text).toContain("Use const [quickfix] · 推荐");
+		expect(await readFile(filePath, "utf8")).toBe("let value = 1;\n");
+
+		const applied = await service.execute(
+			{ operation: "code_actions", path: "index.ts", query: "Use const", apply: true },
+			project,
+		);
+		expect(applied.details.changedFiles).toEqual(["index.ts"]);
+		expect(await readFile(filePath, "utf8")).toBe("const value = 1;\n");
+		await service.stop();
+	});
+
+	test("renames a file and applies language-server reference edits", async () => {
+		const project = await createTempDirectory();
+		const oldPath = path.join(project, "old.ts");
+		const newPath = path.join(project, "new.ts");
+		const consumerPath = path.join(project, "consumer.ts");
+		await writeFile(path.join(project, "tsconfig.json"), "{}", "utf8");
+		await writeFile(oldPath, "export const value = 1;\n", "utf8");
+		await writeFile(consumerPath, "old.ts\n", "utf8");
+		const adapter = detectLanguageAdapter(oldPath)!;
+		const client = fakeClient(adapter, project);
+		Object.assign(client, { capabilities: { workspace: { fileOperations: { willRename: true } } } });
+		client.willRenameFiles = async () => ({
+			changes: {
+				[pathToFileURL(consumerPath).href]: [
+					{ range: { start: { line: 0, character: 0 }, end: { line: 0, character: 6 } }, newText: "new.ts" },
+				],
+			},
+		});
+		const didRename = vi.spyOn(client, "didRenameFiles");
+		const service = new LspService({ clientFactory: async () => client });
+
+		const result = await service.execute({ operation: "rename_file", path: "old.ts", newPath: "new.ts" }, project);
+
+		expect(result.details.changedFiles).toEqual(expect.arrayContaining(["new.ts", "consumer.ts"]));
+		await expect(readFile(oldPath, "utf8")).rejects.toThrow();
+		expect(await readFile(newPath, "utf8")).toContain("value");
+		expect(await readFile(consumerPath, "utf8")).toBe("new.ts\n");
+		expect(didRename).toHaveBeenCalledWith(oldPath, newPath);
+		await service.stop();
+	});
+
 	test("warms a document in the background and reuses its client for diagnostics", async () => {
 		const project = await createTempDirectory();
 		const filePath = path.join(project, "index.ts");

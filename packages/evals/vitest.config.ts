@@ -8,7 +8,9 @@ export default mergeConfig(
 			environment: "node",
 			fileParallelism: false,
 			include: ["src/**/*.eval.ts"],
-			testTimeout: 120000,
+			// Command harnesses enforce their own 120s default. Leave enough time to terminate,
+			// collect filesystem assertions, and attach artifacts after a task-level timeout.
+			testTimeout: 180000,
 			hookTimeout: 30000,
 			setupFiles: ["./src/vitest-evals/setup.ts"],
 			reporters: ["vitest-evals/reporter", "./src/vitest-evals/reporter.ts"],

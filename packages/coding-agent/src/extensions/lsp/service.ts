@@ -1,7 +1,9 @@
-import { readFile, realpath, writeFile } from "node:fs/promises";
+import { lstat, readFile, realpath, rename as renameFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
+	CodeAction,
+	Command,
 	Diagnostic,
 	DocumentSymbol,
 	Hover,
@@ -62,6 +64,13 @@ interface ResolvedLspTarget {
 	filePath: string;
 	adapter: LanguageAdapter;
 	workspaceRoot: string;
+}
+
+interface LspClientState {
+	language: LanguageAdapter["id"];
+	workspaceRoot: string;
+	status: "starting" | "ready" | "failed";
+	detail?: string;
 }
 
 export interface WorkspaceEditFileSystem {
@@ -294,6 +303,60 @@ function formatDiagnostics(
 	};
 }
 
+function documentRange(document: LspDocument): Range {
+	const lines = document.text.split(/\r?\n/);
+	const lastLine = lines.length - 1;
+	return {
+		start: { line: 0, character: 0 },
+		end: { line: lastLine, character: lines[lastLine]?.length ?? 0 },
+	};
+}
+
+function isCommand(action: Command | CodeAction): action is Command {
+	return typeof action.command === "string";
+}
+
+function formatCodeActions(actions: Array<Command | CodeAction>, maxResults: number): FormattedResult {
+	const lines = actions.slice(0, maxResults).map((action, index) => {
+		if (isCommand(action)) return `${index + 1}. ${action.title} [command]`;
+		const status = action.disabled ? `不可用：${action.disabled.reason}` : action.isPreferred ? "推荐" : "可用";
+		return `${index + 1}. ${action.title}${action.kind ? ` [${action.kind}]` : ""} · ${status}`;
+	});
+	return {
+		text: lines.length > 0 ? lines.join("\n") : "没有可用的代码操作。",
+		count: actions.length,
+		truncated: actions.length > lines.length,
+	};
+}
+
+function isWorkspaceEdit(value: unknown): value is WorkspaceEdit {
+	if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+	return "changes" in value || "documentChanges" in value;
+}
+
+function formatJson(value: unknown, maxLength = 20_000): { text: string; truncated: boolean } {
+	const serialized = JSON.stringify(value, null, 2) ?? "null";
+	if (serialized.length <= maxLength) return { text: serialized, truncated: false };
+	return { text: `${serialized.slice(0, maxLength)}\n[内容已截断]`, truncated: true };
+}
+
+function remapWorkspaceEditUri(workspaceEdit: WorkspaceEdit, oldUri: string, newUri: string): WorkspaceEdit {
+	const changes = workspaceEdit.changes
+		? Object.fromEntries(
+				Object.entries(workspaceEdit.changes).map(([uri, edits]) => [uri === oldUri ? newUri : uri, edits]),
+			)
+		: undefined;
+	const documentChanges = workspaceEdit.documentChanges?.map((change) => {
+		if (!("textDocument" in change) || change.textDocument.uri !== oldUri) return change;
+		return { ...change, textDocument: { ...change.textDocument, uri: newUri } };
+	});
+	return {
+		...(changes ? { changes } : {}),
+		...(documentChanges ? { documentChanges } : {}),
+		...(workspaceEdit.changeAnnotations ? { changeAnnotations: workspaceEdit.changeAnnotations } : {}),
+	};
+}
+
 function positionOffset(text: string, position: Position): number {
 	const starts = [0];
 	for (let index = 0; index < text.length; index++) {
@@ -399,6 +462,7 @@ export class LspService {
 	private readonly workspaceDiagnosticsOptions: WorkspaceDiagnosticsOptions;
 	private readonly clients = new Map<string, Promise<LspClient>>();
 	private readonly startupFailures = new Map<string, string>();
+	private readonly clientStates = new Map<string, LspClientState>();
 
 	constructor(options: LspServiceOptions = {}) {
 		this.clientFactory = options.clientFactory ?? startLanguageClient;
@@ -417,6 +481,22 @@ export class LspService {
 		signal?: AbortSignal,
 		onStatus?: (message: string) => void,
 	): Promise<LspToolResult> {
+		const projectRoot = await realpath(cwd);
+		if (request.operation === "status") return this.statusResult(projectRoot);
+		if (request.operation === "reload" && request.path === ".") {
+			const count = this.clients.size;
+			await this.stop(true);
+			return {
+				text: `已停止并清空 ${count} 个语言服务器；下次 LSP 查询会自动重新启动。`,
+				details: {
+					operation: request.operation,
+					language: "unknown",
+					workspaceRoot: projectRoot,
+					truncated: false,
+					resultCount: count,
+				},
+			};
+		}
 		if (request.path === "*") {
 			if (request.operation !== "diagnostics") throw new Error('路径 "*" 只支持 diagnostics。');
 			return runWorkspaceDiagnostics(cwd, signal, {
@@ -424,7 +504,25 @@ export class LspService {
 				...(request.maxResults === undefined ? {} : { maxResults: request.maxResults }),
 			});
 		}
-		const { projectRoot, filePath, adapter, workspaceRoot } = await this.resolveTarget(request, cwd);
+		const { filePath, adapter, workspaceRoot } = await this.resolveTarget(
+			{ path: request.path, ...(request.symbol === undefined ? {} : { symbol: request.symbol }) },
+			cwd,
+		);
+		if (request.operation === "reload") {
+			await this.stopClient(adapter, workspaceRoot);
+			const client = await this.getClient(adapter, workspaceRoot, onStatus);
+			await client.openDocument(filePath);
+			return {
+				text: `${adapter.displayName} 语言服务器已重载。`,
+				details: {
+					operation: request.operation,
+					language: adapter.id,
+					workspaceRoot,
+					truncated: false,
+					resultCount: 1,
+				},
+			};
+		}
 		const client = await this.getClient(adapter, workspaceRoot, onStatus);
 		const document = await client.openDocument(filePath);
 		const maxResults = Math.min(MAX_RESULTS, Math.max(1, request.maxResults ?? DEFAULT_MAX_RESULTS));
@@ -435,6 +533,13 @@ export class LspService {
 			case "definition":
 				formatted = formatLocations(
 					await client.definition(document, resolveLspPosition(document, request), signal),
+					projectRoot,
+					maxResults,
+				);
+				break;
+			case "type_definition":
+				formatted = formatLocations(
+					await client.typeDefinition(document, resolveLspPosition(document, request), signal),
 					projectRoot,
 					maxResults,
 				);
@@ -513,6 +618,114 @@ export class LspService {
 				};
 				break;
 			}
+			case "rename_file": {
+				if (!request.newPath?.trim()) throw new Error("rename_file 需要 new_path。");
+				const result = await this.renameFile(
+					{ projectRoot, filePath, adapter, workspaceRoot },
+					client,
+					request.newPath.trim(),
+					signal,
+				);
+				changedFiles = result.changedFiles;
+				formatted = { text: result.text, count: result.editCount + 1, truncated: false };
+				break;
+			}
+			case "code_actions": {
+				const hasPosition =
+					request.line !== undefined || request.column !== undefined || request.symbol !== undefined;
+				const position = hasPosition ? resolveLspPosition(document, request) : undefined;
+				const range = position ? { start: position, end: position } : documentRange(document);
+				const diagnostics = await client.diagnostics(document, signal, 250);
+				const actions = await client.codeActions(
+					document,
+					range,
+					diagnostics,
+					request.actionKind?.trim() ? [request.actionKind.trim()] : undefined,
+					signal,
+				);
+				const query = request.query?.trim().toLowerCase();
+				const filtered = query
+					? actions.filter((action) => {
+							const kind = isCommand(action) ? "command" : (action.kind ?? "");
+							return action.title.toLowerCase().includes(query) || kind.toLowerCase().includes(query);
+						})
+					: actions;
+				if (!request.apply) {
+					formatted = formatCodeActions(filtered, maxResults);
+					break;
+				}
+				if (!query) throw new Error("应用代码操作时需要 query，用标题或 kind 准确选择一项。");
+				if (filtered.length === 0) throw new Error(`没有找到代码操作：${request.query?.trim() ?? ""}`);
+				const exact = filtered.filter((action) => action.title.toLowerCase() === query);
+				const candidates = exact.length > 0 ? exact : filtered;
+				if (candidates.length !== 1) {
+					throw new Error(`代码操作匹配到 ${candidates.length} 项，请把 query 写得更准确。`);
+				}
+				let action = candidates[0];
+				if (!action) throw new Error("没有可应用的代码操作。");
+				if (!isCommand(action) && action.disabled) throw new Error(`代码操作不可用：${action.disabled.reason}`);
+				if (!isCommand(action) && !action.edit && !action.command && action.data !== undefined) {
+					action = await client.resolveCodeAction(action, signal);
+				}
+				const appliedFiles = new Set<string>();
+				let editCount = 0;
+				let firstEdit = true;
+				const applyEdit = async (edit: WorkspaceEdit | undefined) => {
+					if (!edit) return;
+					const applied = await applyWorkspaceEditSafely(
+						edit,
+						projectRoot,
+						firstEdit ? { expectedContents: new Map([[filePath, document.text]]) } : {},
+					);
+					firstEdit = false;
+					editCount += applied.editCount;
+					for (const changed of applied.changedFiles) appliedFiles.add(changed);
+				};
+				const command = isCommand(action) ? action : action.command;
+				if (!isCommand(action)) await applyEdit(action.edit);
+				if (command) {
+					const commandResult = await client.executeCommand(command, signal, applyEdit);
+					if (isWorkspaceEdit(commandResult)) await applyEdit(commandResult);
+				}
+				for (const changed of appliedFiles) await client.refreshOpenDocument(changed);
+				changedFiles = [...appliedFiles].map((changed) =>
+					path.relative(projectRoot, changed).replaceAll("\\", "/"),
+				);
+				formatted = {
+					text: `代码操作已应用：${action.title}\n修改 ${changedFiles.length} 个文件，共 ${editCount} 处。${changedFiles.length > 0 ? `\n${changedFiles.join("\n")}` : ""}`,
+					count: editCount,
+					truncated: false,
+				};
+				break;
+			}
+			case "capabilities": {
+				const output = formatJson(client.capabilities);
+				formatted = {
+					text: output.text,
+					count: Object.keys(client.capabilities).length,
+					truncated: output.truncated,
+				};
+				break;
+			}
+			case "request": {
+				const method = request.method?.trim();
+				if (!method) throw new Error("request 需要 method。");
+				if (!/^[A-Za-z_$][A-Za-z0-9_$.-]*\/[A-Za-z0-9_$./-]+$/.test(method))
+					throw new Error(`无效的 LSP method：${method}`);
+				if (new Set(["initialize", "initialized", "shutdown", "exit", "workspace/applyEdit"]).has(method))
+					throw new Error(`为保护语言服务器生命周期，不能直接请求 ${method}。`);
+				let payload: unknown;
+				if (request.payload?.trim()) {
+					try {
+						payload = JSON.parse(request.payload);
+					} catch (error) {
+						throw new Error(`payload 不是有效 JSON：${error instanceof Error ? error.message : String(error)}`);
+					}
+				}
+				const output = formatJson(await client.rawRequest(method, payload, signal));
+				formatted = { text: output.text, count: 1, truncated: output.truncated };
+				break;
+			}
 		}
 
 		return {
@@ -528,17 +741,97 @@ export class LspService {
 		};
 	}
 
-	async stop(): Promise<void> {
+	async stop(reloadShared = false): Promise<void> {
 		await Promise.all(
 			[...this.clients.values()].map(async (clientPromise) => {
 				try {
-					await (await clientPromise).stop();
+					const client = await clientPromise;
+					if (reloadShared) await client.reloadShared?.();
+					await client.stop();
 				} catch {
 					// Failed startup promises and broken servers need no further cleanup.
 				}
 			}),
 		);
 		this.clients.clear();
+		this.startupFailures.clear();
+		this.clientStates.clear();
+	}
+
+	private statusResult(projectRoot: string): LspToolResult {
+		const states = [...this.clientStates.values()].filter((state) => isPathInside(projectRoot, state.workspaceRoot));
+		const text =
+			states.length === 0
+				? "当前项目还没有启动语言服务器。首次查询具体代码文件时会自动启动。"
+				: states
+						.map(
+							(state) =>
+								`${state.language} · ${state.status} · ${path.relative(projectRoot, state.workspaceRoot).replaceAll("\\", "/") || "."}${state.detail ? `\n  ${state.detail}` : ""}`,
+						)
+						.join("\n");
+		return {
+			text,
+			details: {
+				operation: "status",
+				language: states.length === 1 ? (states[0]?.language ?? "unknown") : "unknown",
+				workspaceRoot: projectRoot,
+				truncated: false,
+				resultCount: states.length,
+			},
+		};
+	}
+
+	private async renameFile(
+		target: ResolvedLspTarget,
+		client: LspClient,
+		newPath: string,
+		signal?: AbortSignal,
+	): Promise<{ text: string; changedFiles: string[]; editCount: number }> {
+		const destination = path.resolve(target.projectRoot, newPath);
+		if (!isPathInside(target.projectRoot, destination)) throw new Error("文件重命名目标必须在当前项目中。");
+		const resolvedParent = await realpath(path.dirname(destination));
+		if (!isPathInside(target.projectRoot, resolvedParent)) throw new Error("文件重命名目标目录位于当前项目之外。");
+		if (destination === target.filePath) throw new Error("新旧文件路径相同。");
+		try {
+			await lstat(destination);
+			throw new Error(`目标文件已经存在：${newPath}`);
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+		}
+		const oldUri = pathToFileURL(target.filePath).href;
+		const newUri = pathToFileURL(destination).href;
+		let workspaceEdit: WorkspaceEdit | null = null;
+		if (client.capabilities.workspace?.fileOperations?.willRename) {
+			workspaceEdit = await client.willRenameFiles(target.filePath, destination, signal);
+		}
+		await renameFile(target.filePath, destination);
+		let applied: AppliedWorkspaceEdit = { changedFiles: [], editCount: 0 };
+		try {
+			if (workspaceEdit) {
+				applied = await applyWorkspaceEditSafely(
+					remapWorkspaceEditUri(workspaceEdit, oldUri, newUri),
+					target.projectRoot,
+				);
+			}
+		} catch (error) {
+			await renameFile(destination, target.filePath);
+			throw error;
+		}
+		try {
+			await client.didRenameFiles(target.filePath, destination);
+		} catch {
+			// The filesystem operation is already complete; a broken server notification must not undo user files.
+		}
+		await client.openDocument(destination);
+		for (const changed of applied.changedFiles) await client.refreshOpenDocument(changed);
+		const changedFiles = [...new Set([destination, ...applied.changedFiles])].map((changed) =>
+			path.relative(target.projectRoot, changed).replaceAll("\\", "/"),
+		);
+		return {
+			text: `文件重命名完成：${path.relative(target.projectRoot, target.filePath).replaceAll("\\", "/")} → ${path.relative(target.projectRoot, destination).replaceAll("\\", "/")}${applied.editCount > 0 ? `\n同步更新 ${applied.changedFiles.length} 个文件，共 ${applied.editCount} 处引用。` : ""}`,
+			changedFiles,
+			editCount: applied.editCount,
+		};
 	}
 
 	private async resolveTarget(request: LspTargetRequest, cwd: string): Promise<ResolvedLspTarget> {
@@ -576,15 +869,37 @@ export class LspService {
 			onStatus?.(formatLanguageServerStartup(adapter));
 			clientPromise = this.clientFactory(adapter, workspaceRoot);
 			this.clients.set(key, clientPromise);
+			this.clientStates.set(key, { language: adapter.id, workspaceRoot, status: "starting" });
 		}
 		try {
-			return await clientPromise;
+			const client = await clientPromise;
+			this.clientStates.set(key, { language: adapter.id, workspaceRoot, status: "ready" });
+			return client;
 		} catch (error) {
 			this.clients.delete(key);
 			const detail = error instanceof Error ? error.message : String(error);
 			const message = `LSP 不可用：${detail}\n${formatLanguageServerSetup(adapter)}\n本次会话不再重复启动；请立即改用 grep 和 read。`;
 			this.startupFailures.set(key, message);
+			this.clientStates.set(key, { language: adapter.id, workspaceRoot, status: "failed", detail: message });
 			throw new Error(message);
 		}
+	}
+
+	private async stopClient(adapter: LanguageAdapter, workspaceRoot: string): Promise<void> {
+		const normalizedRoot = process.platform === "win32" ? workspaceRoot.toLowerCase() : workspaceRoot;
+		const key = `${adapter.id}:${normalizedRoot}`;
+		const client = this.clients.get(key);
+		if (client) {
+			try {
+				const running = await client;
+				await running.reloadShared?.();
+				await running.stop();
+			} catch {
+				// Failed servers need no graceful shutdown.
+			}
+		}
+		this.clients.delete(key);
+		this.startupFailures.delete(key);
+		this.clientStates.delete(key);
 	}
 }

@@ -10,15 +10,25 @@ import { killProcessTree } from "../../utils/shell.ts";
 const STARTUP_TIMEOUT_MS = 10_000;
 const PROFILE_PREFIX = "pi-browser-";
 
-export interface BrowserLaunchHandle {
+export interface BrowserDevToolsTarget {
+	id: string;
+	type: string;
+	url: string;
+	title: string;
 	websocketUrl: string;
-	browserName: string;
-	close(): Promise<void>;
 }
 
-interface DevToolsTarget {
-	type?: string;
-	webSocketDebuggerUrl?: string;
+export interface BrowserLaunchHandle {
+	websocketUrl: string;
+	initialTargetId: string;
+	devtoolsUrl: string;
+	browserName: string;
+	isolated: boolean;
+	listTargets(signal?: AbortSignal): Promise<BrowserDevToolsTarget[]>;
+	newTarget(url: string, signal?: AbortSignal): Promise<BrowserDevToolsTarget>;
+	activateTarget(id: string, signal?: AbortSignal): Promise<void>;
+	closeTarget(id: string, signal?: AbortSignal): Promise<void>;
+	close(): Promise<void>;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -57,12 +67,27 @@ export function browserExecutableCandidates(
 	return [...new Set([...(configured ? [configured] : []), ...absoluteCandidates.filter(fileExists), ...fallbacks])];
 }
 
+export function parseExplicitCdpEndpoint(value: string): string {
+	let url: URL;
+	try {
+		url = new URL(value);
+	} catch {
+		throw new Error("PI_BROWSER_CDP_URL must be a valid loopback HTTP endpoint.");
+	}
+	const host = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+	if (url.protocol !== "http:" || !["127.0.0.1", "::1", "localhost"].includes(host)) {
+		throw new Error("PI_BROWSER_CDP_URL only accepts an explicit loopback HTTP endpoint.");
+	}
+	if (url.username || url.password) throw new Error("PI_BROWSER_CDP_URL cannot contain credentials.");
+	return url.origin;
+}
+
 function ensureSafeProfilePath(profileDir: string): void {
 	const temporaryRoot = path.resolve(tmpdir());
 	const resolved = path.resolve(profileDir);
 	const relative = path.relative(temporaryRoot, resolved);
 	if (relative.startsWith("..") || path.isAbsolute(relative) || !path.basename(resolved).startsWith(PROFILE_PREFIX)) {
-		throw new Error("浏览器临时目录超出安全范围。");
+		throw new Error("Browser profile path is outside the temporary isolated area.");
 	}
 }
 
@@ -96,10 +121,11 @@ async function waitForDevToolsPort(
 	const activePortFile = path.join(profileDir, "DevToolsActivePort");
 	const deadline = Date.now() + STARTUP_TIMEOUT_MS;
 	while (Date.now() < deadline) {
-		if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("浏览器启动已取消。");
+		if (signal?.aborted)
+			throw signal.reason instanceof Error ? signal.reason : new Error("Browser startup canceled.");
 		const spawnError = getSpawnError();
 		if (spawnError) throw new Error(spawnError);
-		if (child.exitCode !== null) throw new Error(getStderr() || `浏览器启动后立即退出：${child.exitCode}`);
+		if (child.exitCode !== null) throw new Error(getStderr() || `Browser exited during startup: ${child.exitCode}`);
 		try {
 			const port = Number.parseInt((await readFile(activePortFile, "utf8")).split(/\r?\n/, 1)[0] ?? "", 10);
 			if (Number.isInteger(port) && port > 0 && port <= 65_535) return port;
@@ -108,33 +134,102 @@ async function waitForDevToolsPort(
 		}
 		await delay(50);
 	}
-	throw new Error("浏览器启动超过 10 秒。请检查浏览器安装或设置 PI_BROWSER_EXECUTABLE。");
+	throw new Error("Browser startup exceeded 10 seconds.");
 }
 
-async function pageWebSocketUrl(port: number, signal?: AbortSignal): Promise<string> {
+function targetFrom(value: unknown): BrowserDevToolsTarget | undefined {
+	if (!isRecord(value) || typeof value.id !== "string" || typeof value.webSocketDebuggerUrl !== "string")
+		return undefined;
+	return {
+		id: value.id,
+		type: typeof value.type === "string" ? value.type : "page",
+		url: typeof value.url === "string" ? value.url : "",
+		title: typeof value.title === "string" ? value.title : "",
+		websocketUrl: value.webSocketDebuggerUrl,
+	};
+}
+
+async function requestJson(
+	endpoint: string,
+	pathname: string,
+	method: "GET" | "PUT",
+	signal?: AbortSignal,
+): Promise<unknown> {
+	const response = await request(`${endpoint}${pathname}`, {
+		method,
+		headersTimeout: 2_000,
+		bodyTimeout: 2_000,
+		...(signal ? { signal } : {}),
+	});
+	if (response.statusCode < 200 || response.statusCode >= 300) {
+		await response.body.dump();
+		throw new Error(`Browser DevTools endpoint failed: HTTP ${response.statusCode}`);
+	}
+	const text = await response.body.text();
+	if (!text) return undefined;
+	try {
+		return JSON.parse(text) as unknown;
+	} catch {
+		return text;
+	}
+}
+
+async function listTargets(endpoint: string, signal?: AbortSignal): Promise<BrowserDevToolsTarget[]> {
+	const value = await requestJson(endpoint, "/json/list", "GET", signal);
+	return Array.isArray(value)
+		? value.flatMap((item) => {
+				const target = targetFrom(item);
+				return target?.type === "page" ? [target] : [];
+			})
+		: [];
+}
+
+async function firstTarget(endpoint: string, signal?: AbortSignal): Promise<BrowserDevToolsTarget> {
 	const deadline = Date.now() + STARTUP_TIMEOUT_MS;
 	while (Date.now() < deadline) {
-		if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error("浏览器启动已取消。");
 		try {
-			const response = await request(`http://127.0.0.1:${port}/json/list`, {
-				method: "GET",
-				headersTimeout: 1_000,
-				bodyTimeout: 1_000,
-			});
-			const value: unknown = await response.body.json();
-			if (Array.isArray(value)) {
-				const page = value.find(
-					(item): item is DevToolsTarget =>
-						isRecord(item) && item.type === "page" && typeof item.webSocketDebuggerUrl === "string",
-				);
-				if (page?.webSocketDebuggerUrl) return page.webSocketDebuggerUrl;
-			}
-		} catch {
-			// Browser HTTP endpoint may need another short startup interval.
-		}
+			const target = (await listTargets(endpoint, signal))[0];
+			if (target) return target;
+		} catch {}
 		await delay(50);
 	}
-	throw new Error("浏览器没有创建可控制的页面。");
+	throw new Error("Browser did not create a controllable page.");
+}
+
+function handleFor(options: {
+	endpoint: string;
+	initial: BrowserDevToolsTarget;
+	browserName: string;
+	isolated: boolean;
+	close: () => Promise<void>;
+}): BrowserLaunchHandle {
+	return {
+		websocketUrl: options.initial.websocketUrl,
+		initialTargetId: options.initial.id,
+		devtoolsUrl: options.endpoint,
+		browserName: options.browserName,
+		isolated: options.isolated,
+		listTargets: (signal) => listTargets(options.endpoint, signal),
+		newTarget: async (url, signal) => {
+			const value = await requestJson(options.endpoint, `/json/new?${encodeURIComponent(url)}`, "PUT", signal);
+			const target = targetFrom(value);
+			if (!target) throw new Error("Browser returned an invalid new tab target.");
+			return target;
+		},
+		activateTarget: async (id, signal) => {
+			await requestJson(options.endpoint, `/json/activate/${encodeURIComponent(id)}`, "PUT", signal);
+		},
+		closeTarget: async (id, signal) => {
+			await requestJson(options.endpoint, `/json/close/${encodeURIComponent(id)}`, "PUT", signal);
+			const deadline = Date.now() + 2_000;
+			while (Date.now() < deadline) {
+				if (!(await listTargets(options.endpoint, signal)).some((target) => target.id === id)) return;
+				await delay(25);
+			}
+			throw new Error(`Browser tab did not close: ${id}`);
+		},
+		close: options.close,
+	};
 }
 
 async function launchCandidate(command: string, signal?: AbortSignal): Promise<BrowserLaunchHandle> {
@@ -163,7 +258,7 @@ async function launchCandidate(command: string, signal?: AbortSignal): Promise<B
 		stderr = `${stderr}${chunk}`.slice(-8_000);
 	});
 	child.once("error", (error: NodeJS.ErrnoException) => {
-		spawnError = error.code === "ENOENT" ? `没有找到 ${command}` : error.message;
+		spawnError = error.code === "ENOENT" ? `Browser executable not found: ${command}` : error.message;
 	});
 	try {
 		const port = await waitForDevToolsPort(
@@ -173,18 +268,21 @@ async function launchCandidate(command: string, signal?: AbortSignal): Promise<B
 			() => stderr.trim(),
 			signal,
 		);
-		const websocketUrl = await pageWebSocketUrl(port, signal);
+		const endpoint = `http://127.0.0.1:${port}`;
+		const initial = await firstTarget(endpoint, signal);
 		let closed = false;
-		return {
-			websocketUrl,
+		return handleFor({
+			endpoint,
+			initial,
 			browserName: path.basename(command),
+			isolated: true,
 			close: async () => {
 				if (closed) return;
 				closed = true;
 				await stopBrowserProcess(child);
 				await cleanupProfile(profileDir);
 			},
-		};
+		});
 	} catch (error) {
 		await stopBrowserProcess(child);
 		await cleanupProfile(profileDir);
@@ -192,7 +290,20 @@ async function launchCandidate(command: string, signal?: AbortSignal): Promise<B
 	}
 }
 
+async function connectExplicit(endpointValue: string, signal?: AbortSignal): Promise<BrowserLaunchHandle> {
+	const endpoint = parseExplicitCdpEndpoint(endpointValue);
+	let initial: BrowserDevToolsTarget | undefined = (await listTargets(endpoint, signal))[0];
+	if (!initial) {
+		const value = await requestJson(endpoint, `/json/new?${encodeURIComponent("about:blank")}`, "PUT", signal);
+		initial = targetFrom(value);
+	}
+	if (!initial) throw new Error("Explicit Chrome endpoint has no controllable page target.");
+	return handleFor({ endpoint, initial, browserName: "explicit-chrome", isolated: false, close: async () => {} });
+}
+
 export async function launchBrowser(signal?: AbortSignal): Promise<BrowserLaunchHandle> {
+	const explicit = process.env.PI_BROWSER_CDP_URL?.trim();
+	if (explicit) return connectExplicit(explicit, signal);
 	const errors: string[] = [];
 	for (const candidate of browserExecutableCandidates()) {
 		try {
@@ -202,6 +313,6 @@ export async function launchBrowser(signal?: AbortSignal): Promise<BrowserLaunch
 		}
 	}
 	throw new Error(
-		`没有找到可控制的 Chrome、Edge 或 Chromium。请安装浏览器，或设置 PI_BROWSER_EXECUTABLE。${errors.length > 0 ? `\n${errors.at(-1)}` : ""}`,
+		`No controllable Chrome, Edge, or Chromium was found.${errors.length > 0 ? `\n${errors.at(-1)}` : ""}`,
 	);
 }

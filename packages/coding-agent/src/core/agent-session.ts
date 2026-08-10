@@ -47,7 +47,6 @@ import {
 	resetApiProviders,
 	streamSimple,
 } from "@earendil-works/pi-ai/compat";
-import { getThemeByName, theme } from "../modes/interactive/theme/theme.ts";
 import { stripFrontmatter } from "../utils/frontmatter.ts";
 import { resolvePath } from "../utils/paths.ts";
 import { sleep } from "../utils/sleep.ts";
@@ -67,35 +66,36 @@ import {
 	shouldCompact,
 } from "./compaction/index.ts";
 import { DEFAULT_THINKING_LEVEL } from "./defaults.ts";
-import { exportSessionToHtml, type ToolHtmlRenderer } from "./export-html/index.ts";
-import { createToolHtmlRenderer } from "./export-html/tool-renderer.ts";
+import type { ToolHtmlRenderer } from "./export-html/index.ts";
 import {
-	type ContextUsage,
-	type ExtensionCommandContextActions,
 	type ExtensionErrorListener,
-	type ExtensionMode,
 	ExtensionRunner,
-	type ExtensionUIContext,
-	type InputSource,
-	type MessageEndEvent,
-	type MessageStartEvent,
-	type MessageUpdateEvent,
-	type ReplacedSessionContext,
-	type SessionBeforeCompactResult,
-	type SessionBeforeTreeResult,
-	type SessionStartEvent,
+	emitSessionShutdownEvent,
 	type ShutdownHandler,
-	type ToolDefinition,
-	type ToolExecutionEndEvent,
-	type ToolExecutionStartEvent,
-	type ToolExecutionUpdateEvent,
-	type ToolInfo,
-	type TreePreparation,
-	type TurnEndEvent,
-	type TurnStartEvent,
-	wrapRegisteredTools,
-} from "./extensions/index.ts";
-import { emitSessionShutdownEvent } from "./extensions/runner.ts";
+} from "./extensions/runner.ts";
+import type {
+	ContextUsage,
+	ExtensionCommandContextActions,
+	ExtensionMode,
+	ExtensionUIContext,
+	InputSource,
+	MessageEndEvent,
+	MessageStartEvent,
+	MessageUpdateEvent,
+	ReplacedSessionContext,
+	SessionBeforeCompactResult,
+	SessionBeforeTreeResult,
+	SessionStartEvent,
+	ToolDefinition,
+	ToolExecutionEndEvent,
+	ToolExecutionStartEvent,
+	ToolExecutionUpdateEvent,
+	ToolInfo,
+	TreePreparation,
+	TurnEndEvent,
+	TurnStartEvent,
+} from "./extensions/types.ts";
+import { wrapRegisteredTools } from "./extensions/wrapper.ts";
 import {
 	type BashExecutionMessage,
 	type CustomMessage,
@@ -113,8 +113,12 @@ import type { SettingsManager } from "./settings-manager.ts";
 import type { SlashCommandInfo } from "./slash-commands.ts";
 import { createSyntheticSourceInfo, type SourceInfo } from "./source-info.ts";
 import { type BuildSystemPromptOptions, buildSystemPrompt } from "./system-prompt.ts";
-import { evaluateToolApproval } from "./tool-approval.ts";
-import { type BashOperations, createLocalBashOperations } from "./tools/bash.ts";
+import {
+	evaluateToolApproval,
+	TOOL_APPROVAL_DECISION_ENTRY_TYPE,
+	type ToolApprovalDecisionRecord,
+} from "./tool-approval.ts";
+import { type BashOperations, createLocalBashOperations, createSandboxNetworkAccessPrompt } from "./tools/bash.ts";
 import { createAllToolDefinitions } from "./tools/index.ts";
 import { createToolDefinitionFromAgentTool } from "./tools/tool-definition-wrapper.ts";
 import { addUsageToTotals, createUsageTotals } from "./usage-totals.ts";
@@ -358,6 +362,8 @@ export class AgentSession {
 	private _resourceLoader: ResourceLoader;
 	private _customTools: ToolDefinition[];
 	private _baseToolDefinitions: Map<string, ToolDefinition> = new Map();
+	private _defaultBaseToolDefinitions: Map<string, ToolDefinition> = new Map();
+	private _baseToolDefinitionOverrides: Map<string, ToolDefinition> = new Map();
 	private _cwd: string;
 	private _extensionRunnerRef?: { current?: ExtensionRunner };
 	private _initialActiveToolNames?: string[];
@@ -493,6 +499,12 @@ export class AgentSession {
 	 * registered tool execution to the extension context. Tool call and tool result interception now
 	 * happens here instead of in wrappers.
 	 */
+	private _recordToolApprovalDecision(data: ToolApprovalDecisionRecord): void {
+		const entryId = this.sessionManager.appendCustomEntry(TOOL_APPROVAL_DECISION_ENTRY_TYPE, data);
+		const entry = this.sessionManager.getEntry(entryId);
+		if (entry) this._emit({ type: "entry_appended", entry });
+	}
+
 	private _installAgentToolHooks(): void {
 		this.agent.beforeToolCall = async ({ toolCall, args, tool }, signal) => {
 			const runner = this._extensionRunner;
@@ -533,8 +545,31 @@ export class AgentSession {
 				["允许本次", "本次会话允许相同操作", "始终允许此工具", "始终禁止此工具", "拒绝本次"],
 				{ signal },
 			);
+			const canRememberOperation = choice === "本次会话允许相同操作" && Boolean(evaluation.fingerprint);
+			const approvalChoice: ToolApprovalDecisionRecord["choice"] =
+				choice === "允许本次"
+					? "allow-once"
+					: choice === "本次会话允许相同操作"
+						? "allow-session"
+						: choice === "始终允许此工具"
+							? "allow-always"
+							: choice === "始终禁止此工具"
+								? "deny-always"
+								: "reject-once";
+			const outcome =
+				choice === "允许本次" || canRememberOperation || choice === "始终允许此工具" ? "allow" : "deny";
+			this._recordToolApprovalDecision({
+				version: 1,
+				toolCallId: toolCall.id,
+				toolName: toolCall.name,
+				tier: evaluation.tier,
+				choice: approvalChoice,
+				outcome,
+				reason: evaluation.reason,
+				details: evaluation.details,
+			});
 			if (choice === "允许本次") return undefined;
-			if (choice === "本次会话允许相同操作" && evaluation.fingerprint) {
+			if (canRememberOperation) {
 				this._approvedToolOperations.add(evaluation.fingerprint);
 				return undefined;
 			}
@@ -1002,6 +1037,19 @@ export class AgentSession {
 
 	getToolDefinition(name: string): ToolDefinition | undefined {
 		return this._toolDefinitions.get(name)?.definition;
+	}
+
+	/**
+	 * Replace selected built-in tool definitions for the current host mode.
+	 * Passing an empty record restores the normal local implementations. Overrides survive session reloads.
+	 */
+	setBaseToolDefinitionOverrides(overrides: Readonly<Record<string, ToolDefinition>>): void {
+		this._baseToolDefinitionOverrides = new Map(Object.entries(overrides));
+		this._baseToolDefinitions = new Map(this._defaultBaseToolDefinitions);
+		for (const [name, definition] of this._baseToolDefinitionOverrides) {
+			if (this._defaultBaseToolDefinitions.has(name)) this._baseToolDefinitions.set(name, definition);
+		}
+		this._refreshToolRegistry({ activeToolNames: this.getActiveToolNames() });
 	}
 
 	/**
@@ -2689,9 +2737,13 @@ export class AgentSession {
 					bash: { commandPrefix: shellCommandPrefix, shellPath },
 				});
 
-		this._baseToolDefinitions = new Map(
+		this._defaultBaseToolDefinitions = new Map(
 			Object.entries(baseToolDefinitions).map(([name, tool]) => [name, tool as ToolDefinition]),
 		);
+		this._baseToolDefinitions = new Map(this._defaultBaseToolDefinitions);
+		for (const [name, definition] of this._baseToolDefinitionOverrides) {
+			if (this._defaultBaseToolDefinitions.has(name)) this._baseToolDefinitions.set(name, definition);
+		}
 
 		const extensionsResult = this._resourceLoader.getExtensions();
 		if (options.flagValues) {
@@ -2903,6 +2955,10 @@ export class AgentSession {
 		const resolvedCommand = prefix ? `${prefix}\n${command}` : command;
 
 		try {
+			const networkPrompt = createSandboxNetworkAccessPrompt(
+				this._extensionRunner.createContext(),
+				abortController.signal,
+			);
 			const result = await executeBashWithOperations(
 				resolvedCommand,
 				this.sessionManager.getCwd(),
@@ -2913,6 +2969,7 @@ export class AgentSession {
 						this._emit({ type: "bash_execution_update", id: options?.id, delta });
 					},
 					signal: abortController.signal,
+					...(networkPrompt ? { requestNetworkAccess: networkPrompt } : {}),
 				},
 			);
 
@@ -3340,6 +3397,11 @@ export class AgentSession {
 	 * @returns Path to exported file
 	 */
 	async exportToHtml(outputPath?: string): Promise<string> {
+		const [{ getThemeByName, theme }, { exportSessionToHtml }, { createToolHtmlRenderer }] = await Promise.all([
+			import("../modes/interactive/theme/theme.ts"),
+			import("./export-html/index.ts"),
+			import("./export-html/tool-renderer.ts"),
+		]);
 		const configuredThemeName = this.settingsManager.getTheme();
 		const themeName = configuredThemeName && getThemeByName(configuredThemeName) ? configuredThemeName : undefined;
 

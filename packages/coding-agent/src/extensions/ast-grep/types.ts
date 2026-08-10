@@ -1,10 +1,45 @@
 import type { FileDiff } from "../../core/tools/edit-diff.ts";
 
-export const AST_GREP_EXPLICIT_LANGUAGES = ["javascript", "typescript", "tsx", "html", "css"] as const;
+export const AST_GREP_EXPLICIT_LANGUAGES = [
+	"javascript",
+	"typescript",
+	"tsx",
+	"html",
+	"css",
+	"python",
+	"go",
+	"rust",
+	"json",
+	"yaml",
+	"markdown",
+] as const;
 export const AST_GREP_LANGUAGES = ["auto", ...AST_GREP_EXPLICIT_LANGUAGES] as const;
 
 export type AstGrepLanguage = (typeof AST_GREP_LANGUAGES)[number];
 export type AstGrepExplicitLanguage = (typeof AST_GREP_EXPLICIT_LANGUAGES)[number];
+
+export interface AstGrepPosition {
+	line: number;
+	column: number;
+	index: number;
+}
+
+export interface AstGrepRange {
+	start: AstGrepPosition;
+	end: AstGrepPosition;
+}
+
+export interface AstGrepCapture {
+	text: string;
+	range: AstGrepRange;
+}
+
+export interface AstGrepMatch {
+	file: string;
+	range: AstGrepRange;
+	text: string;
+	captures: Record<string, AstGrepCapture[]>;
+}
 
 export interface AstGrepSearchRequest {
 	pattern: string;
@@ -22,6 +57,7 @@ export interface AstGrepSearchDetails {
 	truncated: boolean;
 	outputTruncated: boolean;
 	durationMs: number;
+	matches: AstGrepMatch[];
 }
 
 export interface AstGrepSearchResult {

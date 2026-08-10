@@ -3,6 +3,7 @@ import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ExtensionUIContext } from "../../src/core/extensions/types.ts";
+import { TOOL_APPROVAL_DECISION_ENTRY_TYPE } from "../../src/core/tool-approval.ts";
 import { createHarness, type Harness } from "./harness.ts";
 
 const ECHO_PARAMETERS = Type.Object({ text: Type.String() });
@@ -72,6 +73,17 @@ describe("AgentSession tool approval", () => {
 
 		expect(executions).toBe(2);
 		expect(select).toHaveBeenCalledTimes(1);
+		expect(harness.sessionManager.getEntries()).toContainEqual(
+			expect.objectContaining({
+				type: "custom",
+				customType: TOOL_APPROVAL_DECISION_ENTRY_TYPE,
+				data: expect.objectContaining({
+					toolName: "echo",
+					choice: "allow-session",
+					outcome: "allow",
+				}),
+			}),
+		);
 	});
 
 	it("persists an always-allow decision for the tool", async () => {

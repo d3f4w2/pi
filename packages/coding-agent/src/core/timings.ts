@@ -9,9 +9,16 @@ interface TimingNamespace {
 	lastTime: number;
 }
 
-type TimingLabel = "main" | "extensions";
+type TimingLabel = "process" | "main" | "extensions" | "request";
 
 const timingNamespaces = new Map<TimingLabel, TimingNamespace>();
+
+if (ENABLED) {
+	timingNamespaces.set("process", {
+		timings: [],
+		lastTime: Date.now() - process.uptime() * 1000,
+	});
+}
 
 export function resetTimings(namespace: TimingLabel = "main"): void {
 	if (!ENABLED) return;
@@ -27,7 +34,7 @@ export function time(label: string, namespace: TimingLabel = "main"): void {
 	}
 
 	const timingNamespace = timingNamespaces.get(namespace)!;
-	timingNamespace.timings.push({ label, ms: now - timingNamespace.lastTime });
+	timingNamespace.timings.push({ label, ms: Math.round(now - timingNamespace.lastTime) });
 	timingNamespace.lastTime = now;
 }
 

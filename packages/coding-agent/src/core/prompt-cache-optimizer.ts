@@ -112,6 +112,17 @@ function restoreCacheDeveloperContext(input: unknown[]): unknown[] {
 	return changed ? restored : input;
 }
 
+/**
+ * Remove the private transport marker and restore its provider-visible role.
+ * This normalization is independent of cache-key ownership so extensions can
+ * safely replace or remove `prompt_cache_key` without leaking the marker.
+ */
+export function normalizeOpenAIResponsesDeveloperContext(payload: unknown): unknown {
+	if (!isRecord(payload) || !Array.isArray(payload.input)) return payload;
+	const input = restoreCacheDeveloperContext(payload.input);
+	return input === payload.input ? payload : { ...payload, input };
+}
+
 interface SystemMessageText {
 	text: string;
 	rewritable: boolean;
@@ -275,8 +286,8 @@ export function optimizeOpenAIResponsesPromptCache(
 		if (!isRecord(payload) || !Array.isArray(payload.input)) {
 			return { payload, diagnostic: { reason: "invalid-payload" } };
 		}
-		const providerInput = restoreCacheDeveloperContext(payload.input);
-		const providerPayload = providerInput === payload.input ? payload : { ...payload, input: providerInput };
+		const providerPayload = normalizeOpenAIResponsesDeveloperContext(payload) as Record<string, unknown>;
+		const providerInput = providerPayload.input as unknown[];
 		if (typeof payload.prompt_cache_key !== "string" || payload.prompt_cache_key.length === 0) {
 			return { payload: providerPayload, diagnostic: { reason: "cache-disabled" } };
 		}
