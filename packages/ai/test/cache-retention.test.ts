@@ -19,7 +19,17 @@ interface OpenAICompletionsCachePayload {
 }
 
 interface OpenAIResponsesCachePayload extends OpenAICompletionsCachePayload {
-	prompt_cache_options?: { mode: "explicit" };
+	prompt_cache_options?: { mode: "explicit"; ttl?: "30m" };
+	input?: Array<{
+		role?: string;
+		content?:
+			| string
+			| Array<{
+					type: "input_text";
+					text: string;
+					prompt_cache_breakpoint?: { mode: "explicit" };
+			  }>;
+	}>;
 }
 
 function stopAfterPayload<TPayload>(capture: (payload: TPayload) => void): (payload: unknown) => never {
@@ -396,6 +406,55 @@ describe("Cache Retention (PI_CACHE_RETENTION)", () => {
 			expect(capturedPayload).toBeDefined();
 			expect(capturedPayload?.prompt_cache_key).toBeUndefined();
 			expect(capturedPayload?.prompt_cache_options).toBeUndefined();
+		});
+
+		it("should mark the stable system prefix for explicit GPT-5.6 caching", async () => {
+			const baseModel = getModel("openai", "gpt-5.6-sol");
+			const model = {
+				...baseModel,
+				compat: {
+					...baseModel.compat,
+					supportsPromptCacheBreakpoints: true,
+				},
+			};
+			const stableSystemPrompt = "Stable cache experiment instruction. ".repeat(400);
+			let capturedPayload: OpenAIResponsesCachePayload | undefined;
+
+			try {
+				const s = streamOpenAIResponses(
+					model,
+					{
+						systemPrompt: stableSystemPrompt,
+						messages: [{ role: "user", content: "Variable task suffix", timestamp: Date.now() }],
+					},
+					{
+						apiKey: "fake-key",
+						cacheRetention: "short",
+						sessionId: "explicit-stable-prefix",
+						onPayload: stopAfterPayload<OpenAIResponsesCachePayload>((payload) => {
+							capturedPayload = payload;
+						}),
+					},
+				);
+
+				for await (const event of s) {
+					if (event.type === "error") break;
+				}
+			} catch {
+				// Payload capture intentionally stops before the request.
+			}
+
+			expect(capturedPayload?.prompt_cache_options).toEqual({ mode: "explicit", ttl: "30m" });
+			expect(capturedPayload?.prompt_cache_retention).toBeUndefined();
+			const systemMessage = capturedPayload?.input?.[0];
+			expect(systemMessage?.role).toBe("developer");
+			expect(systemMessage?.content).toEqual([
+				{
+					type: "input_text",
+					text: stableSystemPrompt,
+					prompt_cache_breakpoint: { mode: "explicit" },
+				},
+			]);
 		});
 
 		it("should set prompt_cache_retention when cacheRetention is long", async () => {

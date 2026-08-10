@@ -82,6 +82,7 @@ describe("context hygiene", () => {
 		expect(resolveContextPruningSettings()).toEqual(DEFAULT_CONTEXT_PRUNING_SETTINGS);
 		expect(
 			resolveContextPruningSettings({
+				cacheWarmSuffixTokens: -20,
 				protectRecentTokens: -20,
 				minimumSavingsTokens: Number.NaN,
 				minimumResultTokens: 0,
@@ -89,10 +90,66 @@ describe("context hygiene", () => {
 			}),
 		).toEqual({
 			...DEFAULT_CONTEXT_PRUNING_SETTINGS,
+			cacheWarmSuffixTokens: 0,
 			protectRecentTokens: 0,
 			minimumResultTokens: 1,
 			previewCharacters: 1_000,
 		});
+	});
+
+	it("keeps superseded results in the deep warm-cache prefix", () => {
+		const oldOutput = `old-${"a".repeat(8_000)}`;
+		const newOutput = `new-${"b".repeat(8_000)}`;
+		const messages: AgentMessage[] = [
+			...exchange("read-1", "read", { path: "src/app.ts" }, oldOutput, 1),
+			...exchange("read-2", "read", { path: "src/app.ts" }, newOutput, 3),
+			{ role: "user", content: `large-tail-${"t".repeat(40_000)}`, timestamp: 5 },
+		];
+		const result = pruneContextToolOutputs(messages, {
+			...AGGRESSIVE_SETTINGS,
+			protectRecentTokens: 1,
+			cacheWarmSuffixTokens: 8_000,
+		});
+
+		expect(result.messages).toBe(messages);
+		expect(resultText(result.messages[1]!)).toBe(oldOutput);
+		expect(result.stats.prunedResults).toBe(0);
+		expect(result.stats.cacheProtectedResults).toBeGreaterThanOrEqual(1);
+	});
+
+	it("prunes an exact duplicate inside the cache-warm tail despite the recency window", () => {
+		const oldOutput = `old-${"a".repeat(8_000)}`;
+		const newOutput = `new-${"b".repeat(8_000)}`;
+		const messages = [
+			...exchange("read-1", "read", { path: "src/app.ts" }, oldOutput, 1),
+			...exchange("read-2", "read", { path: "src/app.ts" }, newOutput, 3),
+		];
+		const result = pruneContextToolOutputs(messages, {
+			...DEFAULT_CONTEXT_PRUNING_SETTINGS,
+			cacheWarmSuffixTokens: 8_000,
+			protectRecentTokens: 100_000,
+		});
+
+		expect(resultText(result.messages[1]!)).toContain("newer result for the same read request");
+		expect(resultText(result.messages[3]!)).toBe(newOutput);
+		expect(result.stats.supersededResults).toBe(1);
+	});
+
+	it("still invalidates a proven stale read inside the deep warm-cache prefix", () => {
+		const oldOutput = `old-source-${"x".repeat(8_000)}`;
+		const messages: AgentMessage[] = [
+			...exchange("read", "read", { path: "src/app.ts" }, oldOutput, 1),
+			...exchange("edit", "edit", { path: "src/app.ts", oldText: "old", newText: "new" }, "updated", 3),
+			{ role: "user", content: `large-tail-${"t".repeat(40_000)}`, timestamp: 5 },
+		];
+		const result = pruneContextToolOutputs(messages, {
+			...AGGRESSIVE_SETTINGS,
+			protectRecentTokens: 100_000,
+			cacheWarmSuffixTokens: 8_000,
+		});
+
+		expect(resultText(result.messages[1]!)).toContain("modified by a later edit");
+		expect(result.stats.invalidatedResults).toBe(1);
 	});
 
 	it("returns the original array when disabled or when savings are below the floor", () => {

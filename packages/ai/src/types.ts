@@ -622,6 +622,8 @@ export interface OpenAIResponsesCompat {
 	supportsToolSearch?: boolean;
 	/** Whether the model accepts `prompt_cache_options` (OpenAI GPT-5.6+ explicit prompt caching). Older OpenAI models reject the parameter. Default: false. */
 	supportsExplicitPromptCacheMode?: boolean;
+	/** Whether the model accepts `prompt_cache_breakpoint` on Responses input content blocks. Default: false. */
+	supportsPromptCacheBreakpoints?: boolean;
 }
 
 /** Compatibility settings for Anthropic Messages-compatible APIs. */

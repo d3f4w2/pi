@@ -11,6 +11,8 @@
 - Invalidate an older file read after a later successful `edit` or `write` changes the same normalized path.
 - When unique old output must be reduced, retain bounded head/tail evidence and a recovery instruction.
 - Never prune errors, images, instruction resources, or the newest protected tool-output budget.
+- Keep deep results byte-identical when changing them would rewrite more than the configured prompt-cache tail.
+- Let exact duplicate results bypass the recency and aggregate-savings floors only inside that bounded tail.
 - Run extension context transforms before the built-in hygiene pass.
 - Allow the behavior and budgets to be configured from normal settings.
 
@@ -20,6 +22,7 @@
 - Linear time in the number and size of messages, with no mutation of caller-owned messages.
 - Return the original array by reference when no useful reduction is available.
 - Require a minimum estimated saving before changing context, avoiding prompt-cache churn for small gains.
+- Bound cache churn using the estimated suffix of all messages, not only tool output.
 - Fail open: any unexpected error returns the extension-transformed context unchanged.
 - Produce deterministic output for the same messages and settings.
 
@@ -36,7 +39,7 @@ index assistant tool calls by toolCallId
           |
           v
 classify tool results
-  | protected: error / image / instruction / recent budget
+  | protected: error / image / instruction / recent budget / deep cache prefix
   | superseded: newer identical request exists
   | invalidated: later successful edit/write changed the read path
   | stale-large: old, unique, above minimum size
@@ -67,6 +70,9 @@ Pure context transformation and statistics:
 - marks earlier successful duplicates as superseded;
 - tracks successful file mutations and marks earlier same-path reads as invalidated;
 - protects recent output by walking newest to oldest;
+- computes the all-message token suffix for every candidate;
+- protects candidates whose suffix exceeds the prompt-cache tail;
+- lets exact superseded requests bypass recency and savings floors inside that tail;
 - selects old large candidates only when projected savings clears the configured floor;
 - clones only the messages that are actually changed.
 
@@ -79,6 +85,7 @@ Defaults:
 | Setting | Default | Meaning |
 |---|---:|---|
 | `enabled` | `true` | Enable provider-context hygiene |
+| `cacheWarmSuffixTokens` | `0` | Largest all-message suffix a replacement may invalidate; `0` disables the experimental guard |
 | `protectRecentTokens` | `40000` | Keep newest tool output verbatim |
 | `minimumSavingsTokens` | `8000` | Do nothing below this projected saving |
 | `minimumResultTokens` | `512` | Ignore small results |
@@ -93,11 +100,12 @@ The pass never changes:
 - `skill` results;
 - `read` results for `skill://`, `AGENTS.md`, or `SKILL.md`;
 - results inside the newest protected output-token budget;
+- results with more than `cacheWarmSuffixTokens` estimated tokens after them;
 - any result below the minimum result size.
 
-Confirmed stale reads are the exception to the recent and minimum-size rules: correctness takes priority once a later successful `edit` or `write` proves that the old source is obsolete. Their replacement contains no source preview. Failed mutations, different paths, terminal commands, and unknown tools fail open.
+Confirmed stale reads are the exception to the recent, minimum-size, and cache-suffix rules: correctness takes priority once a later successful `edit` or `write` proves that the old source is obsolete. Their replacement contains no source preview. Failed mutations, different paths, terminal commands, and unknown tools fail open.
 
-Exact duplicate requests are compared using recursively sorted object keys. A later exact request can supersede an earlier one, while a focused `read(offset, limit)` does not incorrectly replace a whole-file read.
+Exact duplicate requests are compared using recursively sorted object keys. A later exact request can supersede an earlier one inside the cache tail even when the pair is inside the recent-output budget or below the aggregate savings floor. A focused `read(offset, limit)` does not incorrectly replace a whole-file read.
 
 ## Failure modes
 
@@ -111,6 +119,7 @@ Exact duplicate requests are compared using recursively sorted object keys. A la
 | Extension transform pipeline throws | Return the original messages unchanged |
 | Hygiene pass throws | Return the extension-transformed messages unchanged |
 | Savings below floor | Return the original array unchanged |
+| Cache-tail setting is `0` | Use legacy pruning without a suffix guard |
 
 ## Security and privacy
 
@@ -130,4 +139,6 @@ Exact duplicate requests are compared using recursively sorted object keys. A la
 
 ### Representative benchmark
 
-A synthetic 120-call read loop (240 messages, 30 repeatedly read paths, about 331,300 estimated tokens) transformed in about 0.87 ms on the development machine. The provider view fell to about 45,810 estimated tokens: an 86.2% reduction, while the source message array stayed unchanged. This is a scale illustration, not a cross-machine latency guarantee.
+A synthetic 120-call read loop contained about 241,280 estimated tokens. With an 8,000-token cache guard, the pass changed 2 results, saved about 3,936 tokens, and bounded the deepest rewritten suffix to about 6,033 tokens. With the guard disabled, it changed 110 results and saved about 213,200 tokens, but the deepest rewritten suffix was about 239,270 tokens. Transform time was about 1.08 ms versus 0.64 ms on the development machine.
+
+A separate three-request live experiment against `rayin-gpt/gpt-5.6-terra` reported 5,632 cache-read tokens for both the guarded and legacy variants. The guarded variant sent 16,030 uncached input tokens versus 13,103 for legacy pruning, so it showed no cache-read benefit and 2,927 additional uncached input tokens. The guard therefore remains disabled by default. See the [complete experiment record](experiments/2026-08-10-context-cache-prefix-proof.md).

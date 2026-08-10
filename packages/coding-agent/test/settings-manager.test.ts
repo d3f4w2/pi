@@ -385,6 +385,7 @@ describe("SettingsManager", () => {
 				join(agentDir, "settings.json"),
 				JSON.stringify({
 					contextPruning: {
+						cacheWarmSuffixTokens: 12_000,
 						enabled: false,
 						protectRecentTokens: 12_000,
 						minimumSavingsTokens: 2_000,
@@ -395,6 +396,7 @@ describe("SettingsManager", () => {
 				join(projectDir, ".pi", "settings.json"),
 				JSON.stringify({
 					contextPruning: {
+						cacheWarmSuffixTokens: -10,
 						enabled: true,
 						minimumResultTokens: -10,
 						previewCharacters: 50_000,
@@ -405,6 +407,7 @@ describe("SettingsManager", () => {
 			const manager = SettingsManager.create(projectDir, agentDir);
 
 			expect(manager.getContextPruningSettings()).toEqual({
+				cacheWarmSuffixTokens: 0,
 				enabled: true,
 				protectRecentTokens: 12_000,
 				minimumSavingsTokens: 2_000,

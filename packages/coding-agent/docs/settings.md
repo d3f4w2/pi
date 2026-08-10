@@ -135,6 +135,7 @@ Context pruning reduces old, large tool results only in the temporary provider r
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
 | `contextPruning.enabled` | boolean | `true` | Enable deterministic provider-context pruning |
+| `contextPruning.cacheWarmSuffixTokens` | number | `0` | Maximum all-message suffix a replacement may invalidate; `0` disables the experimental cache guard |
 | `contextPruning.protectRecentTokens` | number | `40000` | Newest tool-output tokens to keep verbatim |
 | `contextPruning.minimumSavingsTokens` | number | `8000` | Minimum projected saving before changing context |
 | `contextPruning.minimumResultTokens` | number | `512` | Smallest tool result eligible for pruning |
@@ -144,6 +145,7 @@ Context pruning reduces old, large tool results only in the temporary provider r
 {
   "contextPruning": {
     "enabled": true,
+    "cacheWarmSuffixTokens": 0,
     "protectRecentTokens": 40000,
     "minimumSavingsTokens": 8000,
     "minimumResultTokens": 512,

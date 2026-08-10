@@ -4,6 +4,8 @@ import { estimateTokens } from "./compaction/compaction.ts";
 
 export interface ContextPruningSettings {
 	enabled?: boolean;
+	/** Only rewrite results with at most this many estimated tokens after them. Zero disables the cache guard. */
+	cacheWarmSuffixTokens?: number;
 	protectRecentTokens?: number;
 	minimumSavingsTokens?: number;
 	minimumResultTokens?: number;
@@ -12,6 +14,7 @@ export interface ContextPruningSettings {
 
 export interface ResolvedContextPruningSettings {
 	enabled: boolean;
+	cacheWarmSuffixTokens: number;
 	protectRecentTokens: number;
 	minimumSavingsTokens: number;
 	minimumResultTokens: number;
@@ -20,6 +23,7 @@ export interface ResolvedContextPruningSettings {
 
 export const DEFAULT_CONTEXT_PRUNING_SETTINGS: ResolvedContextPruningSettings = {
 	enabled: true,
+	cacheWarmSuffixTokens: 0,
 	protectRecentTokens: 40_000,
 	minimumSavingsTokens: 8_000,
 	minimumResultTokens: 512,
@@ -33,6 +37,7 @@ export interface ContextPruningStats {
 	prunedResults: number;
 	supersededResults: number;
 	invalidatedResults: number;
+	cacheProtectedResults: number;
 }
 
 export interface ContextPruningResult {
@@ -63,6 +68,12 @@ function normalizedInteger(value: number | undefined, fallback: number, minimum:
 export function resolveContextPruningSettings(settings: ContextPruningSettings = {}): ResolvedContextPruningSettings {
 	return {
 		enabled: typeof settings.enabled === "boolean" ? settings.enabled : DEFAULT_CONTEXT_PRUNING_SETTINGS.enabled,
+		cacheWarmSuffixTokens: normalizedInteger(
+			settings.cacheWarmSuffixTokens,
+			DEFAULT_CONTEXT_PRUNING_SETTINGS.cacheWarmSuffixTokens,
+			0,
+			10_000_000,
+		),
 		protectRecentTokens: normalizedInteger(
 			settings.protectRecentTokens,
 			DEFAULT_CONTEXT_PRUNING_SETTINGS.protectRecentTokens,
@@ -224,7 +235,7 @@ function createReplacement(
 	};
 }
 
-function emptyStats(messages: readonly AgentMessage[]): ContextPruningStats {
+function emptyStats(messages: readonly AgentMessage[], cacheProtectedResults = 0): ContextPruningStats {
 	const estimatedTokens = messages.reduce((sum, message) => sum + estimateTokens(message), 0);
 	return {
 		estimatedTokensBefore: estimatedTokens,
@@ -233,6 +244,7 @@ function emptyStats(messages: readonly AgentMessage[]): ContextPruningStats {
 		prunedResults: 0,
 		supersededResults: 0,
 		invalidatedResults: 0,
+		cacheProtectedResults,
 	};
 }
 
@@ -249,9 +261,14 @@ export function pruneContextToolOutputs(
 	const candidates: PruningCandidate[] = [];
 	let recentTokens = 0;
 	let seenToolResults = 0;
+	let suffixTokens = 0;
+	let cacheProtectedResults = 0;
 
 	for (let index = messages.length - 1; index >= 0; index--) {
 		const message = messages[index];
+		const messageTokens = estimateTokens(message);
+		const tokensAfterMessage = suffixTokens;
+		suffixTokens += messageTokens;
 		if (message?.role !== "toolResult") continue;
 
 		const request = requests.get(message.toolCallId);
@@ -261,7 +278,7 @@ export function pruneContextToolOutputs(
 		const mutationPath = getMutationPath(request, message.isError);
 		if (mutationPath) laterMutations.set(mutationPath, toolName);
 		const invalidatedBy = toolName === "read" && argumentPath ? laterMutations.get(argumentPath) : undefined;
-		const originalTokens = estimateTokens(message);
+		const originalTokens = messageTokens;
 		const protectedByRecency = seenToolResults === 0 || recentTokens + originalTokens <= settings.protectRecentTokens;
 		recentTokens += originalTokens;
 		seenToolResults++;
@@ -269,12 +286,11 @@ export function pruneContextToolOutputs(
 		const superseded = !message.isError && key !== undefined && seenSuccessfulRequests.has(key);
 		if (!message.isError && key !== undefined) seenSuccessfulRequests.add(key);
 
-		if (
-			message.isError ||
-			containsImage(message) ||
-			isInstructionResult(message, request) ||
-			(!invalidatedBy && (protectedByRecency || originalTokens < settings.minimumResultTokens))
-		) {
+		if (message.isError || containsImage(message) || isInstructionResult(message, request)) continue;
+		if (!invalidatedBy && originalTokens < settings.minimumResultTokens) continue;
+		if (!invalidatedBy && !superseded && protectedByRecency) continue;
+		if (!invalidatedBy && settings.cacheWarmSuffixTokens > 0 && tokensAfterMessage > settings.cacheWarmSuffixTokens) {
+			cacheProtectedResults++;
 			continue;
 		}
 
@@ -305,9 +321,9 @@ export function pruneContextToolOutputs(
 	const selectedCandidates =
 		projectedSavings >= settings.minimumSavingsTokens
 			? candidates
-			: candidates.filter((candidate) => candidate.invalidated);
+			: candidates.filter((candidate) => candidate.invalidated || candidate.superseded);
 	if (selectedCandidates.length === 0) {
-		return { messages, stats: emptyStats(messages) };
+		return { messages, stats: emptyStats(messages, cacheProtectedResults) };
 	}
 
 	const transformed = [...messages];
@@ -324,6 +340,7 @@ export function pruneContextToolOutputs(
 			prunedResults: selectedCandidates.length,
 			supersededResults: selectedCandidates.filter((candidate) => candidate.superseded).length,
 			invalidatedResults: selectedCandidates.filter((candidate) => candidate.invalidated).length,
+			cacheProtectedResults,
 		},
 	};
 }

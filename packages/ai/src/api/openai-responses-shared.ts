@@ -117,6 +117,8 @@ export interface OpenAIResponsesStreamOptions {
 
 export interface ConvertResponsesMessagesOptions {
 	includeSystemPrompt?: boolean;
+	/** Mark the system prompt as the end of an explicitly cacheable stable prefix. */
+	systemPromptCacheBreakpoint?: boolean;
 	grammarToolInputProperties?: ReadonlyMap<string, string>;
 	deferredTools?: ReadonlyMap<string, Tool>;
 	deferredToolsMode?: "additional-tools" | "tool-search";
@@ -128,6 +130,10 @@ export interface ConvertResponsesToolsOptions {
 	supportsStrictMode?: boolean;
 	supportsOpenAIGrammarTools?: boolean;
 	deferLoading?: boolean;
+}
+
+interface PromptCacheInputText extends ResponseInputText {
+	prompt_cache_breakpoint: { mode: "explicit" };
 }
 
 // =============================================================================
@@ -174,9 +180,18 @@ export function convertResponsesMessages<TApi extends Api>(
 	if (includeSystemPrompt && context.systemPrompt) {
 		const compat = model.compat as { supportsDeveloperRole?: boolean } | undefined;
 		const role = model.reasoning && compat?.supportsDeveloperRole !== false ? "developer" : "system";
+		const systemContent = options?.systemPromptCacheBreakpoint
+			? ([
+					{
+						type: "input_text",
+						text: sanitizeSurrogates(context.systemPrompt),
+						prompt_cache_breakpoint: { mode: "explicit" },
+					} satisfies PromptCacheInputText,
+				] satisfies PromptCacheInputText[])
+			: sanitizeSurrogates(context.systemPrompt);
 		messages.push({
 			role,
-			content: sanitizeSurrogates(context.systemPrompt),
+			content: systemContent,
 		});
 	}
 

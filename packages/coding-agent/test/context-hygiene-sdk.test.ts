@@ -136,6 +136,42 @@ describe("SDK context hygiene", () => {
 		expect(messageText(session.messages[1]!)).toBe(originalRead);
 	});
 
+	it("keeps deep warm-cache results byte-identical in the provider-visible context", async () => {
+		const model = getModel("anthropic", "claude-sonnet-4-5");
+		if (!model) throw new Error("test model unavailable");
+		const settingsManager = SettingsManager.inMemory({
+			contextPruning: {
+				cacheWarmSuffixTokens: 8_000,
+				protectRecentTokens: 1,
+				minimumSavingsTokens: 1,
+				minimumResultTokens: 1,
+			},
+		});
+		const { session } = await createAgentSession({
+			model,
+			settingsManager,
+			sessionManager: SessionManager.inMemory(process.cwd()),
+			resourceLoader: createTestResourceLoader(),
+		});
+		sessions.push(session);
+		const oldRead = `old-${"a".repeat(8_000)}`;
+		const newRead = `new-${"b".repeat(8_000)}`;
+		const messages: AgentMessage[] = [
+			...exchange("read-old", "read", { path: "src/app.ts" }, oldRead, 1),
+			...exchange("read-new", "read", { path: "src/app.ts" }, newRead, 3),
+			{ role: "user", content: `large-tail-${"t".repeat(40_000)}`, timestamp: 5 },
+		];
+		session.agent.state.messages = messages;
+
+		const transformed = await session.agent.transformContext?.(session.messages);
+		if (!transformed) throw new Error("context transform unavailable");
+
+		expect(transformed).toEqual(session.messages);
+		expect(messageText(transformed[1]!)).toBe(oldRead);
+		expect(messageText(session.messages[1]!)).toBe(oldRead);
+		expect(session.messages).toEqual(messages);
+	});
+
 	it("fails open when custom tool arguments cannot be inspected", async () => {
 		const model = getModel("anthropic", "claude-sonnet-4-5");
 		if (!model) throw new Error("test model unavailable");
