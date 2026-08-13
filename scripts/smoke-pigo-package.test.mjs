@@ -42,10 +42,11 @@ test("prepends only the isolated npm bin and disables network startup work", () 
 });
 
 test("resolves npm-cli.js beside Node when npm_execpath is unavailable", () => {
-	const expected = join("C:\\node", "node_modules", "npm", "bin", "npm-cli.js");
+	const nodeDirectory = join("fixtures", "node");
+	const expected = join(nodeDirectory, "node_modules", "npm", "bin", "npm-cli.js");
 	const resolved = resolveNpmCliPath({
 		npmExecPath: undefined,
-		nodeExecPath: "C:\\node\\node.exe",
+		nodeExecPath: join(nodeDirectory, "node.exe"),
 		fileExists: (candidate) => candidate === expected,
 	});
 
