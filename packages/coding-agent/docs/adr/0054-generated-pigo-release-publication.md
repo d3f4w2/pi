@@ -4,6 +4,15 @@
 
 Accepted
 
+## Implementation record
+
+`pi-gogogo@0.84.1` was published to the public npm registry on 2026-08-13 through an
+owner-authenticated, account-2FA-protected bootstrap release. No npm publish token was written to the
+repository or GitHub. After propagation, the public-registry smoke test installed the exact version into
+an empty temporary global prefix and executed the installed command shim, version check, and redacted
+doctor checks. npm metadata reported `latest = 0.84.1`, `pigo -> dist/bundle/cli.js`, and the fork-owned
+repository URL.
+
 ## Problem
 
 `pi-gogogo` is a generated CLI-only product package rather than an npm workspace. The existing release workflow belongs to
@@ -51,12 +60,12 @@ Node 24 Windows `spawnSync("npm.cmd")` failure while retaining the normal execut
 
 ### Negative
 
-- The first public release requires one temporary granular publish token; it must be revoked after trusted publishing is configured.
+- Initial package ownership must be established by an authenticated npm owner before a trusted-publisher record can be created. Version `0.84.1` established that ownership with account 2FA rather than a persisted publish token.
 - The fork owns a product release workflow in addition to the inherited upstream release workflow.
 
 ### Neutral
 
-- `pi-gogogo` remains absent from npm workspaces. Its generated manifest takes the current coding-agent version.
+- `pi-gogogo` remains absent from npm workspaces even though the generated product is public on npm. Its generated manifest takes the current coding-agent version.
 - Upstream release announcements continue to describe only upstream public workspace packages.
 
 ## Alternatives considered

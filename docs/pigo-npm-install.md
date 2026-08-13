@@ -1,4 +1,4 @@
-# Pigo npm Installation Implementation Plan
+# Pigo npm Installation and Release Record
 
 **Goal:** Make the locally built release installable with one npm command and make `pigo` executable from any working directory on Windows, macOS, and Linux.
 
@@ -10,7 +10,7 @@
 
 ## Decision
 
-The npm package name `pigo` is already occupied by an unrelated package. `pi-gogogo` is currently unregistered. The existing `@earendil-works/pi-coding-agent` package belongs to an upstream scope and its published artifact still exposes `pi`, so this fork cannot truthfully present it as the Pigo install target.
+The npm package name `pigo` is already occupied by an unrelated package. Pigo is therefore published as [`pi-gogogo`](https://www.npmjs.com/package/pi-gogogo), while its executable remains `pigo`. The existing `@earendil-works/pi-coding-agent` package belongs to an upstream scope and its published artifact still exposes `pi`, so this fork cannot truthfully present it as the Pigo install target.
 
 Renaming every upstream workspace would create unnecessary SDK and dependency churn. A runtime wrapper around the upstream package would be worse: it would execute upstream code instead of this fork's code. Therefore the product artifact is assembled from this repository's already bundled CLI. It contains that bundle, its runtime assets, and only the external dependencies deliberately left out by esbuild. There is no forwarding process or second CLI package at runtime.
 
@@ -21,7 +21,7 @@ npm install -g --ignore-scripts pi-gogogo
 pigo
 ```
 
-The first publication must be authenticated by an npm user because npm trusted publishing can only be configured after package ownership exists. After the first release, GitHub Actions OIDC becomes the required publication path.
+The first publication was authenticated by the npm owner with account-level `auth-and-writes` 2FA because npm trusted publishing can only be configured after package ownership exists. `pi-gogogo@0.84.1` was published on 2026-08-13. Future releases use the repository-owned GitHub Actions OIDC path after the npm trusted-publisher record is configured.
 
 ## Success criteria
 
@@ -158,8 +158,20 @@ Keep the install command visible before technical detail. Document `pigo doctor`
 
 The Pigo workflow verifies the tag version, builds offline, runs checks and provider-free tests on Linux and Windows, installs the real tarball in an isolated global prefix, publishes the same verified tarball through npm trusted publishing with provenance, and attaches the tarball plus SHA-256 checksum to the GitHub release. The inherited upstream npm/pi.dev publication jobs are restricted to `earendil-works/pi`, so a fork tag cannot publish upstream package identities or announce itself on pi.dev.
 
-The workflow is idempotent for an npm version that already exists. It still requires the `npm-publish` GitHub environment and an npm trusted-publisher record for `d3f4w2/pi-Gogogo`. The first package version must be claimed by an authenticated npm owner before npm allows that trusted-publisher record to be created.
+The workflow is idempotent for an npm version that already exists. It still requires the `npm-publish` GitHub environment and an npm trusted-publisher record for `d3f4w2/pi-Gogogo`. Package ownership now exists through the public `0.84.1` release, so that trusted-publisher record can be configured without retaining a long-lived npm publish token.
 
-## Release boundary
+## Public release evidence
 
-Tasks 1–7 produce a verified publishable artifact and an automated release path, but do not publish it. The first `pi-gogogo` publication requires an authenticated npm owner. npm publication, trusted-publisher configuration, Git tags, pushes, and GitHub releases are external state changes and remain separate release actions. The repository release rules require a changelog audit and a clean committed worktree before those actions.
+`pi-gogogo@0.84.1` was published to the public npm registry on 2026-08-13. After registry
+propagation, `scripts/smoke-published-pigo.mjs --version 0.84.1` installed the exact public version into
+an empty temporary prefix and verified the generated product manifest, the platform command shim,
+`pigo --version`, and redacted doctor output. Registry metadata independently reported:
+
+- `latest = 0.84.1`
+- `pigo -> dist/bundle/cli.js`
+- `git+https://github.com/d3f4w2/pi-Gogogo.git`
+
+The initial owner-authenticated publication did not persist a publish token in the repository or GitHub.
+The remaining release-operations step is to bind npm trusted publishing to repository
+`d3f4w2/pi-Gogogo`, workflow `publish-pigo.yml`, and environment `npm-publish`; subsequent versioned
+releases can then use short-lived GitHub OIDC identity and provenance instead of a reusable npm secret.

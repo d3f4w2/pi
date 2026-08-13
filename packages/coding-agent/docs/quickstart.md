@@ -10,6 +10,10 @@ Pigo is distributed as an npm package:
 npm install -g --ignore-scripts pi-gogogo
 ```
 
+The current public release is [`pi-gogogo@0.84.1`](https://www.npmjs.com/package/pi-gogogo/v/0.84.1).
+Its post-publication smoke test installs the exact registry version into an empty isolated prefix before
+executing the installed `pigo` shim, version command, and redacted doctor checks.
+
 `--ignore-scripts` disables dependency lifecycle scripts during install. Pigo does not require install scripts for normal npm installs.
 
 ### Uninstall

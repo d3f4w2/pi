@@ -28,6 +28,11 @@
 npm install -g --ignore-scripts pi-gogogo
 ```
 
+Current public release: [`pi-gogogo@0.84.1`](https://www.npmjs.com/package/pi-gogogo/v/0.84.1). The
+2026-08-13 release was installed again from the public npm registry into an empty isolated prefix and
+the generated `pigo` command, version metadata, and redacted doctor checks were verified before this
+status was documented.
+
 Verify the local runtime, then start it from any terminal or project directory:
 
 ```bash
