@@ -97,8 +97,8 @@ describe("WindowsSandboxBackend", () => {
 		});
 		expect(request.protectedWritePaths).toEqual(
 			expect.arrayContaining([
-				path.join(context.policy.workspaceRoot, ".git"),
-				path.join(context.policy.workspaceRoot, ".pi"),
+				path.win32.join(context.policy.workspaceRoot, ".git"),
+				path.win32.join(context.policy.workspaceRoot, ".pi"),
 			]),
 		);
 		expect(prepared.env).toEqual({

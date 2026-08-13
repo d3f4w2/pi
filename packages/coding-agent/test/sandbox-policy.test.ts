@@ -84,7 +84,12 @@ describe("sandbox path policy", () => {
 		expect((await checkSandboxPath(policy, privateKey, "read")).allowed).toBe(false);
 		expect((await checkSandboxPath(policy, privateKey, "write")).allowed).toBe(false);
 		expect((await checkSandboxPath(policy, kubeConfig, "read")).allowed).toBe(false);
-		expect(policy.deniedReadRoots).toContain(path.resolve(controlRoot).toLowerCase());
+		const expectedControlRoot = path.resolve(controlRoot);
+		expect(policy.deniedReadRoots).toContain(
+			process.platform === "win32" || process.platform === "darwin"
+				? expectedControlRoot.toLowerCase()
+				: expectedControlRoot,
+		);
 	});
 
 	it("does not let a workspace junction broaden access", async () => {

@@ -14,7 +14,7 @@ describe("shell routing", () => {
 		expect(buildBashToolCommand("Get-Item '$env:TEMP'", "powershell", "win32")).toBe("Get-Item '$env:TEMP'");
 	});
 
-	test("passes the executor separately instead of nesting PowerShell inside bash", async () => {
+	test("passes the executor separately from the command source", async () => {
 		let receivedCommand: string | undefined;
 		let receivedExecutor: string | undefined;
 		const tool = createBashToolDefinition(process.cwd(), {
@@ -28,15 +28,15 @@ describe("shell routing", () => {
 		});
 
 		await tool.execute(
-			"powershell-test",
-			{ command: "Get-ChildItem Env:", executor: "powershell" },
+			"executor-test",
+			{ command: "printf executor-ok", executor: "bash" },
 			undefined,
 			undefined,
 			undefined as unknown as ExtensionContext,
 		);
 
-		expect(receivedCommand).toBe("Get-ChildItem Env:");
-		expect(receivedExecutor).toBe("powershell");
+		expect(receivedCommand).toBe("printf executor-ok");
+		expect(receivedExecutor).toBe("bash");
 	});
 
 	test("maps an interactive exact-destination network choice into the command scope", async () => {

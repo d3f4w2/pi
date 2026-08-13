@@ -599,7 +599,7 @@ describe("Coding Agent Tools", () => {
 			expect(Buffer.concat(chunks).toString("utf-8")).toBe(command);
 		});
 
-		it("should resolve legacy WSL bash.exe to stdin command transport", () => {
+		it("should reject the legacy WSL bash.exe relay", () => {
 			if (process.platform === "win32") return;
 			const originalCwd = process.cwd();
 			const platformDescriptor = Object.getOwnPropertyDescriptor(process, "platform");
@@ -612,11 +612,7 @@ describe("Coding Agent Tools", () => {
 					value: "win32",
 				});
 
-				expect(shellModule.getShellConfig(shellPath)).toEqual({
-					shell: shellPath,
-					args: ["-s"],
-					commandTransport: "stdin",
-				});
+				expect(() => shellModule.getShellConfig(shellPath)).toThrow("不能使用 Windows 的 WSL bash.exe 中继程序");
 			} finally {
 				process.chdir(originalCwd);
 				if (platformDescriptor) {

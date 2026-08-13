@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { delimiter, dirname, isAbsolute, join } from "node:path";
+import { delimiter, isAbsolute, join, win32 } from "node:path";
 import { spawn, spawnSync } from "child_process";
 import { getBinDir } from "../config.ts";
 
@@ -75,8 +75,8 @@ export function selectGitBashNearGit(
 	fileExists: (path: string) => boolean = existsSync,
 ): string | null {
 	const candidates = gitExecutables.flatMap((gitExecutable) => {
-		const gitRoot = dirname(dirname(gitExecutable));
-		return [join(gitRoot, "bin", "bash.exe"), join(gitRoot, "usr", "bin", "bash.exe")];
+		const gitRoot = win32.dirname(win32.dirname(gitExecutable));
+		return [win32.join(gitRoot, "bin", "bash.exe"), win32.join(gitRoot, "usr", "bin", "bash.exe")];
 	});
 	return selectUsableWindowsBashPath(candidates, fileExists);
 }

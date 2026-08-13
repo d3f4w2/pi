@@ -47,7 +47,6 @@ async function fixture(): Promise<SandboxBackendContext> {
 			workspaceRoot,
 			sandboxTempRoot,
 			userHome,
-			platform: "win32",
 		}),
 	};
 }
