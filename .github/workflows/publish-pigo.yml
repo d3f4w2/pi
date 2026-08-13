@@ -1,0 +1,101 @@
+name: Publish Pigo
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: 'Source ref to build and publish (defaults to main)'
+        required: false
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: publish-pigo-${{ github.event.inputs.source_ref || github.ref_name || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'd3f4w2/pi-Gogogo'
+    runs-on: ubuntu-latest
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      SOURCE_REF: ${{ github.event.inputs.source_ref || github.ref_name || 'main' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.SOURCE_REF }}
+          persist-credentials: false
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+          package-manager-cache: false
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo ln -s "$(command -v fdfind)" /usr/local/bin/fd
+
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Resolve and validate version
+        id: version
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./packages/coding-agent/package.json').version")"
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "${GITHUB_REF_NAME}" != "v${version}" ]]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} does not match package version ${version}."
+            exit 1
+          fi
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+      - name: Check first-publish authority
+        env:
+          NPM_PUBLISH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+        run: |
+          set -euo pipefail
+          if npm view pi-gogogo name --json >/dev/null 2>&1; then
+            echo "pi-gogogo already exists; trusted publishing can authorize this release."
+          elif [[ -z "${NPM_PUBLISH_TOKEN}" ]]; then
+            echo "::error::pi-gogogo is not registered. Add a one-time NPM_PUBLISH_TOKEN secret for the first release, then configure trusted publishing for publish-pigo.yml and revoke the token."
+            exit 1
+          else
+            echo "pi-gogogo is not registered; the one-time bootstrap token will authorize its first release."
+          fi
+
+      - name: Build offline
+        run: npm run build:offline
+
+      - name: Check
+        run: npm run check
+
+      - name: Test
+        run: ./test.sh
+
+      - name: Smoke local product package
+        run: npm run smoke:pigo-package
+
+      - name: Upgrade npm for trusted publishing
+        run: |
+          npm install -g npm@11.16.0 --ignore-scripts
+          npm --version
+
+      - name: Publish Pigo with provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+        run: node scripts/publish.mjs --pigo-only
+
+      - name: Verify public registry install
+        run: node scripts/smoke-published-pigo.mjs --version "${{ steps.version.outputs.version }}"

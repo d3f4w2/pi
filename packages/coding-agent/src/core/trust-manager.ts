@@ -182,8 +182,13 @@ function withTrustFileLock<T>(path: string, fn: () => T): T {
  * trusted user resource and is ignored here, even when cwd is $HOME.
  */
 export function hasTrustRequiringProjectResources(cwd: string): boolean {
-	const homeDir = canonicalizePath(resolvePath(process.env.HOME || homedir()));
-	const userAgentsSkillsDir = join(homeDir, ".agents", "skills");
+	const windowsProfile =
+		process.env.HOMEDRIVE && process.env.HOMEPATH ? `${process.env.HOMEDRIVE}${process.env.HOMEPATH}` : undefined;
+	const userAgentsSkillsDirs = new Set(
+		[process.env.HOME, process.env.USERPROFILE, windowsProfile, homedir()]
+			.filter((homeDir): homeDir is string => Boolean(homeDir))
+			.map((homeDir) => join(canonicalizePath(resolvePath(homeDir)), ".agents", "skills")),
+	);
 	let currentDir = canonicalizePath(resolvePath(cwd));
 
 	const configDir = join(currentDir, CONFIG_DIR_NAME);
@@ -193,7 +198,7 @@ export function hasTrustRequiringProjectResources(cwd: string): boolean {
 
 	while (true) {
 		const agentsSkillsDir = join(currentDir, ".agents", "skills");
-		if (agentsSkillsDir !== userAgentsSkillsDir && existsSync(agentsSkillsDir)) {
+		if (!userAgentsSkillsDirs.has(agentsSkillsDir) && existsSync(agentsSkillsDir)) {
 			return true;
 		}
 

@@ -15,7 +15,7 @@ import {
 	writeFile,
 } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import {
@@ -174,8 +174,30 @@ async function findBashOnPath(): Promise<string | null> {
 			? await runCommand("where", ["bash.exe"], 5000)
 			: await runCommand("which", ["bash"], 5000);
 	if (result.status !== 0 || !result.stdout) return null;
-	const firstMatch = result.stdout.trim().split(/\r?\n/)[0];
-	return firstMatch && (await pathExists(firstMatch)) ? firstMatch : null;
+	const matches = result.stdout
+		.trim()
+		.split(/\r?\n/)
+		.map((path) => path.trim())
+		.filter(Boolean);
+	for (const match of matches) {
+		if (!isLegacyWslBashPath(match) && (await pathExists(match))) return match;
+	}
+	if (process.platform === "win32") {
+		const gitResult = await runCommand("where", ["git.exe"], 5000);
+		if (gitResult.status === 0) {
+			for (const gitPath of gitResult.stdout
+				.split(/\r?\n/)
+				.map((path) => path.trim())
+				.filter(Boolean)) {
+				const candidate = join(dirname(dirname(gitPath)), "bin", "bash.exe");
+				if (await pathExists(candidate)) return candidate;
+			}
+		}
+	}
+	for (const match of matches) {
+		if (await pathExists(match)) return match;
+	}
+	return null;
 }
 
 interface ShellConfig {
@@ -186,7 +208,10 @@ interface ShellConfig {
 
 function isLegacyWslBashPath(path: string): boolean {
 	const normalized = path.replace(/\//g, "\\").toLowerCase();
-	return /^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized);
+	return (
+		/^[a-z]:\\windows\\(?:system32|sysnative)\\bash\.exe$/.test(normalized) ||
+		normalized.endsWith("\\appdata\\local\\microsoft\\windowsapps\\bash.exe")
+	);
 }
 
 function getBashShellConfig(shell: string): ShellConfig {

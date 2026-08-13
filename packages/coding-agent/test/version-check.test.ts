@@ -58,6 +58,19 @@ describe("version checks", () => {
 		);
 	});
 
+	it("supports a distribution-specific version endpoint", async () => {
+		const fetchMock = vi.fn(async () => Response.json({ name: "pi-gogogo", version: "1.2.4" }));
+		vi.stubGlobal("fetch", fetchMock);
+
+		await expect(
+			getLatestPiRelease("1.2.3", { url: "https://registry.npmjs.org/pi-gogogo/latest" }),
+		).resolves.toEqual({ version: "1.2.4" });
+		expect(fetchMock).toHaveBeenCalledWith(
+			"https://registry.npmjs.org/pi-gogogo/latest",
+			expect.objectContaining({ headers: expect.objectContaining({ accept: "application/json" }) }),
+		);
+	});
+
 	it("retries a transient version request when explicitly requested", async () => {
 		const fetchMock = vi
 			.fn()

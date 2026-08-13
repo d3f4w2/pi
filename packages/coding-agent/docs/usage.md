@@ -78,12 +78,12 @@ Configure delivery in [Settings](settings.md) with `steeringMode` and `followUpM
 Sessions are saved automatically to `~/.pi/agent/sessions/`, organized by working directory.
 
 ```bash
-pi -c                  # Continue most recent session
-pi -r                  # Browse and select a session
-pi --no-session        # Ephemeral mode; do not save
-pi --name "my task"    # Set session display name at startup
-pi --session <path|id> # Use a specific session file or session ID
-pi --fork <path|id>    # Fork a session into a new session file
+pigo -c                  # Continue most recent session
+pigo -r                  # Browse and select a session
+pigo --no-session        # Ephemeral mode; do not save
+pigo --name "my task"    # Set session display name at startup
+pigo --session <path|id> # Use a specific session file or session ID
+pigo --fork <path|id>    # Fork a session into a new session file
 ```
 
 Useful session commands:
@@ -127,7 +127,7 @@ Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trus
 
 If no extension or saved decision applies, `defaultProjectTrust` controls the fallback behavior. Set it to `"ask"`, `"always"`, or `"never"` in `~/.pi/agent/settings.json`, or change it with `/settings`.
 
-`pi config` and package commands use the same project trust flow, except `pi update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
+`pigo config` and package commands use the same project trust flow, except `pigo update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
 
 Use `/trust` in interactive mode to save a project trust decision for future sessions, including trust for the immediate parent folder. It writes `~/.pi/agent/trust.json` only; the current session is not reloaded, so restart pi for changes to take effect.
 
@@ -143,26 +143,55 @@ If you use pi for open source work and want to publish sessions for model, promp
 ## CLI Reference
 
 ```bash
-pi [options] [@files...] [messages...]
+pigo [options] [@files...] [messages...]
 ```
+
+### Verifiable Runs
+
+Use `pigo run` when completion must be supported by workspace evidence and checks outside the model:
+
+```bash
+pigo run "Fix the parser and add a focused test" --scope src --scope test
+pigo run --contract pigo.run.json --receipt artifacts/run.json --json
+pigo run --check-receipt artifacts/run.json
+```
+
+The command requires a Git working tree, preserves pre-existing dirty files when attributing changes, enforces time, Token, and tool-call budgets, and writes a privacy-safe SHA-256 integrity receipt. Model options can be forwarded after `--`, for example `pigo run "Fix parser" -- --model openai/gpt-5.6`.
+
+See [Verifiable runs](verified-runs.md) for contract fields, outcome and exit-code semantics, scope limitations, and receipt contents.
+
+### Agent CI Gates
+
+Use `pigo ci` to validate receipt integrity and enforce an offline policy without starting an Agent or loading a model:
+
+```bash
+pigo ci artifacts/pigo-runs
+pigo ci artifacts/pigo-runs --policy pigo.ci.json --json
+```
+
+Inputs may be receipt files or directories. The built-in policy requires verified or no-change completion, unchanged Git HEAD,
+scope compliance, successful checks for changed workspaces, and zero tool or protocol errors. A versioned policy can add
+required check IDs, allowed scope roots, and per-run or aggregate Token, cost, duration, and tool-call limits.
+
+See [Agent CI gates](agent-ci.md) for the complete policy schema, discovery bounds, report format, privacy boundary, and exit codes.
 
 ### Package Commands
 
 ```bash
-pi install <source> [-l]     # Install package, -l for project-local
-pi remove <source> [-l]      # Remove package
-pi uninstall <source> [-l]   # Alias for remove
-pi update [source|self|pi]   # Update pi only, or one package source
-pi update --all              # Update pi and packages; reconcile pinned git refs
-pi update --extensions       # Update packages only; reconcile pinned git refs
-pi update --models           # Refresh model catalogs only
-pi update --self             # Update pi only
-pi update --extension <src>  # Update one package
-pi list                      # List installed packages
-pi config                    # Enable/disable package resources
+pigo install <source> [-l]     # Install package, -l for project-local
+pigo remove <source> [-l]      # Remove package
+pigo uninstall <source> [-l]   # Alias for remove
+pigo update [source|self|pi]   # Update pi only, or one package source
+pigo update --all              # Update pi and packages; reconcile pinned git refs
+pigo update --extensions       # Update packages only; reconcile pinned git refs
+pigo update --models           # Refresh model catalogs only
+pigo update --self             # Update pi only
+pigo update --extension <src>  # Update one package
+pigo list                      # List installed packages
+pigo config                    # Enable/disable package resources
 ```
 
-These commands manage pi packages and `pi update` can update the pi CLI installation. To uninstall pi itself, see [Quickstart](quickstart.md#uninstall). `pi config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pi update` never prompts for project trust.
+These commands manage pi packages and `pigo update` can update the pi CLI installation. To uninstall pi itself, see [Quickstart](quickstart.md#uninstall). `pigo config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pigo update` never prompts for project trust.
 
 See [Pi Packages](packages.md) for package sources and security notes.
 
@@ -179,7 +208,7 @@ See [Pi Packages](packages.md) for package sources and security notes.
 In print mode, pi also reads piped stdin and merges it into the initial prompt:
 
 ```bash
-cat README.md | pi -p "Summarize this text"
+cat README.md | pigo -p "Summarize this text"
 ```
 
 ### Model Options
@@ -233,7 +262,7 @@ Built-in tools: `read`, `bash`, `edit`, `write`, `grep`, `find`, `ls`.
 Combine `--no-*` with explicit flags to load exactly what you need, ignoring settings. Example:
 
 ```bash
-pi --no-extensions -e ./my-extension.ts
+pigo --no-extensions -e ./my-extension.ts
 ```
 
 ### Other Options
@@ -258,43 +287,43 @@ Set **TUI mode** in `/settings` to switch between `regular` and `fullscreen` imm
 Prefix files with `@` to include them in the message:
 
 ```bash
-pi @prompt.md "Answer this"
-pi -p @screenshot.png "What's in this image?"
-pi @code.ts @test.ts "Review these files"
+pigo @prompt.md "Answer this"
+pigo -p @screenshot.png "What's in this image?"
+pigo @code.ts @test.ts "Review these files"
 ```
 
 ### Examples
 
 ```bash
 # Interactive with initial prompt
-pi "List all .ts files in src/"
+pigo "List all .ts files in src/"
 
 # Non-interactive
-pi -p "Summarize this codebase"
+pigo -p "Summarize this codebase"
 
 # Non-interactive with piped stdin
-cat README.md | pi -p "Summarize this text"
+cat README.md | pigo -p "Summarize this text"
 
 # Named one-shot session
-pi --name "release audit" -p "Audit this repository"
+pigo --name "release audit" -p "Audit this repository"
 
 # Different model
-pi --provider openai --model gpt-4o "Help me refactor"
+pigo --provider openai --model gpt-4o "Help me refactor"
 
 # Model with provider prefix
-pi --model openai/gpt-4o "Help me refactor"
+pigo --model openai/gpt-4o "Help me refactor"
 
 # Model with thinking level shorthand
-pi --model sonnet:high "Solve this complex problem"
+pigo --model sonnet:high "Solve this complex problem"
 
 # Limit model cycling
-pi --models "claude-*,gpt-4o"
+pigo --models "claude-*,gpt-4o"
 
 # Read-only mode
-pi --tools read,grep,find,ls -p "Review the code"
+pigo --tools read,grep,find,ls -p "Review the code"
 
 # Disable one extension or built-in tool while keeping the rest available
-pi --exclude-tools ask_question
+pigo --exclude-tools ask_question
 ```
 
 ## Design Principles

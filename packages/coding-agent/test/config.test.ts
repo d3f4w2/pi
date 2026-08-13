@@ -7,6 +7,7 @@ import {
 	getSelfUpdateCommand,
 	getSelfUpdateUnavailableInstruction,
 	getUpdateInstruction,
+	resolveVersionCheckUrl,
 } from "../src/config.ts";
 
 const execPathDescriptor = Object.getOwnPropertyDescriptor(process, "execPath");
@@ -123,7 +124,7 @@ function createBunGlobalInstall(): { packageDir: string } {
 
 function createFakePnpmScript(root: string): string {
 	if (process.platform === "win32") {
-		return `@echo off\r\nif "%1"=="root" if "%2"=="-g" echo ${root}\r\n`;
+		return `@echo off\r\nif "%~1"=="root" if "%~2"=="-g" echo ${root}\r\n`;
 	}
 	const escapedRoot = root.replaceAll("'", "'\\''");
 	return `#!/bin/sh\nif [ "$1" = "root" ] && [ "$2" = "-g" ]; then\n\tprintf '%s\\n' '${escapedRoot}'\n\texit 0\nfi\nexit 1\n`;
@@ -131,7 +132,7 @@ function createFakePnpmScript(root: string): string {
 
 function createFakeYarnScript(globalDir: string): string {
 	if (process.platform === "win32") {
-		return `@echo off\r\nif "%1"=="global" if "%2"=="dir" echo ${globalDir}\r\n`;
+		return `@echo off\r\nif "%~1"=="global" if "%~2"=="dir" echo ${globalDir}\r\n`;
 	}
 	const escapedGlobalDir = globalDir.replaceAll("'", "'\\''");
 	return `#!/bin/sh\nif [ "$1" = "global" ] && [ "$2" = "dir" ]; then\n\tprintf '%s\\n' '${escapedGlobalDir}'\n\texit 0\nfi\nexit 1\n`;
@@ -139,13 +140,20 @@ function createFakeYarnScript(globalDir: string): string {
 
 function createFakeBunScript(bunBin: string): string {
 	if (process.platform === "win32") {
-		return `@echo off\r\nif "%1"=="pm" if "%2"=="bin" if "%3"=="-g" echo ${bunBin}\r\n`;
+		return `@echo off\r\nif "%~1"=="pm" if "%~2"=="bin" if "%~3"=="-g" echo ${bunBin}\r\n`;
 	}
 	const escapedBunBin = bunBin.replaceAll("'", "'\\''");
 	return `#!/bin/sh\nif [ "$1" = "pm" ] && [ "$2" = "bin" ] && [ "$3" = "-g" ]; then\n\tprintf '%s\\n' '${escapedBunBin}'\n\texit 0\nfi\nexit 1\n`;
 }
 
 describe("detectInstallMethod", () => {
+	test("resolves a distribution-specific version endpoint", () => {
+		expect(resolveVersionCheckUrl({ updateUrl: "https://registry.npmjs.org/pi-gogogo/latest" })).toBe(
+			"https://registry.npmjs.org/pi-gogogo/latest",
+		);
+		expect(resolveVersionCheckUrl({})).toBe("https://pi.dev/api/latest-version");
+	});
+
 	test("detects pnpm from Windows .pnpm install paths", () => {
 		setExecPath(
 			"C:\\Users\\Admin\\Documents\\pnpm-repository\\global\\5\\.pnpm\\@earendil-works+pi-coding-agent@0.67.68\\node_modules\\@earendil-works\\pi-coding-agent\\dist\\cli.js",
@@ -237,6 +245,15 @@ describe("detectInstallMethod", () => {
 
 	test("self-update respects configured npmCommand", () => {
 		const { prefix } = createNpmPrefixInstall();
+		if (process.platform === "win32") {
+			const binDir = join(prefix, "bin");
+			mkdirSync(binDir, { recursive: true });
+			writeFileSync(
+				join(binDir, "npm.cmd"),
+				`@echo off\r\nif "%~3"=="root" if "%~4"=="-g" echo ${join(prefix, "lib", "node_modules")}\r\n`,
+			);
+			process.env.PATH = `${binDir}${delimiter}${originalPath ?? ""}`;
+		}
 
 		const command = getSelfUpdateCommand("@earendil-works/pi-coding-agent", ["npm", "--prefix", prefix]);
 
@@ -425,7 +442,7 @@ describe("detectInstallMethod", () => {
 		});
 	});
 
-	test("does not self-update when npm install path is not writable", () => {
+	test.skipIf(process.platform === "win32")("does not self-update when npm install path is not writable", () => {
 		const { packageDir } = createNpmPrefixInstall();
 		chmodSync(packageDir, 0o500);
 

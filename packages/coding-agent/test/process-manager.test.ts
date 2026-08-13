@@ -33,9 +33,11 @@ describe("background process manager", () => {
 
 		expect(Date.now() - startedAt).toBeLessThan(1_000);
 		expect(processInfo).toMatchObject({ id: "proc-1", label: "test server", state: "running" });
-		await expect.poll(async () => (await service.logs(processInfo.id)).text).toContain("ready");
+		await expect.poll(async () => (await service.logs(processInfo.id)).text).toContain("[stdout] ready");
 		const first = await service.logs(processInfo.id);
-		await expect.poll(async () => (await service.logs(processInfo.id, first.nextCursor)).text).toContain("later");
+		await expect
+			.poll(async () => (await service.logs(processInfo.id, first.nextCursor)).text)
+			.toContain("[stdout] later");
 		const next = await service.logs(processInfo.id, first.nextCursor);
 		expect(next.text).not.toContain("ready");
 	});

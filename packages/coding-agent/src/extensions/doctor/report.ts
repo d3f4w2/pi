@@ -29,9 +29,9 @@ function truncate(value: string, maxCharacters: number): string {
 	return `${characters.slice(0, Math.max(0, maxCharacters - 8)).join("")}\n[已截断]`;
 }
 
-export function formatDoctorReport(report: DoctorReport, paths: DoctorPaths): string {
+export function formatDoctorReport(report: DoctorReport, paths: DoctorPaths, productName = "Pi"): string {
 	const lines = [
-		"Pi 健康检查",
+		`${productName} 健康检查`,
 		`结果：${report.summary.error} 错误 · ${report.summary.warning} 提醒 · ${report.summary.info} 可选 · ${report.summary.ok} 正常`,
 	];
 	for (const finding of report.findings) {

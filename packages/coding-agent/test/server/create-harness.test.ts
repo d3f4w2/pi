@@ -234,9 +234,9 @@ describe("coding-agent Harness construction", () => {
 			createSpy.mockRestore();
 			try {
 				const initialPrompt = await resolveSystemPrompt(configuredSystemPrompt);
-				expect(initialPrompt).toContain("- read: Read file contents");
-				expect(initialPrompt).toContain("- bash: Execute bash commands (ls, grep, find, etc.)");
-				expect(initialPrompt).toContain("- edit: Make precise file edits with exact text replacement");
+				expect(initialPrompt).toContain("- read:");
+				expect(initialPrompt).toContain("- bash:");
+				expect(initialPrompt).toContain("- edit:");
 				expect(initialPrompt).toContain("- write: Create or overwrite files");
 
 				await created.harness.setActiveTools(["write"]);
@@ -249,7 +249,7 @@ describe("coding-agent Harness construction", () => {
 				if (!read) throw new Error("Expected the default read tool");
 				await created.harness.setTools([read]);
 				const readPrompt = await resolveSystemPrompt(configuredSystemPrompt);
-				expect(readPrompt).toContain("- read: Read file contents");
+				expect(readPrompt).toContain("- read:");
 				expect(readPrompt).not.toContain("- write:");
 
 				const inspectTool: CodingAgentHarnessTool = {

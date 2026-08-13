@@ -24,6 +24,7 @@ export const builtInExtensions: InlineExtension[] = [
 	{ name: "隔离浏览器", load: async () => (await import("./browser/index.ts")).default, hidden: true },
 	{ name: "回合撤销", load: async () => (await import("./turn-undo/index.ts")).default, hidden: true },
 	{ name: "任务计划", load: async () => (await import("./task-ledger/index.ts")).default, hidden: true },
+	{ name: "目标执行器", load: async () => (await import("./goal-loop/index.ts")).default, hidden: true },
 	{ name: "联网工具", load: async () => (await import("./web/index.ts")).default, hidden: true },
 	{ name: "MCP 服务器", load: async () => (await import("./mcp/index.ts")).default, hidden: true },
 	{ name: "llama.cpp", load: async () => (await import("./llama/index.ts")).default, hidden: true },

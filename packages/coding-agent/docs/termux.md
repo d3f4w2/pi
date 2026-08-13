@@ -1,6 +1,6 @@
 # Termux (Android) Setup
 
-Pi runs on Android via [Termux](https://termux.dev/), a terminal emulator and Linux environment for Android.
+Pigo runs on Android via [Termux](https://termux.dev/), a terminal emulator and Linux environment for Android.
 
 ## Prerequisites
 
@@ -16,14 +16,14 @@ pkg update && pkg upgrade
 # Install dependencies
 pkg install nodejs termux-api git
 
-# Install pi
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+# Install Pigo
+npm install -g --ignore-scripts pi-gogogo
 
 # Create config directory
 mkdir -p ~/.pi/agent
 
-# Run pi
-pi
+# Run Pigo
+pigo
 ```
 
 ## Clipboard Support

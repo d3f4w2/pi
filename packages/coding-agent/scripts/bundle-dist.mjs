@@ -6,6 +6,8 @@ import { build } from "esbuild";
 const packageDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const distDir = join(packageDir, "dist");
 const entrypoint = join(distDir, "cli.js");
+const imageResizeWorkerEntrypoint = join(distDir, "utils", "image-resize-worker.js");
+const runVerifyWorkerEntrypoint = join(distDir, "cli", "run-verify-worker.js");
 const bundleDir = join(distDir, "bundle");
 
 const external = [
@@ -24,8 +26,13 @@ await rm(bundleDir, { recursive: true, force: true });
 await mkdir(bundleDir, { recursive: true });
 
 await build({
-	entryPoints: [entrypoint],
+	entryPoints: {
+		cli: entrypoint,
+		"image-resize-worker": imageResizeWorkerEntrypoint,
+		"run-verify-worker": runVerifyWorkerEntrypoint,
+	},
 	outdir: bundleDir,
+	entryNames: "[name]",
 	bundle: true,
 	platform: "node",
 	format: "esm",

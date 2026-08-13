@@ -27,7 +27,11 @@ function environmentValue(environment: Readonly<Record<string, string | undefine
 	return key === undefined ? undefined : environment[key];
 }
 
-function pathEntries(snapshot: DoctorSnapshot): string[] {
+type DoctorPathSnapshot = Pick<DoctorSnapshot, "platform" | "env">;
+type DoctorShellSnapshot = Pick<DoctorSnapshot, "platform" | "env" | "customShellPath">;
+type DoctorProjectSnapshot = Pick<DoctorSnapshot, "platform" | "cwd">;
+
+function pathEntries(snapshot: DoctorPathSnapshot): string[] {
 	const delimiter = snapshot.platform === "win32" ? ";" : ":";
 	return (environmentValue(snapshot.env, "PATH") ?? "")
 		.split(delimiter)
@@ -36,7 +40,7 @@ function pathEntries(snapshot: DoctorSnapshot): string[] {
 		.slice(0, 256);
 }
 
-function windowsExecutableNames(command: string, snapshot: DoctorSnapshot): string[] {
+function windowsExecutableNames(command: string, snapshot: DoctorPathSnapshot): string[] {
 	if (path.win32.extname(command)) return [command];
 	const extensions = (environmentValue(snapshot.env, "PATHEXT") ?? ".COM;.EXE;.BAT;.CMD")
 		.split(";")
@@ -49,7 +53,7 @@ function windowsExecutableNames(command: string, snapshot: DoctorSnapshot): stri
 
 export function findExecutableOnPath(
 	command: string,
-	snapshot: DoctorSnapshot,
+	snapshot: DoctorPathSnapshot,
 	probes: DoctorFileProbes,
 ): string | undefined {
 	const paths = pathApi(snapshot.platform);
@@ -75,7 +79,7 @@ export interface DoctorShellResolution {
 }
 
 export function resolveDoctorShell(
-	snapshot: DoctorSnapshot,
+	snapshot: DoctorShellSnapshot,
 	probes: DoctorFileProbes,
 ): DoctorShellResolution | undefined {
 	if (snapshot.customShellPath) {
@@ -127,7 +131,7 @@ export function resolveDoctorShell(
 	return shell === undefined ? undefined : { path: shell, source: "path" };
 }
 
-export function detectProjectLanguages(snapshot: DoctorSnapshot, probes: DoctorFileProbes): DoctorLanguage[] {
+export function detectProjectLanguages(snapshot: DoctorProjectSnapshot, probes: DoctorFileProbes): DoctorLanguage[] {
 	const paths = pathApi(snapshot.platform);
 	const detected: DoctorLanguage[] = [];
 	for (const language of ["typescript", "python", "go"] as const) {
@@ -172,7 +176,7 @@ function finding(snapshot: DoctorSnapshot, value: Omit<DoctorFinding, "detail"> 
 	};
 }
 
-function makeReport(findings: DoctorFinding[]): DoctorReport {
+export function createDoctorReport(findings: DoctorFinding[]): DoctorReport {
 	const summary = {
 		ok: findings.filter((item) => item.severity === "ok").length,
 		info: findings.filter((item) => item.severity === "info").length,
@@ -490,5 +494,5 @@ export function runDoctorChecks(snapshot: DoctorSnapshot, probes: DoctorFileProb
 		...(snapshot.configFiles.auth ? {} : { fix: "需要保存认证时使用 /api 或 /login。" }),
 	});
 
-	return makeReport(findings);
+	return createDoctorReport(findings);
 }

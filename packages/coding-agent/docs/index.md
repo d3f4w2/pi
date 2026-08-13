@@ -1,38 +1,32 @@
-# Pi Documentation
+# Pigo Documentation
 
-Pi is a minimal terminal coding harness. It is designed to stay small at the core while being extended through TypeScript extensions, skills, prompt templates, themes, and pi packages.
+Pigo is a fast, governed terminal coding agent. It stays small at the core while being extended through TypeScript extensions, skills, prompt templates, themes, and packages.
 
 ## Quick start
 
-Install Pi with npm:
+Install Pigo with npm:
 
 ```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+npm install -g --ignore-scripts pi-gogogo
 ```
 
-`--ignore-scripts` disables dependency lifecycle scripts during install. Pi does not require install scripts for normal npm installs.
+`--ignore-scripts` disables dependency lifecycle scripts during install. Pigo does not require install scripts for normal npm installs.
 
-On Linux or macOS, you can also use the installer:
+To uninstall Pigo:
 
 ```bash
-curl -fsSL https://pi.dev/install.sh | sh
+npm uninstall -g pi-gogogo
 ```
 
-To uninstall pi itself, use npm for curl and npm installs:
-
-```bash
-npm uninstall -g @earendil-works/pi-coding-agent
-```
-
-For pnpm, Yarn, or Bun installs, use the matching global remove command: `pnpm remove -g @earendil-works/pi-coding-agent`, `yarn global remove @earendil-works/pi-coding-agent`, or `bun uninstall -g @earendil-works/pi-coding-agent`.
+For pnpm, Yarn, or Bun installs, use the matching global remove command with `pi-gogogo`.
 
 Then run it in a project directory:
 
 ```bash
-pi
+pigo
 ```
 
-Authenticate with `/login` for subscription providers, or set an API key such as `ANTHROPIC_API_KEY` before starting pi.
+Authenticate with `/login` for subscription providers, or set an API key such as `ANTHROPIC_API_KEY` before starting Pigo.
 
 For the full first-run flow, see [Quickstart](quickstart.md).
 
@@ -40,6 +34,8 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 
 - [Quickstart](quickstart.md) - install, authenticate, and run a first session.
 - [Using Pi](usage.md) - interactive mode, slash commands, context files, and CLI reference.
+- [Verifiable runs](verified-runs.md) - execute a bounded task, independently verify changes, and emit an integrity receipt.
+- [Agent CI gates](agent-ci.md) - run `pigo ci` with no paths to gate the latest project receipt, or enforce batch policy offline.
 - [Providers](providers.md) - subscription and API-key setup for built-in providers.
 - [llama.cpp](llama-cpp.md) - run a local router and manage models with `/llama`.
 - [Security](security.md) - project trust, sandbox boundaries, and vulnerability reporting.
@@ -71,6 +67,7 @@ For the full first-run flow, see [Quickstart](quickstart.md).
 - [Environment variables](environment-variables.md) - Pi process configuration and session metadata available to bash tools.
 - [Session format](session-format.md) - JSONL session file format, entry types, and SessionManager API.
 - [Local evaluations](evals.md) - run deterministic offline smoke checks and compare a saved baseline.
+- [Agent CI gates](agent-ci.md) - turn concrete run receipts into a stable automation or merge decision.
 
 ## Platform setup
 

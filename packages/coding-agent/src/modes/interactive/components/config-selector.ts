@@ -31,6 +31,10 @@ export type ScopedResolvedPaths = Record<ConfigWriteScope, ResolvedPaths>;
 
 const RESOURCE_TYPES = ["extensions", "skills", "prompts", "themes"] as const satisfies readonly ResourceType[];
 
+function normalizeResourcePattern(pattern: string): string {
+	return pattern.replace(/\\/g, "/");
+}
+
 const RESOURCE_TYPE_LABELS: Record<ResourceType, string> = {
 	extensions: "Extensions",
 	skills: "Skills",
@@ -543,10 +547,7 @@ class ResourceList implements Component, Focusable {
 		const enablePattern = `+${pattern}`;
 
 		// Filter out existing patterns for this resource
-		const updated = current.filter((p) => {
-			const stripped = p.startsWith("!") || p.startsWith("+") || p.startsWith("-") ? p.slice(1) : p;
-			return stripped !== pattern;
-		});
+		const updated = current.filter((entry) => this.getPatternEntryTarget(entry) !== pattern);
 
 		if (enabled) {
 			updated.push(enablePattern);
@@ -608,10 +609,7 @@ class ResourceList implements Component, Focusable {
 		const enablePattern = `+${pattern}`;
 
 		// Filter out existing patterns for this resource
-		const updated = current.filter((p) => {
-			const stripped = p.startsWith("!") || p.startsWith("+") || p.startsWith("-") ? p.slice(1) : p;
-			return stripped !== pattern;
-		});
+		const updated = current.filter((entry) => this.getPatternEntryTarget(entry) !== pattern);
 
 		if (enabled) {
 			updated.push(enablePattern);
@@ -670,7 +668,9 @@ class ResourceList implements Component, Focusable {
 
 	private setProjectTopLevelOverride(item: ResourceItem, state: ProjectOverrideState): boolean {
 		const current = (this.settingsManager.getProjectSettings()[item.resourceType] ?? []) as string[];
-		const pattern = this.isInheritedGlobalItem(item) ? item.path : this.getResourcePatternForScope(item, "project");
+		const pattern = normalizeResourcePattern(
+			this.isInheritedGlobalItem(item) ? item.path : this.getResourcePatternForScope(item, "project"),
+		);
 		const patterns = this.getTopLevelOverridePatterns(item, "project");
 		const updated = current.filter((entry) => {
 			const target = this.getPatternEntryTarget(entry);
@@ -786,25 +786,30 @@ class ResourceList implements Component, Focusable {
 		const baseDir = this.getTopLevelBaseDir(scope);
 		const patterns = new Set<string>([
 			this.getResourcePatternForScope(item, scope),
-			item.path,
-			relative(baseDir, item.path),
+			normalizeResourcePattern(item.path),
+			normalizeResourcePattern(relative(baseDir, item.path)),
 		]);
-		if (item.metadata.baseDir) patterns.add(relative(item.metadata.baseDir, item.path));
+		if (item.metadata.baseDir) {
+			patterns.add(normalizeResourcePattern(relative(item.metadata.baseDir, item.path)));
+		}
 		return patterns;
 	}
 
 	private getResourcePatternForScope(item: ResourceItem, scope: SettingsScope): string {
 		const sourceScope = this.getItemScope(item);
-		if (scope !== sourceScope) return item.path;
+		if (scope !== sourceScope) return normalizeResourcePattern(item.path);
 		const baseDir = item.metadata.baseDir ?? this.getTopLevelBaseDir(sourceScope);
-		return relative(baseDir, item.path);
+		return normalizeResourcePattern(relative(baseDir, item.path));
 	}
 
 	private createPackageOverrideSource(item: ResourceItem): PackageSource {
 		const source = item.metadata.source;
 		if (!isLocalPath(source)) return { source, autoload: false };
 		const sourcePath = resolvePath(source, this.getTopLevelBaseDir(this.getItemScope(item)), { trim: true });
-		return { source: relative(this.getTopLevelBaseDir("project"), sourcePath) || ".", autoload: false };
+		return {
+			source: normalizeResourcePattern(relative(this.getTopLevelBaseDir("project"), sourcePath)) || ".",
+			autoload: false,
+		};
 	}
 
 	private packageSourceStringMatches(
@@ -836,7 +841,8 @@ class ResourceList implements Component, Focusable {
 	}
 
 	private getPatternEntryTarget(entry: string): string {
-		return entry.startsWith("!") || entry.startsWith("+") || entry.startsWith("-") ? entry.slice(1) : entry;
+		const target = entry.startsWith("!") || entry.startsWith("+") || entry.startsWith("-") ? entry.slice(1) : entry;
+		return normalizeResourcePattern(target);
 	}
 
 	private getResourceItemKey(item: ResourceItem): string {
@@ -854,12 +860,12 @@ class ResourceList implements Component, Focusable {
 	private getResourcePattern(item: ResourceItem): string {
 		const scope = item.metadata.scope as "user" | "project";
 		const baseDir = item.metadata.baseDir ?? this.getTopLevelBaseDir(scope);
-		return relative(baseDir, item.path);
+		return normalizeResourcePattern(relative(baseDir, item.path));
 	}
 
 	private getPackageResourcePattern(item: ResourceItem): string {
 		const baseDir = item.metadata.baseDir ?? dirname(item.path);
-		return relative(baseDir, item.path);
+		return normalizeResourcePattern(relative(baseDir, item.path));
 	}
 }
 

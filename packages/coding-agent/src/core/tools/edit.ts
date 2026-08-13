@@ -488,6 +488,7 @@ export function createEditToolDefinition(
 				const finalContent = bom + restoreLineEndings(newContent, originalEnding);
 				if (ops.replaceFile) await ops.replaceFile(absolutePath, finalContent);
 				else await ops.writeFile(absolutePath, finalContent);
+				throwIfAborted();
 
 				const diffResult = createFileDiff(path, baseContent, newContent);
 				const patch = generateUnifiedPatch(path, baseContent, newContent);

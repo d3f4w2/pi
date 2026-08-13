@@ -1,22 +1,22 @@
 <p align="center">
-  <a href="https://pi.dev">
-    <img alt="pi logo" src="https://pi.dev/logo-auto.svg" width="128">
+  <a href="https://github.com/d3f4w2/pi-Gogogo">
+    <img alt="Pigo logo" src="https://pi.dev/logo-auto.svg" width="128">
   </a>
 </p>
 <p align="center">
   <a href="https://discord.com/invite/3cU7Bz4UPx"><img alt="Discord" src="https://img.shields.io/badge/discord-community-5865F2?style=flat-square&logo=discord&logoColor=white" /></a>
-  <a href="https://www.npmjs.com/package/@earendil-works/pi-coding-agent"><img alt="npm" src="https://img.shields.io/npm/v/@earendil-works/pi-coding-agent?style=flat-square" /></a>
+  <a href="https://www.npmjs.com/package/pi-gogogo"><img alt="npm" src="https://img.shields.io/npm/v/pi-gogogo?style=flat-square" /></a>
 </p>
 
 > New issues and PRs from new contributors are auto-closed by default. Maintainers review auto-closed issues daily. See [CONTRIBUTING.md](../../CONTRIBUTING.md).
 
 ---
 
-Pi is a minimal terminal coding harness. Adapt pi to your workflows, not the other way around, without having to fork and modify pi internals. Extend it with TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), and [Themes](#themes). Put your extensions, skills, prompt templates, and themes in [Pi Packages](#pi-packages) and share them with others via npm or git.
+Pigo is a fast terminal engineering agent for daily repository work. It keeps the small, extensible Pi core while adding governed tool execution, project trust, code intelligence, durable sessions, offline diagnostics, and verification workflows suitable for real codebases.
 
-Pi ships with powerful defaults but skips features like sub agents and plan mode. Instead, you can ask pi to build what you want or install a third party pi package that matches your workflow.
+Start with one command and add TypeScript [Extensions](#extensions), [Skills](#skills), [Prompt Templates](#prompt-templates), [Themes](#themes), or reusable [Pi Packages](#pi-packages) only when the work needs them. Optional capabilities load lazily and are not allowed to block the main session when unavailable.
 
-Pi runs in four modes: interactive, print or JSON, RPC for process integration, and an SDK for embedding in your own apps.
+Pigo runs interactively, as a one-shot print or JSON command, over RPC for process integration, and through the underlying TypeScript SDK.
 
 ## Share your OSS coding agent sessions
 
@@ -37,6 +37,8 @@ I regularly publish my own `pi-mono` work sessions here:
 ## Table of Contents
 
 - [Quick Start](#quick-start)
+- [Verifiable Runs](#verifiable-runs)
+- [Durable Goal Loop](#durable-goal-loop)
 - [Providers & Models](#providers--models)
 - [Interactive Mode](#interactive-mode)
   - [Editor](#editor)
@@ -63,40 +65,84 @@ I regularly publish my own `pi-mono` work sessions here:
 ## Quick Start
 
 ```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent
+npm install -g --ignore-scripts pi-gogogo
 ```
 
-`--ignore-scripts` disables dependency lifecycle scripts during install. Pi does not require install scripts for normal npm installs.
+`--ignore-scripts` disables dependency lifecycle scripts during install. Pigo does not require install scripts.
 
-Installer alternative:
+Verify the installation without contacting a model provider:
 
 ```bash
-curl -fsSL https://pi.dev/install.sh | sh
+pigo doctor
 ```
 
 Authenticate with an API key:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-pi
+pigo
 ```
 
 Or use your existing subscription:
 
 ```bash
-pi
+pigo
 /login  # Then select provider
 ```
 
-Then just talk to pi. By default, pi gives the model four tools: `read`, `write`, `edit`, and `bash`. The model uses these to fulfill your requests. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [pi packages](#pi-packages).
+Then give Pigo a real repository task. Its governed toolset can read, search, edit, execute, debug, and verify work while keeping project trust and execution policy explicit. Add capabilities via [skills](#skills), [prompt templates](#prompt-templates), [extensions](#extensions), or [pi packages](#pi-packages).
 
 **Platform notes:** [Windows](docs/windows.md) | [Termux (Android)](docs/termux.md) | [tmux](docs/tmux.md) | [Terminal setup](docs/terminal-setup.md) | [Shell aliases](docs/shell-aliases.md)
 
 ---
 
+## Verifiable Runs
+
+Use the same Agent for a bounded engineering task, then enforce its independent evidence without managing receipt paths:
+
+```bash
+pigo run "Fix the parser regression and add a focused test"
+pigo ci
+```
+
+Default receipts stay outside the repository in a private project partition. `pigo ci` checks the latest receipt for the
+current Git project and automatically loads project-root `pigo.ci.json` when present. `pigo ci --all` checks the project's
+stored history. Explicit `--receipt`, receipt inputs, and `--policy` remain available for exported CI artifacts.
+
+See [Verifiable runs](docs/verified-runs.md) and [Agent CI gates](docs/agent-ci.md) for contracts, policy fields, privacy
+boundaries, reports, and exit codes.
+
+---
+
+## Durable Goal Loop
+
+Start a long engineering objective inside the TUI with `/run`:
+
+```text
+/run --scope packages/parser/src --scope packages/parser/test --verify auto:packages/parser 修复解析器并补回归测试
+```
+
+The initial goal, scope, verification contract, and total budget are frozen. Each settled Agent turn is followed by a
+separate verifier process. Failed checks become the next turn's replanning input; passing checks count as completion only
+after the Agent has also reported that the semantic goal is complete.
+
+```text
+理解目标 → 执行 → 独立验证差距 → 自动重新规划
+         → 再执行 → 再验证 → 通过 / 预算耗尽 / 停滞 / 等待用户决定
+```
+
+`/run` is the only interactive entry. Enter it without arguments to start through a bounded preset or open the state-aware
+control center. It offers only legal actions: inspect evidence, pause, continue, provide one required decision, stop, or gate
+the terminal receipt. Active work interrupted by a process restart or session switch restores as paused and never silently
+regains execution authority. Shell automation keeps `pigo run` and `pigo ci`.
+
+See [Durable goal loop](docs/goal-loop.md) for exact defaults, states, receipts, and limitations.
+
+---
+
 ## Providers & Models
 
-For each built-in provider, pi maintains a list of tool-capable models. Configured provider catalogs refresh automatically; run `pi update --models` to force an immediate refresh. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model` (or Ctrl+L).
+For each built-in provider, pi maintains a list of tool-capable models. Configured provider catalogs refresh automatically; run `pigo update --models` to force an immediate refresh. Authenticate via subscription (`/login`) or API key, then select any model from that provider via `/model` (or Ctrl+L).
 
 **Subscriptions:**
 - Anthropic Claude Pro/Max
@@ -182,6 +228,7 @@ Type `/` in the editor to trigger commands. [Extensions](#extensions) can regist
 | `/scoped-models` | Enable/disable models for Ctrl+P cycling |
 | `/settings` | Thinking level, theme, message delivery, transport |
 | [`/doctor`](docs/doctor.md) | Check models, tools, shell, LSP, search, web, and config health |
+| [`/run`](docs/goal-loop.md) | Single entry to start, control, recover, and independently accept a durable engineering goal |
 | `/resume` | Pick from previous sessions |
 | `/new` | Start a new session |
 | `/name <name>` | Set session display name |
@@ -244,12 +291,12 @@ Sessions are stored as JSONL files with a tree structure. Each entry has an `id`
 Sessions auto-save to `~/.pi/agent/sessions/` organized by working directory.
 
 ```bash
-pi -c                  # Continue most recent session
-pi -r                  # Browse and select from past sessions
-pi --no-session        # Ephemeral mode (don't save)
-pi --name "my task"    # Set session display name at startup
-pi --session <path|id> # Use specific session file or ID
-pi --fork <path|id>    # Fork specific session file or ID into a new session
+pigo -c                  # Continue most recent session
+pigo -r                  # Browse and select from past sessions
+pigo --no-session        # Ephemeral mode (don't save)
+pigo --name "my task"    # Set session display name at startup
+pigo --session <path|id> # Use specific session file or ID
+pigo --fork <path|id>    # Fork specific session file or ID into a new session
 ```
 
 Use `/session` in interactive mode to see the current session ID before reusing it with `--session <id>` or `--fork <id>`.
@@ -304,7 +351,7 @@ Non-interactive modes (`-p`, `--mode json`, and `--mode rpc`) do not show a trus
 
 If no extension or saved decision applies, `defaultProjectTrust` controls the fallback behavior. Set it to `"ask"`, `"always"`, or `"never"` in `~/.pi/agent/settings.json`, or change it with `/settings`.
 
-`pi config` and package commands use the same project trust flow, except `pi update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
+`pigo config` and package commands use the same project trust flow, except `pigo update` never prompts. Pass `--approve` to trust project-local settings for one command or `--no-approve` to ignore them.
 
 Use `/trust` in interactive mode to save a project trust decision for future sessions, including trust for the immediate parent folder. It writes `~/.pi/agent/trust.json` only; the current session is not reloaded, so restart pi for changes to take effect.
 
@@ -413,30 +460,30 @@ Bundle and share extensions, skills, prompts, and themes via npm or git. Find pa
 > **Security:** Pi packages run with full system access. Extensions execute arbitrary code, and skills can instruct the model to perform any action including running executables. Review source code before installing third-party packages.
 
 ```bash
-pi install npm:@foo/pi-tools
-pi install npm:@foo/pi-tools@1.2.3      # pinned version
-pi install git:github.com/user/repo
-pi install git:github.com/user/repo@v1  # tag or commit
-pi install git:git@github.com:user/repo
-pi install git:git@github.com:user/repo@v1  # tag or commit
-pi install https://github.com/user/repo
-pi install https://github.com/user/repo@v1      # tag or commit
-pi install ssh://git@github.com/user/repo
-pi install ssh://git@github.com/user/repo@v1    # tag or commit
-pi remove npm:@foo/pi-tools
-pi uninstall npm:@foo/pi-tools          # alias for remove
-pi list
-pi update                               # update pi only
-pi update --all                         # update pi and packages
-pi update --extensions                  # update packages only
-pi update --models                      # refresh model catalogs only
-pi update --self                        # update pi only
-pi update --self --force                # reinstall pi even if current
-pi update npm:@foo/pi-tools             # update one package
-pi config                               # enable/disable extensions, skills, prompts, themes
+pigo install npm:@foo/pi-tools
+pigo install npm:@foo/pi-tools@1.2.3      # pinned version
+pigo install git:github.com/user/repo
+pigo install git:github.com/user/repo@v1  # tag or commit
+pigo install git:git@github.com:user/repo
+pigo install git:git@github.com:user/repo@v1  # tag or commit
+pigo install https://github.com/user/repo
+pigo install https://github.com/user/repo@v1      # tag or commit
+pigo install ssh://git@github.com/user/repo
+pigo install ssh://git@github.com/user/repo@v1    # tag or commit
+pigo remove npm:@foo/pi-tools
+pigo uninstall npm:@foo/pi-tools          # alias for remove
+pigo list
+pigo update                               # update pi only
+pigo update --all                         # update pi and packages
+pigo update --extensions                  # update packages only
+pigo update --models                      # refresh model catalogs only
+pigo update --self                        # update pi only
+pigo update --self --force                # reinstall pi even if current
+pigo update npm:@foo/pi-tools             # update one package
+pigo config                               # enable/disable extensions, skills, prompts, themes
 ```
 
-Packages install to `~/.pi/agent/git/` (git) or `~/.pi/agent/npm/` (npm). Use `-l` for project-local installs (`.pi/git/`, `.pi/npm/`). Git `@ref` values are pinned tags or commits; pinned packages are skipped by `pi update --extensions` and `pi update --all`, so use `pi install git:host/user/repo@new-ref` to move an existing package to a new ref. Git packages install dependencies with `npm install --omit=dev` by default, so runtime deps must be listed under `dependencies`; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers. If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
+Packages install to `~/.pi/agent/git/` (git) or `~/.pi/agent/npm/` (npm). Use `-l` for project-local installs (`.pi/git/`, `.pi/npm/`). Git `@ref` values are pinned tags or commits; pinned packages are skipped by `pigo update --extensions` and `pigo update --all`, so use `pigo install git:host/user/repo@new-ref` to move an existing package to a new ref. Git packages install dependencies with `npm install --omit=dev` by default, so runtime deps must be listed under `dependencies`; when `npmCommand` is configured, git packages use plain `install` for compatibility with wrappers. If you use a Node version manager and want package installs to reuse a stable npm context, set `npmCommand` in `settings.json`, for example `["mise", "exec", "node@20", "--", "npm"]`.
 
 Create a package by adding a `pi` key to `package.json`:
 
@@ -484,7 +531,7 @@ See [docs/sdk.md](docs/sdk.md) and [examples/sdk/](examples/sdk/).
 For non-Node.js integrations, use RPC mode over stdin/stdout:
 
 ```bash
-pi --mode rpc
+pigo --mode rpc
 ```
 
 RPC mode uses strict LF-delimited JSONL framing. Clients must split records on `\n` only. Do not use generic line readers like Node `readline`, which also split on Unicode separators inside JSON payloads.
@@ -516,27 +563,39 @@ Read the [blog post](https://mariozechner.at/posts/2025-11-30-pi-coding-agent/) 
 ## CLI Reference
 
 ```bash
-pi [options] [@files...] [messages...]
+pigo [options] [@files...] [messages...]
 ```
 
 ### Package Commands
 
 ```bash
-pi install <source> [-l]     # Install package, -l for project-local
-pi remove <source> [-l]      # Remove package
-pi uninstall <source> [-l]   # Alias for remove
-pi update [source|self|pi]   # Update pi only, or one package source
-pi update --all              # Update pi and packages
-pi update --extensions       # Update packages only
-pi update --models           # Refresh model catalogs only
-pi update --self             # Update pi only
-pi update --self --force     # Reinstall pi even if current
-pi update --extension <src>  # Update one package
-pi list                      # List installed packages
-pi config                    # Enable/disable package resources
+pigo install <source> [-l]     # Install package, -l for project-local
+pigo remove <source> [-l]      # Remove package
+pigo uninstall <source> [-l]   # Alias for remove
+pigo update [source|self|pi]   # Update pi only, or one package source
+pigo update --all              # Update pi and packages
+pigo update --extensions       # Update packages only
+pigo update --models           # Refresh model catalogs only
+pigo update --self             # Update pi only
+pigo update --self --force     # Reinstall pi even if current
+pigo update --extension <src>  # Update one package
+pigo list                      # List installed packages
+pigo config                    # Enable/disable package resources
 ```
 
-`pi config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pi update` never prompts for project trust.
+`pigo config` and project package commands accept `--approve`/`--no-approve` to trust or ignore project-local settings for one command. `pigo update` never prompts for project trust.
+
+### Verified Engineering Commands
+
+```bash
+pigo run <task> [options]       # Execute, independently verify, and save a private receipt
+pigo ci [receipts...] [options] # Gate the latest project receipt or an explicit receipt set
+```
+
+Use `pigo run --help` and `pigo ci --help` for scope, verification, budget, policy, batch, and JSON options.
+
+Inside interactive Pigo, `/run` is the single state-aware entry for multi-iteration execution and terminal receipt acceptance.
+Shell `pigo run` and `pigo ci` remain separate automation commands; the TUI does not launch nested CLIs.
 
 ### Modes
 
@@ -551,7 +610,7 @@ pi config                    # Enable/disable package resources
 In print mode, pi also reads piped stdin and merges it into the initial prompt:
 
 ```bash
-cat README.md | pi -p "Summarize this text"
+cat README.md | pigo -p "Summarize this text"
 ```
 
 ### Model Options
@@ -622,46 +681,46 @@ Combine `--no-*` with explicit flags to load exactly what you need, ignoring set
 Prefix files with `@` to include in the message:
 
 ```bash
-pi @prompt.md "Answer this"
-pi -p @screenshot.png "What's in this image?"
-pi @code.ts @test.ts "Review these files"
+pigo @prompt.md "Answer this"
+pigo -p @screenshot.png "What's in this image?"
+pigo @code.ts @test.ts "Review these files"
 ```
 
 ### Examples
 
 ```bash
 # Interactive with initial prompt
-pi "List all .ts files in src/"
+pigo "List all .ts files in src/"
 
 # Non-interactive
-pi -p "Summarize this codebase"
+pigo -p "Summarize this codebase"
 
 # Non-interactive with piped stdin
-cat README.md | pi -p "Summarize this text"
+cat README.md | pigo -p "Summarize this text"
 
 # Named one-shot session
-pi --name "release audit" -p "Audit this repository"
+pigo --name "release audit" -p "Audit this repository"
 
 # Different model
-pi --provider openai --model gpt-4o "Help me refactor"
+pigo --provider openai --model gpt-4o "Help me refactor"
 
 # Model with provider prefix (no --provider needed)
-pi --model openai/gpt-4o "Help me refactor"
+pigo --model openai/gpt-4o "Help me refactor"
 
 # Model with thinking level shorthand
-pi --model sonnet:high "Solve this complex problem"
+pigo --model sonnet:high "Solve this complex problem"
 
 # Limit model cycling
-pi --models "claude-*,gpt-4o"
+pigo --models "claude-*,gpt-4o"
 
 # Read-only mode
-pi --tools read,grep,find,ls -p "Review the code"
+pigo --tools read,grep,find,ls -p "Review the code"
 
 # Disable one extension or built-in tool while keeping the rest available
-pi --exclude-tools ask_question
+pigo --exclude-tools ask_question
 
 # High thinking level
-pi --thinking high "Solve this complex problem"
+pigo --thinking high "Solve this complex problem"
 ```
 
 ### Environment Variables

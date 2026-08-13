@@ -6,6 +6,12 @@ temp_parent="${TMPDIR:-/tmp}"
 temp_parent="${temp_parent%/}"
 test_root="$(mktemp -d "$temp_parent/pi-test.XXXXXX")"
 git_askpass="$(type -P false)"
+native_path() {
+	case "$(uname -s)" in
+		MINGW* | MSYS* | CYGWIN*) cygpath -w "$1" ;;
+		*) printf '%s' "$1" ;;
+	esac
+}
 readonly temp_parent test_root git_askpass
 
 mkdir -p \
@@ -45,15 +51,15 @@ trap cleanup EXIT
 test_env=(
 	"PATH=$PATH"
 	"PWD=$PWD"
-	"HOME=$test_root/home"
-	"USERPROFILE=$test_root/home"
-	"LOCALAPPDATA=$test_root/appdata/local"
-	"APPDATA=$test_root/appdata/roaming"
-	"TMPDIR=$test_root/tmp"
-	"TMP=$test_root/tmp"
-	"TEMP=$test_root/tmp"
-	"XDG_CONFIG_HOME=$test_root/home/.config"
-	"XDG_CACHE_HOME=$test_root/cache"
+	"HOME=$(native_path "$test_root/home")"
+	"USERPROFILE=$(native_path "$test_root/home")"
+	"LOCALAPPDATA=$(native_path "$test_root/appdata/local")"
+	"APPDATA=$(native_path "$test_root/appdata/roaming")"
+	"TMPDIR=$(native_path "$test_root/tmp")"
+	"TMP=$(native_path "$test_root/tmp")"
+	"TEMP=$(native_path "$test_root/tmp")"
+	"XDG_CONFIG_HOME=$(native_path "$test_root/home/.config")"
+	"XDG_CACHE_HOME=$(native_path "$test_root/cache")"
 	"LANG=C"
 	"LC_ALL=C"
 	"TZ=UTC"
@@ -63,17 +69,18 @@ test_env=(
 	"GIT_ASKPASS=$git_askpass"
 	"GIT_EDITOR=true"
 	"GIT_SEQUENCE_EDITOR=true"
-	"NPM_CONFIG_USERCONFIG=$test_root/npm-userconfig"
-	"NPM_CONFIG_GLOBALCONFIG=$test_root/npm-globalconfig"
-	"NPM_CONFIG_CACHE=$test_root/cache/npm"
+	"NPM_CONFIG_USERCONFIG=$(native_path "$test_root/npm-userconfig")"
+	"NPM_CONFIG_GLOBALCONFIG=$(native_path "$test_root/npm-globalconfig")"
+	"NPM_CONFIG_CACHE=$(native_path "$test_root/cache/npm")"
 	"PI_SANDBOX_MODE=full-access"
 	"PI_NO_LOCAL_LLM=1"
 	"AWS_EC2_METADATA_DISABLED=true"
 )
 
-# Native Windows needs these inherited values to launch child processes.
-for name in SystemRoot SYSTEMROOT WINDIR COMSPEC PATHEXT; do
-	value="${!name-}"
+# Native Windows needs these inherited values to launch child processes and
+# discover browsers installed under the system program directories.
+for name in SystemRoot SYSTEMROOT WINDIR COMSPEC PATHEXT HOMEDRIVE HOMEPATH ProgramFiles 'ProgramFiles(x86)' ProgramW6432; do
+	value="$(printenv "$name" || true)"
 	[[ -z "$value" ]] || test_env+=("$name=$value")
 done
 
@@ -83,5 +90,5 @@ for name in CI GITHUB_ACTIONS; do
 	[[ -z "$value" ]] || test_env+=("$name=$value")
 done
 
-echo "Running tests without API keys in isolated home: $test_root/home"
+echo "Running tests without API keys in isolated home: $(native_path "$test_root/home")"
 env -i "${test_env[@]}" npm test

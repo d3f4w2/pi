@@ -246,41 +246,44 @@ describe("session selector path/delete interactions", () => {
 		await flushPromises();
 	});
 
-	it("threads sessions when parent and child paths use different symlink aliases", async () => {
-		const paths = createSymlinkedSessionPaths();
-		tempDirs.push(paths.baseDir);
+	it.skipIf(process.platform === "win32")(
+		"threads sessions when parent and child paths use different symlink aliases",
+		async () => {
+			const paths = createSymlinkedSessionPaths();
+			tempDirs.push(paths.baseDir);
 
-		const sessions = [
-			makeSession({
-				id: "parent",
-				path: paths.parentAliasB,
-				name: "Parent",
-				modified: new Date("2026-01-01T00:00:00.000Z"),
-			}),
-			makeSession({
-				id: "child",
-				path: paths.childAliasB,
-				parentSessionPath: paths.parentAliasA,
-				name: "Child",
-				modified: new Date("2025-12-31T00:00:00.000Z"),
-			}),
-		];
+			const sessions = [
+				makeSession({
+					id: "parent",
+					path: paths.parentAliasB,
+					name: "Parent",
+					modified: new Date("2026-01-01T00:00:00.000Z"),
+				}),
+				makeSession({
+					id: "child",
+					path: paths.childAliasB,
+					parentSessionPath: paths.parentAliasA,
+					name: "Child",
+					modified: new Date("2025-12-31T00:00:00.000Z"),
+				}),
+			];
 
-		const selector = new SessionSelectorComponent(
-			async () => sessions,
-			async () => [],
-			() => {},
-			() => {},
-			() => {},
-			() => {},
-			{ keybindings },
-		);
-		await flushPromises();
+			const selector = new SessionSelectorComponent(
+				async () => sessions,
+				async () => [],
+				() => {},
+				() => {},
+				() => {},
+				() => {},
+				{ keybindings },
+			);
+			await flushPromises();
 
-		const output = stripAnsi(selector.render(120).join("\n"));
-		expect(output).toContain("Parent");
-		expect(output).toContain("└─ Child");
-	});
+			const output = stripAnsi(selector.render(120).join("\n"));
+			expect(output).toContain("Parent");
+			expect(output).toContain("└─ Child");
+		},
+	);
 
 	it("sorts threaded sessions by latest activity in their subtree", async () => {
 		const parentOne = makeSession({
@@ -321,7 +324,7 @@ describe("session selector path/delete interactions", () => {
 		expect(parentOneIndex).toBeGreaterThan(childTwoIndex);
 	});
 
-	it("treats the current session as active across symlink aliases", async () => {
+	it.skipIf(process.platform === "win32")("treats the current session as active across symlink aliases", async () => {
 		const paths = createSymlinkedSessionPaths();
 		tempDirs.push(paths.baseDir);
 

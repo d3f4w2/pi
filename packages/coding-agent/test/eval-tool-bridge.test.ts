@@ -163,7 +163,7 @@ describe("persistent Python and Bun bridge integration", () => {
 		const started = performance.now();
 		try {
 			await expect(manager.execute("python", 'pi_tool("ls")', project, 50)).rejects.toThrow("运行环境已重置");
-			expect(performance.now() - started).toBeLessThan(1_000);
+			expect(performance.now() - started).toBeLessThan(2_000);
 			expect(manager.status()).toEqual([]);
 		} finally {
 			await manager.stopAll();

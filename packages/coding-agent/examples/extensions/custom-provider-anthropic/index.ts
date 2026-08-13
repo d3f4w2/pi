@@ -13,7 +13,7 @@
  *   cd packages/coding-agent/examples/extensions/custom-provider && npm install
  *
  *   # With OAuth (run /login custom-anthropic first)
- *   pi -e ./packages/coding-agent/examples/extensions/custom-provider
+ *   pigo -e ./packages/coding-agent/examples/extensions/custom-provider
  *
  *   # With API key
  *   CUSTOM_ANTHROPIC_API_KEY=sk-ant-... pi -e ./packages/coding-agent/examples/extensions/custom-provider

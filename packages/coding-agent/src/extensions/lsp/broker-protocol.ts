@@ -3,10 +3,11 @@ import { homedir, tmpdir, userInfo } from "node:os";
 import path from "node:path";
 import type { LanguageAdapter, LanguageServerLaunch } from "./types.ts";
 
-export const LSP_BROKER_PROTOCOL_VERSION = 1;
+export const LSP_BROKER_PROTOCOL_VERSION = 2;
 export const LSP_BROKER_CONNECT_METHOD = "pi/broker/connect";
 export const LSP_BROKER_HEALTH_METHOD = "pi/broker/health";
 export const LSP_BROKER_RELOAD_METHOD = "pi/broker/reload";
+export const LSP_BROKER_UPSTREAM_CLOSED_ERROR = -32080;
 
 export interface LspBrokerIdentity {
 	protocolVersion: number;

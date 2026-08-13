@@ -23,7 +23,9 @@ import { execSync, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { findPackageDirectories } from "./package-workspaces.mjs";
+import { resolveNpmCliPath } from "./npm-cli.mjs";
 import { getPublicWorkspacePackages } from "./release-packages.mjs";
+import { runShellScript } from "./run-shell-script.mjs";
 
 const RELEASE_TARGET = process.argv[2];
 const BUMP_TYPES = new Set(["major", "minor", "patch"]);
@@ -47,6 +49,15 @@ function run(cmd, options = {}) {
 	}
 }
 
+function runScript(script) {
+	console.log(`$ ${script}`);
+	const result = runShellScript(script, [], { stdio: "inherit" });
+	if (result.status !== 0) {
+		console.error(`Command failed: ${script}`);
+		process.exit(1);
+	}
+}
+
 function getVersion() {
 	const pkg = JSON.parse(readFileSync("packages/ai/package.json", "utf-8"));
 	return pkg.version;
@@ -58,7 +69,9 @@ function assertPackagesAreRegisteredWithNpm() {
 
 	console.log("Checking npm package registration...");
 	for (const packageName of packageNames) {
-		const result = spawnSync(process.platform === "win32" ? "npm.cmd" : "npm", ["view", packageName, "version", "--json"], {
+		const args = ["view", packageName, "version", "--json"];
+		const npmCliPath = resolveNpmCliPath();
+		const result = spawnSync(npmCliPath ? process.execPath : process.platform === "win32" ? "npm.cmd" : "npm", npmCliPath ? [npmCliPath, ...args] : args, {
 			encoding: "utf8",
 			stdio: ["ignore", "pipe", "pipe"],
 		});
@@ -251,7 +264,7 @@ run("npm run build:offline");
 console.log();
 
 console.log("Running tests...");
-run("./test.sh");
+runScript("./test.sh");
 console.log();
 
 // 7. Commit and tag

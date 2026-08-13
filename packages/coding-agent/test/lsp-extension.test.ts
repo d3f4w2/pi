@@ -25,7 +25,11 @@ async function createTempDirectory(): Promise<string> {
 }
 
 afterEach(async () => {
-	await Promise.all(tempDirectories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+	await Promise.all(
+		tempDirectories
+			.splice(0)
+			.map((directory) => rm(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })),
+	);
 });
 
 describe("LSP language adapters", () => {

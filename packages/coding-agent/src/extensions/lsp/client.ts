@@ -5,8 +5,11 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import spawn from "cross-spawn";
 import {
 	CancellationTokenSource,
+	ConnectionError,
+	ConnectionErrors,
 	createMessageConnection,
 	type MessageConnection,
+	ResponseError,
 	StreamMessageReader,
 	StreamMessageWriter,
 } from "vscode-jsonrpc/node";
@@ -58,6 +61,7 @@ import { connectSharedBroker, reloadSharedBroker, type SharedBrokerSocket } from
 import {
 	LSP_BROKER_CONNECT_METHOD,
 	LSP_BROKER_RELOAD_METHOD,
+	LSP_BROKER_UPSTREAM_CLOSED_ERROR,
 	type LspBrokerConnectResult,
 	type LspBrokerIdentity,
 	lspBrokerIdentity,
@@ -593,8 +597,14 @@ class StandardLspClient implements LspClient {
 		}
 	}
 
-	isTransportBroken(): boolean {
-		return this.broken;
+	isTransportBroken(error?: unknown): boolean {
+		return (
+			this.broken ||
+			this.socket?.destroyed === true ||
+			(error instanceof ConnectionError &&
+				(error.code === ConnectionErrors.Closed || error.code === ConnectionErrors.Disposed)) ||
+			(error instanceof ResponseError && error.code === LSP_BROKER_UPSTREAM_CLOSED_ERROR)
+		);
 	}
 
 	async stop(): Promise<void> {
@@ -845,7 +855,7 @@ class FallbackLspClient implements LspClient {
 		try {
 			return await operation(original);
 		} catch (error) {
-			if (signal?.aborted || original.transportKind !== "shared" || !original.isTransportBroken()) throw error;
+			if (signal?.aborted || original.transportKind !== "shared" || !original.isTransportBroken(error)) throw error;
 			const fallback = await this.fallback();
 			return operation(fallback);
 		}

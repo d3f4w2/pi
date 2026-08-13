@@ -472,8 +472,16 @@ interface PackageJson {
 	version?: string;
 	piConfig?: {
 		name?: string;
+		envPrefix?: string;
 		configDir?: string;
+		updateUrl?: string;
 	};
+}
+
+const DEFAULT_VERSION_CHECK_URL = "https://pi.dev/api/latest-version";
+
+export function resolveVersionCheckUrl(config: { updateUrl?: string }): string {
+	return config.updateUrl?.trim() || DEFAULT_VERSION_CHECK_URL;
 }
 
 let pkg: PackageJson = {};
@@ -490,11 +498,13 @@ export const APP_NAME: string = piConfigName || "pi";
 export const APP_TITLE: string = piConfigName ? APP_NAME : "π";
 export const CONFIG_DIR_NAME: string = pkg.piConfig?.configDir || ".pi";
 export const VERSION: string = pkg.version || "0.0.0";
+export const VERSION_CHECK_URL: string = resolveVersionCheckUrl(pkg.piConfig ?? {});
 
-// e.g., PI_CODING_AGENT_DIR or TAU_CODING_AGENT_DIR
-export const ENV_AGENT_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_DIR`;
-export const ENV_SESSION_DIR = `${APP_NAME.toUpperCase()}_CODING_AGENT_SESSION_DIR`;
-export const ENV_MEMORY_FILE = `${APP_NAME.toUpperCase()}_MEMORY_FILE`;
+// Keep environment/config compatibility when a distribution changes only its command name.
+const envPrefix = pkg.piConfig?.envPrefix || APP_NAME.toUpperCase();
+export const ENV_AGENT_DIR = `${envPrefix}_CODING_AGENT_DIR`;
+export const ENV_SESSION_DIR = `${envPrefix}_CODING_AGENT_SESSION_DIR`;
+export const ENV_MEMORY_FILE = `${envPrefix}_MEMORY_FILE`;
 
 export function expandTildePath(path: string): string {
 	return normalizePath(path);

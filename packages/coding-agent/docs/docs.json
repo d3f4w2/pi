@@ -16,6 +16,18 @@
           "path": "usage.md"
         },
         {
+          "title": "Verifiable runs",
+          "path": "verified-runs.md"
+        },
+        {
+          "title": "Durable goal loop",
+          "path": "goal-loop.md"
+        },
+        {
+          "title": "Agent CI gates",
+          "path": "agent-ci.md"
+        },
+        {
           "title": "Providers",
           "path": "providers.md"
         },

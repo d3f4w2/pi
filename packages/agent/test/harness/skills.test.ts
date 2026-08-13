@@ -35,7 +35,7 @@ Use this skill.
 		]);
 	});
 
-	it("loads skills through symlinked directories", async () => {
+	it.skipIf(process.platform === "win32")("loads skills through symlinked directories", async () => {
 		const root = createTempDir();
 		const env = new NodeExecutionEnv({ cwd: root });
 		await env.createDir("actual/example", { recursive: true });

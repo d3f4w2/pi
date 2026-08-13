@@ -1133,7 +1133,7 @@ See [RPC documentation](rpc.md) for the JSON protocol.
 For subprocess-based integration without building with the SDK, use the CLI directly:
 
 ```bash
-pi --mode rpc --no-session
+pigo --mode rpc --no-session
 ```
 
 See [RPC documentation](rpc.md) for the JSON protocol.

@@ -42,6 +42,8 @@
 - Added bounded dependency-impact analysis to `verify auto`, selecting transitively affected TypeScript/JavaScript and Python tests while retaining filename fallback and never expanding to the full suite implicitly.
 - Added a built-in `todo` task ledger with stable IDs, revision-safe updates, completion evidence, deterministic progression, branch-local session recovery, bounded context reminders, a compact TUI widget, and `/tasks` inspection.
 - Added an offline `/doctor` command that classifies model, core-tool, shell, project-language, LSP, optional search, web, and config health with concise Chinese remediation while never reading credential contents or adding a model tool schema.
+- Added a standalone offline `pigo doctor [--json]` command that diagnoses the installed Pigo and Node runtimes, Git, npm, Bash or Git Bash, the current directory, and configuration files without starting the agent, contacting providers, or reading credential contents.
+- Added a CLI-only `pi-gogogo` npm product artifact with the `pigo` command, fork-owned update metadata, lifecycle-script-free installation, reduced release contents, source contract checks, and isolated cross-directory installation smoke tests.
 - Added a default tool execution protection layer with three-failure circuit breaking, 30-second recovery probes, 180-second generic timeouts, bounded redacted errors, and `/doctor` visibility.
 - Added clearly separated tool approval modes, critical destructive-operation confirmation, headless fail-closed behavior, session-scoped exact approvals, persistent per-tool allow/deny decisions, compact risk labels in `/tools`, and persistent `Shift+Tab` safety-mode cycling.
 - Added `/permissions` for viewing and changing persistent per-tool execution policies with cancellable keyboard navigation.
@@ -51,9 +53,14 @@
 - Added one structured `git` tool and `/git` interface for compact status, per-file Diff, exact staging, strict commits, bounded history, and always-confirmed pushes without shell routing.
 - Added a session-scoped `process` tool and `/process` interface for direct background process launch, bounded cursor logs, restart, stop, URL detection, project boundaries, and automatic cleanup.
 - Added an isolated agent-only `browser` tool using the local Chrome DevTools Protocol for semantic snapshots, automatic reference-based interaction, bounded console capture, screenshots, local development URLs, temporary profiles, and automatic cleanup.
+- Added `pigo run`, a Git-aware verifiable engineering executor with versioned task contracts, post-run scope evidence, wall-clock/Token/tool-call budgets, independent deterministic checks, privacy-safe SHA-256 integrity receipts, stable CI exit codes, and offline receipt verification.
+- Added standalone offline `pigo ci` receipt gates with strict versioned policy files, integrity validation, bounded deterministic file discovery, per-run and aggregate governance limits, privacy-safe text/JSON reports, and stable automation exit codes.
+- Added a zero-path verified workflow: default run receipts are privately partitioned by Git workspace, `pigo ci` checks the current project's latest receipt, `pigo ci --all` checks its stored history, and project-root `pigo.ci.json` policies load automatically.
+- Added a single interactive `/run` control center with direct goal start, bounded quick/standard/eight-hour presets, immutable-goal execution, model-external verification, automatic gap-driven replanning, aggregate wall/Token/tool/iteration budgets, periodic long-turn budget checkpoints, repeated-gap stuck detection, race-safe pause/stop, explicit recovery and user-decision states, evidence-rich status, private Git baselines, and offline acceptance of CI-compatible terminal receipts.
 
 ### Changed
 
+- Changed the installed, documented, and standalone executable command from `pi` to `pigo` while preserving the existing `.pi` data directory and `PI_*` environment variables.
 - Changed OpenAI Responses continuation state to retain SHA-256 prompt/output/tool-shape digests and byte counts instead of raw content, while remaining compatible with browser Web Crypto.
 - Further reduced cold-start, repeated tool, and TUI render latency by loading web parsing, MCP, LSP, syntax highlighting, HTML export, and platform sandbox runtimes on first use; caching PATH-aware tool and shell resolution plus footer session statistics; and bypassing full dynamic-context prefix scans when the system prompt is unchanged.
 - Changed provider-context hygiene with an opt-in cache guard that can limit routine tool-result rewrites to a configured all-message suffix, while still pruning exact tail duplicates and correctness-critical stale reads; it remains disabled by default after the target provider showed equal cache reads and higher uncached input with the guard enabled, and explicit prompt-cache breakpoints remain disabled after an isolated breakpoint-only request returned 502.
@@ -69,7 +76,15 @@
 
 ### Fixed
 
+- Fixed the generated `pi-gogogo` product having no fork-owned public release path by adding a repository-scoped trusted-publishing workflow, an idempotent Pigo-only publisher, Windows-safe npm CLI invocation, and post-publication registry installation smoke tests.
+- Fixed durable `/run` recovery accepting malformed checkpoints, receipt I/O failures rewriting verified outcomes, reported paused turns resuming in an unreportable phase, post-verification resume exceeding the frozen iteration budget, stale asynchronous results crossing session branches, duplicate concurrent starts, and clean shutdown losing partial tool checkpoints.
+- Fixed interactive terminal receipts mislabeling iteration-budget exhaustion and explicit user stop as Agent failure, while keeping both outcomes fail-closed in offline CI.
+- Fixed a later unverified stopped iteration discarding the run's most recent independent verification evidence from its terminal receipt.
+- Fixed receipt retry becoming permanently stuck when the integrity-bound file was created before its session path checkpoint; byte-identical writes are now idempotent while different content remains protected.
+- Fixed non-finite model usage observations corrupting aggregate goal-loop Token and cost budgets.
+- Fixed full Bash output files being returned before the write stream finished, which could expose an empty or partial evidence file when truncation was triggered by line count.
 - Fixed Chromium tab closure returning before the CDP target disappeared, stale per-tab network activity blocking `network_idle`, and Windows LSP shutdown returning before the language-server process released workspace handles.
+- Fixed source bundle image-provider registration being removed by tree shaking, and bundled the image resize worker as an explicit release entry so installed CLIs keep image processing off the TUI event loop.
 - Fixed submitted user messages appearing only after prompt preflight, with immediate UI rendering, transformed-input reconciliation, and failed-input restoration; split the local TPS display into TTFT, active streaming throughput, and end-to-end latency.
 - Fixed Agent capability evaluations appearing idle while the child Agent was working, and stopped unavoidable system-prompt input tokens from falsely failing otherwise successful cases by showing a live stage widget and enforcing output-token plus tool-call budgets instead.
 - Fixed the regression-capture extension calling runtime tool actions before extension initialization completed.

@@ -249,7 +249,10 @@ ${chalk.bold("Commands:")}
   ${APP_NAME} list                      List installed extensions from settings
   ${APP_NAME} config [-l]               Open TUI to enable/disable package resources (Tab switches scope)
   ${APP_NAME} auth <command>            Print credentials or check provider readiness
-  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth
+  ${APP_NAME} doctor [--json]           Diagnose the local installation and runtime environment
+  ${APP_NAME} run <task> [options]      Execute, independently verify, and write an integrity receipt
+  ${APP_NAME} ci [receipts...]          Validate the latest project receipt or an explicit receipt set
+  ${APP_NAME} <command> --help          Show help for install/remove/uninstall/update/list/config/auth/doctor/run/ci
 
 ${chalk.bold("Options:")}
   --provider <name>              Provider name (default: google)
@@ -315,6 +318,9 @@ ${chalk.bold("Examples:")}
 
   # Non-interactive mode (process and exit)
   ${APP_NAME} -p "List all .ts files in src/"
+
+  # Verifiable engineering run with a machine-readable receipt
+  ${APP_NAME} run "Fix the parser and add a focused test" --scope src --scope test
 
   # Multiple messages (interactive)
   ${APP_NAME} "Read package.json" "What dependencies do we have?"

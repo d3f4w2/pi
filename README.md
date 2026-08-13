@@ -7,274 +7,200 @@
 <h1 align="center">Pi GoGoGo</h1>
 
 <p align="center">
-  <strong>A governed, extensible coding-agent platform for serious local engineering.</strong>
+  <strong>A fast, governed coding agent for real repositories.</strong>
 </p>
 
 <p align="center">
-  Think locally. Execute within boundaries. Prove every change.
+  Work from the terminal, keep control of what the agent can do, and extend the workflow without forking the core.
 </p>
 
 <p align="center">
   <a href="https://github.com/d3f4w2/pi-Gogogo/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/d3f4w2/pi-Gogogo/ci.yml?branch=main&style=flat-square&label=CI"></a>
+  <a href="https://www.npmjs.com/package/pi-gogogo"><img alt="npm" src="https://img.shields.io/npm/v/pi-gogogo?style=flat-square"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-0f766e?style=flat-square"></a>
   <img alt="Node.js 22.19+" src="https://img.shields.io/badge/node-%3E%3D22.19-339933?style=flat-square&logo=nodedotjs&logoColor=white">
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-native-3178C6?style=flat-square&logo=typescript&logoColor=white">
-  <img alt="Platforms" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-334155?style=flat-square">
+  <img alt="Windows, macOS, and Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-334155?style=flat-square">
 </p>
 
-<p align="center">
-  <a href="#quick-start">Quick start</a> ·
-  <a href="#capability-platform">Capabilities</a> ·
-  <a href="#security-model">Security</a> ·
-  <a href="#measured-evidence">Evidence</a> ·
-  <a href="packages/coding-agent/docs/engineering-portfolio.zh-CN.md">中文工程档案</a>
-</p>
+## Install
 
----
-
-Pi GoGoGo takes the small, composable [Pi](https://github.com/earendil-works/pi) agent harness and develops it into a capability platform: one local agent runtime with bounded execution, code intelligence, isolated task workers, external research, protocol adapters, evidence-driven validation, and reversible context management.
-
-It is deliberately not a pile of disconnected tools. Every capability is routed through shared workspace boundaries, approval rules, lifecycle controls, and observable failure behavior.
-
-> This repository is a source-development fork. The package namespace remains `@earendil-works/*`; run this repository from source to use the exact capabilities documented here.
-
-<p align="center">
-  <img src="packages/coding-agent/docs/images/interactive-mode.png" width="860" alt="Pi interactive coding agent">
-</p>
-
-## Why this fork exists
-
-| Principle | Concrete behavior |
-| --- | --- |
-| **Safe by default** | Model-controlled built-in tools start behind a lightweight OS sandbox instead of inheriting unrestricted host execution. |
-| **One capability plane** | Text search, AST, LSP, DAP, Git, browser, MCP, ACP, evaluation, and memory share one runtime and one policy model. |
-| **Evidence over confidence** | Hidden acceptance checks, regression capture, deterministic reports, and benchmark artifacts make results inspectable. |
-| **Bounded autonomy** | Isolated workers have role limits, hard timeouts, output caps, temporary snapshots, and no automatic merge. |
-| **Fast when unused** | Heavy capabilities are discovered and loaded lazily; optional failures do not block the main session. |
-| **Simple for the user** | Strong defaults require little configuration, while advanced controls remain explicit and reversible. |
-
-## Architecture
-
-```mermaid
-flowchart TB
-    U["Developer or editor"] --> I["TUI · Print/JSON · RPC · ACP · SDK"]
-    I --> A["Agent runtime and session state"]
-
-    A --> C["Capability control plane"]
-    C --> T["Read · Search · Edit · Git · Process"]
-    C --> K["AST · LSP · DAP · Eval"]
-    C --> X["Research · Browser · MCP · Plugins"]
-    C --> W["Isolated task workers"]
-
-    T --> P["Policy · Approval · Project trust"]
-    K --> P
-    X --> P
-    W --> P
-
-    P --> B["Process broker and canonical workspace guard"]
-    B --> S["Linux Bubblewrap · macOS Seatbelt · Windows restricted token or SRT/WFP"]
-
-    A --> E["Evidence plane"]
-    E --> R["Verification · Metrics · Context reports · Memory · Learning gates"]
+```bash
+npm install -g --ignore-scripts pi-gogogo
 ```
 
-The host runtime coordinates state and trusted extensions. Model-controlled built-in file and process operations cross the policy and broker boundary before reaching the operating system. Evidence is recorded separately from execution so the agent cannot silently redefine its own acceptance criteria.
+Verify the local runtime, then start it from any terminal or project directory:
 
-## Quick start
+```bash
+pigo doctor
+pigo
+```
 
-### Requirements
+Pi GoGoGo is built for engineering work that spans more than one file or one prompt: understanding an unfamiliar codebase, implementing a feature, tracing a failure, reviewing a change, running verification, and carrying the result across a long session.
 
-- Node.js `>=22.19.0`
-- Git
-- A supported provider login or API key
+The default experience stays small. Deeper capabilities are loaded when the task needs them, and project-specific behavior remains explicit.
 
-### Run the current fork from source
+<p align="center">
+  <img src="packages/coding-agent/docs/images/interactive-mode.png" width="860" alt="Pi GoGoGo interactive coding agent">
+</p>
+
+## A coding agent you can shape
+
+| | |
+| --- | --- |
+| **Work deeply** | Read and change repositories, search code, run commands, debug failures, inspect Git history, and verify the result in one session. |
+| **Stay in control** | Project trust, tool approval, workspace boundaries, and OS-level isolation keep execution visible and bounded. |
+| **Extend the workflow** | Add TypeScript extensions, skills, prompt templates, themes, MCP servers, and reusable packages without changing the core. |
+| **Keep the thread** | Saved sessions, compaction, context checkpoints, rewind, and scoped memory support work that takes more than a few turns. |
+
+### Fast by default
+
+The terminal interface streams model output and tool activity as they happen. Optional integrations are discovered lazily, repeated work is cached where it is safe, and an unavailable add-on does not block the main session.
+
+### Governed execution
+
+The agent does not treat a confirmation prompt as a security boundary. Project trust controls what local configuration may load; tool approval controls the requested action; workspace policy constrains paths and operation types; the process layer applies the available operating-system sandbox.
+
+### Evidence that CI can enforce
+
+Run a bounded engineering task, then gate its independently verified receipt without copying an artifact path. Pigo stores
+default receipts in a private directory partitioned by project; it does not store the prompt, response, source, tool output,
+or raw project path in the receipt.
+
+```bash
+pigo run "Fix the parser and add a focused test"
+pigo ci
+```
+
+`pigo ci` is a deterministic offline gate. It verifies receipt integrity and can enforce allowed outcomes, approved scope roots,
+required checks, per-run limits, and aggregate Token, cost, duration, or tool-call budgets without starting another model.
+It automatically uses `pigo.ci.json` from the project root when present. Explicit receipt paths and `--policy` remain available
+for exported CI artifacts.
+
+### A goal loop that corrects itself
+
+Inside interactive Pigo, `/run` turns the current session into a durable engineering loop. The original goal, allowed scope,
+checks, and aggregate budgets stay fixed; only the current plan changes.
+
+```text
+/run --scope src --scope test --verify auto:. 修复解析器并补回归测试
+```
+
+That is the only interactive entry. Enter bare `/run` afterward to view evidence, pause, resume, provide a required decision,
+stop safely, or gate the final receipt. The control center shows only actions legal for the current state. Starting through
+bare `/run` also offers bounded 30-minute, 2-hour, and 8-hour presets.
+
+Pigo executes one Agent iteration, runs the frozen checks outside the model, feeds the exact remaining gap into the next
+iteration, and repeats. It stops only when the Agent reports completion and independent checks pass, a budget is exhausted,
+the same evidence stops changing, the user pauses it, or one concrete product decision is required. Checkpoints survive in
+the session; interrupted active runs require explicitly opening `/run` and choosing continue. During active work, pause or
+stop first closes the Agent mutation boundary; during verification, the request is applied before any replanning. A terminal
+run writes the same private receipt accepted inside `/run` or by shell `pigo ci`.
+
+See [Durable goal loop](packages/coding-agent/docs/goal-loop.md) for state, budget, recovery, and trust-boundary details.
+
+### One runtime, several interfaces
+
+Use the same agent interactively, in scripts, through an editor, or inside another application.
+
+| Interface | Best for |
+| --- | --- |
+| Interactive TUI | Daily repository work with streaming tools, approvals, and saved sessions |
+| Print and JSON | One-shot prompts and automation |
+| RPC | Process integration over the native protocol |
+| ACP | Editor-hosted agent sessions |
+| TypeScript SDK | Embedding the runtime in another application |
+
+## Get started
+
+1. Install the package.
+
+   ```bash
+   npm install -g --ignore-scripts pi-gogogo
+   ```
+
+2. Start `pigo` and connect a provider.
+
+   ```text
+   pigo
+   /login
+   ```
+
+3. Give it a real task.
+
+   ```text
+   Map the authentication flow, identify its trust boundaries, and show me the evidence before changing code.
+   ```
+
+You can also authenticate with provider API keys. Model selection, provider setup, and subscription login are available inside the terminal UI.
+
+## Built to grow with the work
+
+Pi GoGoGo keeps the core focused and moves specialized behavior into composable pieces:
+
+- Extensions add tools, commands, events, UI components, and provider behavior.
+- Skills package repeatable instructions and domain workflows.
+- Packages distribute extensions, skills, prompts, and themes through npm or Git.
+- MCP connects external tools and resources behind the same trust and approval flow.
+- ACP connects the agent to compatible editors without creating a separate runtime.
+
+Install and manage packages from the same CLI:
+
+```bash
+pigo install npm:@scope/package
+pigo list
+pigo update --all
+pigo config
+```
+
+## Safety is part of the product
+
+Pi GoGoGo separates trust, approval, workspace policy, and OS enforcement because they solve different problems. A trusted project may still request a dangerous command; an approved command must still stay inside the permitted workspace and sandbox.
+
+TypeScript extensions run in the host process and can call Node.js APIs directly. Review extension code before enabling it. Use a container, VM, or micro-VM for hostile repositories or unattended work.
+
+Read the [security model](packages/coding-agent/docs/security.md) before using the agent on sensitive systems.
+
+## Documentation
+
+| Topic | Start here |
+| --- | --- |
+| Installation and first session | [Quick start](packages/coding-agent/docs/quickstart.md) |
+| CLI and product reference | [Coding agent README](packages/coding-agent/README.md) |
+| Extensions and packages | [Extensions](packages/coding-agent/docs/extensions.md) · [Packages](packages/coding-agent/docs/packages.md) |
+| MCP and editor integration | [MCP](packages/coding-agent/docs/mcp.md) · [ACP](packages/coding-agent/docs/acp.md) |
+| Automation and embedding | [RPC](packages/coding-agent/docs/rpc.md) · [SDK](packages/coding-agent/docs/sdk.md) |
+| Verifiable execution and CI | [Durable goal loop](packages/coding-agent/docs/goal-loop.md) · [Verifiable runs](packages/coding-agent/docs/verified-runs.md) · [Agent CI gates](packages/coding-agent/docs/agent-ci.md) |
+| Security and isolation | [Security](packages/coding-agent/docs/security.md) · [Windows](packages/coding-agent/docs/windows.md) |
+| Performance | [Performance](packages/coding-agent/docs/performance.md) |
+| Engineering record in Chinese | [中文工程档案](packages/coding-agent/docs/engineering-portfolio.zh-CN.md) |
+
+## Develop from source
+
+Requirements: Node.js `>=22.19.0` and Git.
 
 ```bash
 git clone https://github.com/d3f4w2/pi-Gogogo.git
 cd pi-Gogogo
 npm install --ignore-scripts
-```
-
-macOS or Linux:
-
-```bash
+npm run check
+./test.sh
 ./pi-test.sh
 ```
 
-Windows PowerShell:
+On Windows, start the source build with:
 
 ```powershell
 .\pi-test.ps1
 ```
 
-Inside Pi, run `/login`, choose a provider, and start with a real task:
+The published command is `pigo`. Existing `.pi` data directories and `PI_*` environment variables remain unchanged so current sessions and configuration continue to work.
 
-```text
-Map the authentication flow, identify its trust boundaries, and show me the evidence before changing code.
-```
+## Project lineage
 
-### Stronger Windows isolation
+Pi GoGoGo is built from the [Pi agent harness](https://github.com/earendil-works/pi) and retains its MIT license, package layout, and extension model. This repository develops the governed execution, code intelligence, integration, and context-management layers around that core.
 
-The zero-setup Windows backend restricts writes and process trees. For a dedicated low-privilege user plus Windows Filtering Platform network isolation, run the pinned installer once from a trusted terminal:
-
-```powershell
-npx --yes @anthropic-ai/sandbox-runtime@0.0.71 windows-install
-```
-
-Pi detects the backend automatically. `/doctor` shows the active sandbox and its behavioral health checks.
-
-## Capability platform
-
-### Governed execution
-
-- Default `auto`, `read-only`, and explicit `full-access` sandbox modes.
-- Canonical path enforcement across `read`, `write`, `edit`, `grep`, `find`, `ls`, and shell execution.
-- Protected control paths, credential locations, `.git`, `.pi`, and `.env*` write boundaries.
-- Fail-closed startup when a selected sandbox backend is unhealthy.
-- Exact `host:port` network authorization with command, session, or workspace scope where the OS backend supports it.
-
-[Security model](packages/coding-agent/docs/security.md) · [Sandbox ADR](packages/coding-agent/docs/adr/0033-default-lightweight-os-sandbox.md) · [Container patterns](packages/coding-agent/docs/containerization.md)
-
-### Local code intelligence
-
-- Structural search and transactional edits across JavaScript, TypeScript, TSX, HTML, CSS, Python, Go, Rust, JSON, YAML, and bounded Markdown structures.
-- Project-local LSP broker shared across sessions, with reference counting, negative caching, crash recovery, and private-process fallback.
-- DAP-backed debugging, workspace-scoped Git workflows, persistent process management, and verification tools.
-- Python and Bun evaluation cells with a fixed read-only host-tool bridge, call budgets, output caps, and shared cancellation.
-
-[Code intelligence architecture](packages/coding-agent/docs/local-code-intelligence-plane.md) · [LSP](packages/coding-agent/docs/lsp.md) · [DAP](packages/coding-agent/docs/dap-architecture.md)
-
-### Isolated task workers
-
-`task` delegates bounded research or coding work to independent agents in temporary project snapshots. Up to three tasks can run concurrently; each has a hard timeout, role-specific tool policy, bounded result size, and no recursive task spawning. Worker changes never merge automatically.
-
-[Task worker guide](packages/coding-agent/docs/task-workers.md) · [Isolation decision](packages/coding-agent/docs/adr/0044-bounded-isolated-task-workers.md)
-
-### External information and Browser 2.0
-
-- Official-source routing for GitHub, GitLab, npm, PyPI, crates.io, Go modules, arXiv, OSV, NVD, CISA KEV, and documentation sites.
-- Read-only resource addresses such as `github://`, `npm://`, `pypi://`, `arxiv://`, and `osv://` through the normal `read` and `grep` tools.
-- Credential-free bounded caching, in-flight request coalescing, SSRF protection, and explicit untrusted-content metadata.
-- Isolated browser profiles, multiple tabs, semantic snapshots, stale-reference rejection, workspace-only uploads/downloads, and bounded diagnostics.
-
-[External information plane](packages/coding-agent/docs/external-information-plane.md) · [Hardening proof](packages/coding-agent/docs/experiments/2026-08-10-external-information-plane-hardening-proof.md)
-
-### MCP, ACP, and controlled plugins
-
-- MCP over stdio, Streamable HTTP, and SSE, with lazy discovery, project-trust gating, OAuth PKCE, credential-bound storage, and unified approval.
-- ACP editor integration over NDJSON with capability negotiation, session reuse, cancellation, terminal/file routing, and no silent local retry after client-side failure.
-- Manifested plugins with compatibility checks, content digests, explicit approval, atomic update, rollback, and lifecycle-script review.
-
-[MCP](packages/coding-agent/docs/mcp.md) · [ACP](packages/coding-agent/docs/acp.md) · [Plugins](packages/coding-agent/docs/plugins.md)
-
-### Context, memory, and controlled learning
-
-- Append-only context checkpoints with deterministic preview reports, compare-and-swap guards, rewind, and full-view restore.
-- Evidence-scoped memory that treats current repository facts as stronger than historical recall.
-- Learning candidates gated by explicit evaluation and regression evidence instead of self-reported success.
-- Prompt-cache state uses content digests rather than retaining raw prompt bodies.
-
-[Context lifecycle](packages/coding-agent/docs/context-lifecycle.md) · [Memory](packages/coding-agent/docs/memory.md) · [Self-evolution](packages/coding-agent/docs/self-evolution.md) · [Prompt cache](packages/coding-agent/docs/prompt-cache-architecture.md)
-
-## Measured evidence
-
-Recorded on deterministic local fixtures on 2026-08-10. These numbers describe the checked-in benchmark scenarios, not universal production SLAs.
-
-| Area | Recorded result |
-| --- | ---: |
-| Context lifecycle | `48,910 → 7,850` estimated input tokens, **84.0% reduction**, with `98/98` deterministic evidence records retained |
-| Shared LSP | `244.031 ms → 2.948 ms` from cold start to second-session availability, **98.79% lower** |
-| External research | Official source selected first in `10/10` fixed cases, with `1.0` mean model-visible tool call |
-| External input | `132.2` versus `428` estimated tokens on the fixed fixture, **69.11% reduction** |
-| Resource cache | `90%` hit rate across ten repeated reads; one source fetch |
-| Changed-surface verification | **65 test files / 608 passing tests** across focused package and script groups |
-
-Raw and narrative evidence lives in [`docs/benchmarks`](packages/coding-agent/docs/benchmarks), the [external hardening proof](packages/coding-agent/docs/experiments/2026-08-10-external-information-plane-hardening-proof.md), and the [Chinese engineering portfolio](packages/coding-agent/docs/engineering-portfolio.zh-CN.md).
-
-## Security model
-
-Pi GoGoGo separates several concepts that are often incorrectly collapsed into one “permission system”:
-
-1. **Project trust** decides whether project-local settings, packages, skills, prompts, and extensions may load.
-2. **Tool approval** decides whether a requested operation is allowed at the interaction layer.
-3. **Workspace policy** constrains canonical paths, protected locations, and operation type.
-4. **Process brokering** routes built-in process execution through one controlled boundary.
-5. **OS enforcement** applies the platform sandbox and, where supported, network isolation.
-
-These layers are complementary. Project trust is not a sandbox, and a UI approval prompt is not an operating-system boundary.
-
-> **Trusted extension boundary:** TypeScript extensions run inside the host process and may call Node.js APIs directly. They can bypass built-in tool brokering. Review extension and plugin source before enabling it; use a container, VM, or micro-VM for hostile repositories or unattended workloads.
-
-Read the complete [security model](packages/coding-agent/docs/security.md) before using the agent on sensitive systems.
-
-## Interfaces and protocols
-
-| Interface | Use case |
-| --- | --- |
-| Interactive TUI | Human-in-the-loop local development with streaming tools, approvals, sessions, and rich terminal UI |
-| Print / JSON | One-shot prompts and machine-readable automation |
-| RPC | Process integration over the native Pi protocol |
-| ACP | Editor-hosted agent sessions with negotiated filesystem and terminal capabilities |
-| SDK | Embed the same runtime in a TypeScript application |
-| MCP client | Attach external tools, resources, and prompts without creating a second agent runtime |
-
-The same session and capability core serves every interface; adapters do not get a separate policy bypass.
-
-## Monorepo map
-
-| Package | Responsibility |
-| --- | --- |
-| [`pi-coding-agent`](packages/coding-agent) | CLI, TUI mode, tools, sandbox, extensions, protocol adapters, and capability platform |
-| [`pi-agent-core`](packages/agent) | Provider-neutral agent loop, tool calls, state, steering, and session lifecycle |
-| [`pi-ai`](packages/ai) | Unified multi-provider LLM API, model discovery, transport, and prompt-cache state |
-| [`pi-tui`](packages/tui) | Differential terminal rendering and interactive components |
-| [`pi-protocol`](packages/protocol) | Transport-neutral framed CBOR protocol |
-| [`pi-client`](packages/client) / [`pi-server`](packages/server) | Remote session client and experimental server runtime |
-| [`pi-telemetry`](packages/telemetry) | Vendor-neutral telemetry contracts and typed schemas |
-| [`pi-evals`](packages/evals) | Evaluation harnesses, artifacts, and command fixtures |
-| [`pi-session-backends`](packages/session-backends) | Pluggable persistent session storage |
-
-## Development
-
-```bash
-npm install --ignore-scripts  # Install without dependency lifecycle scripts
-npm run check                 # Format, lint, dependency policy, types, smoke checks
-./test.sh                     # Non-LLM test suites
-./pi-test.sh                  # Run the coding agent directly from source
-```
-
-Windows equivalents:
-
-```powershell
-.\pi-test.ps1
-```
-
-Dependency and release metadata are treated as reviewed code: external dependencies are exact-pinned, lockfile changes are guarded, published CLI dependencies receive a generated shrinkwrap, and CI installs with lifecycle scripts disabled. See [Supply-chain hardening](packages/coding-agent/docs/security.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Documentation
-
-| Start here | Document |
-| --- | --- |
-| Product and CLI reference | [Coding agent README](packages/coding-agent/README.md) |
-| Full engineering retrospective and résumé evidence | [工程档案（中文）](packages/coding-agent/docs/engineering-portfolio.zh-CN.md) |
-| Platform roadmap | [Agent platform roadmap](packages/coding-agent/docs/agent-platform-roadmap.md) |
-| Security boundaries | [Security](packages/coding-agent/docs/security.md) |
-| Performance strategy | [Performance](packages/coding-agent/docs/performance.md) |
-| Architecture decisions | [ADR directory](packages/coding-agent/docs/adr) |
-| Windows setup | [Windows guide](packages/coding-agent/docs/windows.md) |
-
-## Upstream, contributing, and project status
-
-Pi GoGoGo is forked from the [Pi agent harness](https://github.com/earendil-works/pi) and retains its MIT license, package layout, and extensibility model. The capability-platform changes in this repository are maintained as a source-development line and should not be confused with upstream package releases.
-
-New contributors should read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md). The repository's contributor gate may automatically close new issues or pull requests for maintainer review; this is workflow behavior, not a rejection of the technical report.
+New contributors should read [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md) before opening an issue or pull request.
 
 ## License
 
 [MIT](LICENSE)
-
-<p align="center">
-  Built on Pi's composable agent harness.<br>
-  Hardened for bounded execution, inspectable evidence, and real engineering workflows.
-</p>

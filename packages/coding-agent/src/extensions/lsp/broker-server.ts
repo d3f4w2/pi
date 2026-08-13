@@ -3,7 +3,10 @@ import { createConnection, createServer, type Server, type Socket } from "node:n
 import path from "node:path";
 import spawn from "cross-spawn";
 import {
+	ConnectionError,
+	ConnectionErrors,
 	createMessageConnection,
+	ErrorCodes,
 	type MessageConnection,
 	ResponseError,
 	StreamMessageReader,
@@ -24,6 +27,7 @@ import {
 	LSP_BROKER_HEALTH_METHOD,
 	LSP_BROKER_PROTOCOL_VERSION,
 	LSP_BROKER_RELOAD_METHOD,
+	LSP_BROKER_UPSTREAM_CLOSED_ERROR,
 	type LspBrokerConnectResult,
 	type LspBrokerHealth,
 	type LspBrokerIdentity,
@@ -61,6 +65,17 @@ function logger() {
 
 function record(value: unknown): Record<string, unknown> {
 	return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function isLanguageTransportFailure(error: unknown): boolean {
+	return (
+		(error instanceof ConnectionError &&
+			(error.code === ConnectionErrors.Closed || error.code === ConnectionErrors.Disposed)) ||
+		(error instanceof ResponseError &&
+			(error.code === ErrorCodes.MessageWriteError ||
+				error.code === ErrorCodes.PendingResponseRejected ||
+				error.code === ErrorCodes.ConnectionInactive))
+	);
 }
 
 async function removeStaleUnixSocket(endpoint: string): Promise<void> {
@@ -238,6 +253,9 @@ export class LspBrokerServer {
 		this.activeRequestSessions.push(session);
 		try {
 			return await this.languageConnection.sendRequest(method, params, token);
+		} catch (error) {
+			if (!isLanguageTransportFailure(error)) throw error;
+			throw new ResponseError(LSP_BROKER_UPSTREAM_CLOSED_ERROR, "LSP broker upstream connection closed.");
 		} finally {
 			const index = this.activeRequestSessions.lastIndexOf(session);
 			if (index >= 0) this.activeRequestSessions.splice(index, 1);
