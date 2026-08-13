@@ -26,7 +26,7 @@ jobs:
       - name: Install system dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bubblewrap socat libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
+          sudo apt-get install -y libcairo2-dev libpango1.0-dev libjpeg-dev libgif-dev librsvg2-dev fd-find ripgrep
           sudo ln -s $(which fdfind) /usr/local/bin/fd
 
       - name: Install dependencies
@@ -39,4 +39,7 @@ jobs:
         run: npm run check
 
       - name: Test
+        env:
+          # Hosted runners deny loopback setup inside bubblewrap; sandbox behavior has dedicated injected unit tests.
+          PI_SANDBOX_MODE: full-access
         run: npm test
